@@ -1,0 +1,32 @@
+# 编译缓存
+__pycache__/
+*.pyc
+
+# 虚拟环境
+.venv/
+env/
+
+# 日志
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE 配置
+.vscode/
+.idea/
+
+hashann.egg-info/
+build/
+dist/
+tmp/
+python_bindings/tests/__pycache__/
+*.pyd
+hashann.cpython*.so
+var/
+.idea/
+.vscode/
+.vs/
+**.DS_Store
+*.pyc

@@ -5,6 +5,7 @@ import time
 import os
 import faiss
 import numpy as np
+import time 
 
 class HashANN:
     # NSW with filtering table, B+tree, cluster, pq entry points, counting hash table
@@ -24,7 +25,6 @@ class HashANN:
         
         # counting hash table
         self.bits = 32
-        self.table_size = 128
 
     def search(self, query, k=None):
         pass
@@ -49,35 +49,56 @@ class HashANN:
             print("error: unknown index method:", name)
             exit(-1)
 
+        # get max_cate_attr_value
+        print(f"Building index: {name}...")
+        start = time.time()
+        max_cate_value = 0
+        for i in range(len(attr_type_list)):
+            if attr_type_list[i] == 1:
+                for j in range(len(attr)):
+                    for val in attr[j][i]:
+                        max_cate_value = max(max_cate_value, val+1)
+                print(f"max cate value for attr {i}: {max_cate_value}")
+        print(f"iterate label time: {time.time() - start}")
 
         centroid_size, layers, closest_ids, best_dist, buckets, offsets = self.clustering(base_scalars)
         self.index = hashannlib.Index(space=params["metric"], dim=params["dim"])
-        self.index.init_index(max_elements=self.N, top_elements=centroid_size, ef_construction=params["ef_construction"], M=params["M"])
+        self.index.init_index(max_elements=self.N, 
+                              top_elements=centroid_size, 
+                              ef_construction=params["ef_construction"], 
+                              M=params["M"], 
+                              ft_bits=params["ft_bits"], 
+                              attr_type=attr_type_list,
+                              max_cate_size=max_cate_value)
         self.index.set_num_threads(threads)
 
-        print(f"Building index: {name}...")
-        start = time.time()
+        print("init index done, time:", time.time() - start)
+
         # add attributes into index
         assert(attr_type_list is not None)
         self.add_attr(attr, attr_type_list)
-
+        print("add attr done, time:", time.time() - start)
         # generate attribute indexes
         self.index.generateAttrIndexes() # B+ tree (numerical) and inverted list (categorical)
+        print("generate attr index done, time:", time.time() - start)
+
 
         # generate Counting hash table
         self.index.addEpIds(closest_ids.tolist())
-        print("add ep ids done")
         self.index.addBuckets(buckets, offsets)
-        print("add buckets done")
-        self.index.initCountingHashTable(self.table_size)
-        print("init counting hash table done")
+        print("add buckets done, time:", time.time() - start)
+        self.index.initCountingHashTable()
+        print("init counting hash table done, time:", time.time() - start)
+        print("generate filter table done, time:", time.time() - start)
 
         # add data points into index
         self.index.add_items(base_scalars, levels=layers)
+        self.index.generateFT()
         end = time.time()
-        self.index.save_index(index_save_path)
-
         print(f"Index built: {name}, duration: {end-start}.")
+        self.index.save_index(index_save_path)
+        print("index save done, time:", time.time() - end)
+
 
         return self.index
 
@@ -85,16 +106,17 @@ class HashANN:
         self.index_method = name
         print("name:", name)
 
-        print(f"Building index: {name}...")
+        print(f"Loading index: {name}...")
         self.index = hashannlib.Index(space=params["metric"], dim=params["dim"])
         self.index.set_num_threads(threads)
         start = time.time()
         assert(attr_type_list is not None)
         self.index.load_index(index_save_path)
+        print("index loaded")
         self.index.generateAttrIndexes() # B+ tree (numerical) and inverted list (categorical)
         end = time.time()
 
-        print(f"Index built: {name}, duration: {end-start}.")
+        print(f"Index loaded: {name}, duration: {end-start}.")
 
         return self.index
 
@@ -106,9 +128,13 @@ class HashANN:
                 if attr_type[j] == 1:
                     num_max_size = max(num_max_size, len(attr[i][j]))
 
-        self.index.initAttrSpace(attr_type, num_max_size)
         self.index.addAttr(attr)
 
+    def predicate_translate(self, predicate: list):
+        return self.index.predicateTranslate(predicate)
+
+    def hybrid_search(self, query, predicate):
+        return self.index.hybrid_knn_query(query, predicate, self.k, num_threads=1)
         
 
     # def build_or_load_index(self, params, base_scalars, attr, index_save_path, threads: int, name: str = "NSW"):
@@ -143,9 +169,12 @@ class HashANN:
     
 
     def clustering(self, base_scalars):
-        centroid_size = int(np.sqrt(self.N))
+        seed = 1234
+        centroid_size = int(np.sqrt(self.N)) * 10
+        # centroid_size = int(np.sqrt(self.N) / 100)
         print("d:", self.d, "N:", self.N, "centroid_size:", centroid_size)
         clustering = faiss.Clustering(self.d, centroid_size)
+        clustering.seed = seed
         clustering.niter = max(20, int(np.log2(self.N)) * 2)
         # clustering.max_points_per_centroid = int(np.sqrt(self.N))
 
@@ -174,7 +203,7 @@ class HashANN:
         # -----------------------------
         closest_ids = np.full(centroid_size, -1, dtype=int)
         best_dist = np.full(centroid_size, float('inf'))
-        layers = np.ones(self.N, dtype=int)  # default layer 1
+        layers = np.zeros(self.N, dtype=int)  # default layer 1
 
         for i in range(self.N):
             cluster_id = I[i]
@@ -188,10 +217,12 @@ class HashANN:
         # -----------------------------
         closest_ids = closest_ids
         best_dist = best_dist
-        layers[closest_ids] = 2
+        layers[closest_ids] = 1
 
         buckets = np.zeros(self.N, dtype=int)
         offsets = np.zeros(centroid_size + 1, dtype=int)
+
+        print("ep id len:", len(closest_ids))
 
         if centroid_size <= 0:
             print("error: centroid size <= 0")

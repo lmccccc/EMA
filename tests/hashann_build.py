@@ -26,7 +26,7 @@ if __name__ == "__main__":
     # data_path query_path attr_path qrange_path gt_path N n_query_to_use k
     nq = args.n_query_to_use
     attr_type_list = ast.literal_eval(args.attr_type_list)
-    params = {"M": args.M, "ef_construction": args.efConstruction, "metric": args.metric, "dim": args.dim, "N": args.N, "ef_search_list": args.ef_list}
+    params = {"M": args.M, "ef_construction": args.efConstruction, "metric": args.metric, "dim": args.dim, "N": args.N, "ef_search_list": args.ef_list, "ft_bits": args.ft_bits}
     data, queries, attr, query_filter_ranges, query_gt = load_data(args.data_path, args.query_path, args.attr_path, args.qrange_path, args.gt_path, args.N, nq, args.k)
     hash_ann.init_params(params)
     
@@ -35,28 +35,6 @@ if __name__ == "__main__":
     )
 
     print("build done")
-    exit()
-
-    # query
-    index.set_num_threads(1)
-    index.set_ef(args.ef_list[0])  # Set the first ef for the query
-    start = time.time()
-    labels, distances = index.knn_query(queries, k=args.K)
-    end = time.time()
-    print(f"Query time: {end - start} seconds, QPS:{queries.shape[0]/(end-start)}")
-
-    # recall
-    correct_sum = 0
-    for i in range(queries.shape[0]):
-        gt = query_gt[i]
-        label = labels[i]
-        if len(gt) != len(label):
-            print(f"Error: ground truth and label length mismatch at query {i}")
-            continue
-        correct = np.isin(gt, label)
-        correct_sum += np.sum(correct)
-    recall = correct_sum / (nq * args.K)
-    print(f"ef search: {args.ef_list[0]}, recall: {recall:.4f}")
     exit()
 
     # results = bench_hybrid_query(

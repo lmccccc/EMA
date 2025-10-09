@@ -48,9 +48,9 @@ def load_data(dataset_file, query_file, attr_file, qrange_file, gt_file, N, Nq, 
         print("error: attribution file format not supported")
         sys.exit(-1)
     if(".json" in qrange_file):
-        query_filter_ranges = read_attr(qrange_file)
+        query_filter_ranges = read_multy_attr(qrange_file)
         #convert array into turple list
-        query_filter_ranges = [(query_filter_ranges[i], query_filter_ranges[i+1]) for i in range(0, len(query_filter_ranges), 2)]
+        # query_filter_ranges = [(query_filter_ranges[i], query_filter_ranges[i+1]) for i in range(0, len(query_filter_ranges), 2)]
         assert len(query_filter_ranges) == Nq
     else:    
         print("error: query range file format not supported")
@@ -92,6 +92,7 @@ def arg_init():
         "--gt_path", type=str, required=True, help="Path to the json ground truth file"
     )
     parser.add_argument("--M", type=int, default=16, help="Number of graph connections")
+    parser.add_argument("--ft_bits", type=int, default=128, help="Number of bits per filter table/ number of bytes per countering hash table")
     parser.add_argument(
         "--efConstruction", type=int, default=500, help="Parameter for HNSW index"
     )
@@ -147,6 +148,19 @@ def arg_init():
         default=[0],
         help="attribute type list, 0 for numerical, 1 for categorical",
     )
+    parser.add_argument(
+        "--ef_search",
+        type=int,
+        default=100,
+        help="ef search",
+    )
+    parser.add_argument(
+        "--ef_top",
+        type=int,
+        default=10,
+        help="ef top",
+    )
+
 
     args = parser.parse_args()
     return args

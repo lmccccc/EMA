@@ -10,6 +10,7 @@ from setuptools.command.build_ext import build_ext
 
 __version__ = '0.8.0'
 
+DEBUG=True
 
 include_dirs = [
     pybind11.get_include(),
@@ -74,9 +75,16 @@ def cpp_flag(compiler):
 class BuildExt(build_ext):
     """A custom build extension for adding compiler-specific options."""
     compiler_flag_native = '-march=native'
+    flag_list = [compiler_flag_native]
+    if DEBUG: 
+        print("building in debug mode")
+        flag_list.append('-O0')
+        flag_list.append('-g')
+    else:
+        flag_list.append('-O3')
     c_opts = {
         'msvc': ['/EHsc', '/openmp'], # ['/EHsc', '/openmp', '/O2']
-        'unix': [compiler_flag_native],  # , '-w' ['-O3', compiler_flag_native]
+        'unix': flag_list,  # , '-w' ['-O3', compiler_flag_native]
     }
     link_opts = {
         'unix': [],

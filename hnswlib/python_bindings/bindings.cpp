@@ -197,12 +197,15 @@ class Index {
         size_t M,
         size_t efConstruction,
         size_t random_seed,
+        size_t ft_bits,
+        std::vector<int> attr_type, 
+        size_t max_cate_size,
         bool allow_replace_deleted) {
         if (appr_alg) {
             throw std::runtime_error("The index is already initiated.");
         }
         cur_l = 0;
-        appr_alg = new hnswlib::HierarchicalNSW<dist_t>(l2space, maxElements, topElements, M, efConstruction, random_seed, allow_replace_deleted);
+        appr_alg = new hnswlib::HierarchicalNSW<dist_t>(l2space, maxElements, topElements, M, efConstruction, random_seed, ft_bits, attr_type, max_cate_size, allow_replace_deleted);
         index_inited = true;
         ep_added = false;
         appr_alg->ef_ = default_ef;
@@ -237,12 +240,17 @@ class Index {
         appr_alg->saveIndex(path_to_index);
     }
 
-    void initAttrSpace(const std::vector<int>& attr_type, int max_cate_size){
-        appr_alg->init_attr_space(attr_type, max_cate_size);
+    void initAttrSpace(){
+        appr_alg->init_attr_space();
     }
 
     void addAttr(const std::vector<std::vector<std::vector<int>>>& data){
         appr_alg->add_attr(data);
+    }
+
+    void generateFT(){
+        py::gil_scoped_release l;
+        appr_alg->generateFT();
     }
 
 
@@ -487,8 +495,12 @@ class Index {
         appr_alg->add_ep_ids(ep_ids_);
     }
 
-    void initCountingHashTable(int table_size) {
-        appr_alg->init_counting_hash_table(table_size);
+    void initCountingHashTable() {
+        appr_alg->init_counting_hash_table();
+    }
+
+    void attrCheck(){
+        appr_alg->attr_check();
     }
 
     void addBuckets(py::array_t<int> buckets_, py::array_t<int> bucket_offsets_){
@@ -505,6 +517,48 @@ class Index {
 
     void generateAttrIndexes(){
         appr_alg->generate_attr_indexes();
+    }
+
+    std::vector<std::vector<int>> predicateTranslate(const std::vector<std::vector<std::vector<int>>>& predicate) const {
+        std::vector<std::vector<int>> result;
+        for(int i = 0; i < predicate.size(); i++){
+            result.push_back(appr_alg->predicate_translate(predicate[i]));
+        }
+        return result;
+        // int rows = predicate.size();
+        // if (num_threads <= 0)
+        //     num_threads = num_threads_default;
+
+        // {
+        //     py::gil_scoped_release l;
+        //     get_input_array_shapes(buffer, &rows, &features);
+
+        //     // avoid using threads when the number of searches is small:
+        //     if (rows <= num_threads * 4) {
+        //         num_threads = 1;
+        //     }
+        
+        //     ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+        //         std::vector<int> result = appr_alg->predicate_translate(predicate);
+        //         if (result.size() != k)
+        //             throw std::runtime_error(
+        //                 "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+        //         for (int i = k - 1; i >= 0; i--) {
+        //             auto& result_tuple = result.top();
+        //             data_numpy_d[row * k + i] = result_tuple.first;
+        //             data_numpy_l[row * k + i] = result_tuple.second;
+        //             result.pop();
+        //         }
+        //     });
+        // }
+    }
+
+    std::vector<std::vector<char>> predicate_to_ft(const std::vector<std::vector<std::vector<int>>>& predicate) const {
+        std::vector<std::vector<char>> predicate_ft;
+        for(int i = 0; i < predicate.size(); i++){
+            predicate_ft.push_back(appr_alg->predicate_to_ft(predicate[i]));
+        }
+        return predicate_ft;
     }
 
 
@@ -709,6 +763,95 @@ class Index {
 
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
                         (void*)(norm_array.data() + start_idx), k, p_idFilter);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                });
+            }
+        }
+        py::capsule free_when_done_l(data_numpy_l, [](void* f) {
+            delete[] f;
+            });
+        py::capsule free_when_done_d(data_numpy_d, [](void* f) {
+            delete[] f;
+            });
+
+        return py::make_tuple(
+            py::array_t<hnswlib::labeltype>(
+                { rows, k },  // shape
+                { k * sizeof(hnswlib::labeltype),
+                  sizeof(hnswlib::labeltype) },  // C-style contiguous strides for each index
+                data_numpy_l,  // the data pointer
+                free_when_done_l),
+            py::array_t<dist_t>(
+                { rows, k },  // shape
+                { k * sizeof(dist_t), sizeof(dist_t) },  // C-style contiguous strides for each index
+                data_numpy_d,  // the data pointer
+                free_when_done_d));
+    }
+
+    py::object hybridKnnQuery_return_numpy(
+        py::object input,
+        std::vector<std::vector<int>> predicate, 
+        std::vector<std::vector<char>> ft_predicate, 
+        size_t k = 1,
+        int num_threads = -1,
+        const std::function<bool(hnswlib::labeltype)>& filter = nullptr) {
+        py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
+        auto buffer = items.request();
+        hnswlib::labeltype* data_numpy_l;
+        dist_t* data_numpy_d;
+        size_t rows, features;
+
+        if (num_threads <= 0)
+            num_threads = num_threads_default;
+
+        {
+            py::gil_scoped_release l;
+            get_input_array_shapes(buffer, &rows, &features);
+
+            // avoid using threads when the number of searches is small:
+            if (rows <= num_threads * 4) {
+                num_threads = 1;
+            }
+
+            data_numpy_l = new hnswlib::labeltype[rows * k];
+            data_numpy_d = new dist_t[rows * k];
+
+            // Warning: search with a filter works slow in python in multithreaded mode. For best performance set num_threads=1
+            CustomFilterFunctor idFilter(filter);
+            CustomFilterFunctor* p_idFilter = filter ? &idFilter : nullptr;
+
+            if (normalize == false) {
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->hybridSearch(
+                        (void*)items.data(row), predicate[row], ft_predicate[row], k, p_idFilter);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                });
+            } else {
+                std::vector<float> norm_array(num_threads * features);
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    float* data = (float*)items.data(row);
+
+                    size_t start_idx = threadId * dim;
+                    normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
+
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->hybridSearch(
+                        (void*)items.data(row), predicate[row], ft_predicate[row], k, p_idFilter);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -1549,10 +1692,21 @@ PYBIND11_PLUGIN(hashannlib) {
             py::arg("M") = 16,
             py::arg("ef_construction") = 200,
             py::arg("random_seed") = 100,
+            py::arg("ft_bits") = 128,
+            py::arg("attr_type") = py::list(py::cast(std::vector<int>{0, 1})),
+            py::arg("max_cate_size") = 5,
             py::arg("allow_replace_deleted") = false)
         .def("knn_query",
             &Index<float>::knnQuery_return_numpy,
             py::arg("data"),
+            py::arg("k") = 1,
+            py::arg("num_threads") = -1,
+            py::arg("filter") = py::none())
+        .def("hybrid_knn_query",
+            &Index<float>::hybridKnnQuery_return_numpy,
+            py::arg("data"),
+            py::arg("predicate"),
+            py::arg("ft_predicate"),
             py::arg("k") = 1,
             py::arg("num_threads") = -1,
             py::arg("filter") = py::none())
@@ -1563,15 +1717,19 @@ PYBIND11_PLUGIN(hashannlib) {
             py::arg("num_threads") = -1,
             py::arg("replace_deleted") = false,
             py::arg("levels") = py::array_t<int>() )
-        .def("initAttrSpace", &Index<float>::initAttrSpace, py::arg("attr_type"), py::arg("max_cate_size"))
+        .def("initAttrSpace", &Index<float>::initAttrSpace)
         .def("addAttr", &Index<float>::addAttr, py::arg("attr_data"))
+        .def("attrCheck", &Index<float>::attrCheck)
         .def("get_items", &Index<float>::getData, py::arg("ids") = py::none(), py::arg("return_type") = "numpy")
         .def("addBuckets", &Index<float>::addBuckets, py::arg("bucket_data"), py::arg("bucket_offsets"))
         .def("get_ids_list", &Index<float>::getIdsList)
         .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
         .def("set_ef_top", &Index<float>::set_ef_top, py::arg("ef_top"))
         .def("addEpIds", &Index<float>::addEpIds, py::arg("ep_ids"))
-        .def("initCountingHashTable", &Index<float>::initCountingHashTable, py::arg("table_size"))
+        .def("predicateTranslate", &Index<float>::predicateTranslate, py::arg("predicate"))
+        .def("predicateToFT", &Index<float>::predicate_to_ft, py::arg("predicate"))
+        .def("generateFT", &Index<float>::generateFT)
+        .def("initCountingHashTable", &Index<float>::initCountingHashTable)
         .def("generateAttrIndexes", &Index<float>::generateAttrIndexes)
         .def("set_num_threads", &Index<float>::set_num_threads, py::arg("num_threads"))
         .def("index_file_size", &Index<float>::indexFileSize)

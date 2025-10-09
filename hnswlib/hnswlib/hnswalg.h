@@ -10,13 +10,14 @@
 #include <unordered_set>
 #include <list>
 #include <memory>
+#include <bitset>
 
 
 namespace hnswlib {
 typedef unsigned int tableint;
 typedef unsigned int linklistsizeint;
 
-using BTree = tlx::btree_map<int, tableint>;
+using BTree = tlx::btree_map<int, std::pair<tableint, int>>; // value, <internal_id, order>
 
 template<typename dist_t>
 class HierarchicalNSW : public AlgorithmInterface<dist_t> {
@@ -29,6 +30,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     mutable std::atomic<size_t> cur_element_count{0};  // current number of elements
     size_t size_data_per_element_{0};
     size_t size_links_per_element_{0};
+    size_t ft_bits_{128}; // number of bits per vector for filtering table
+    size_t ft_bytes_{16}; // 128/8
     mutable std::atomic<size_t> num_deleted_{0};  // number of deleted elements
     size_t M_{0};
     size_t maxM_{0};
@@ -36,15 +39,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t ef_construction_{0};
     size_t ef_{ 0 };
     size_t ef_top{ 0 };
-
+    size_t padding{0};
     std::vector<BTree> btrees; // B+ tree for attributes
     std::vector<std::vector<std::vector<tableint>>> ivf; // inverted file for categorical attributes
 
     //attributes
-    int* attr_list_;
-    int num_size_per_item = 0;
+    int attr_size_per_item_ = 0;
     std::vector<int> attr_type_; // 0: numerical, 1: categorical
     std::vector<int> attr_pos_;
+    std::vector<int> predicate_offset_;
+    int predicate_size_{0};
 
 
     double mult_{0.0}, revSize_{0.0};
@@ -61,7 +65,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     tableint enterpoint_node_{0};
 
     size_t size_links_level0_{0};
-    size_t offsetData_{0}, offsetLevel0_{0}, label_offset_{ 0 };
+    size_t offsetData_{0}, offsetLevel0_{0}, label_offset_{ 0 }, ft_offset_{0}, offsetAttr_{0}; 
+    size_t nbr_size_per_element{0};
 
     char *data_level0_memory_{nullptr};
     char **linkLists_{nullptr};
@@ -90,14 +95,25 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::vector<tableint> ep_ids_;
 
     // cluster buckets
-    int bucket_size_;
-    tableint* buckets = nullptr; // buckets for clustering
+    int bucket_size_;            // number of buckets(clusters)
+    tableint* buckets = nullptr; // max_elements, cluster[i]: buckets[bucket_offsets[i] ~ bucket_offsets[i+1]-1]
     std::vector<tableint> bucket_offsets; // offsets for buckets
+    int cate_int_byte_{0};
+    int max_cate_size_{0};
 
     // counting hash table
     int table_size_;
     int* counting_hash_table = nullptr; // counting hash table
     std::vector<std::vector<int>> counting_hash_table_mapping;
+
+    // search hyper-parameters
+    double total_scan_factor_{0.001}; // scan all points belonging to top buckets
+    double bucket_scan_factor_{0.01}; // scan points within the bucket whose CHT selectivity is lower than this factor
+    double esti_scan_factor_{0.1}; // scan if the estimated selectivity is lower than this factor
+
+
+    int offsetNbrFt_{0};
+    int size_per_ft_{0};
 
     void add_ep_ids(const std::vector<int>& ep_ids){
         ep_ids_.clear();
@@ -106,9 +122,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     void add_buckets(const int *buckets_, const int * bucket_offsets_, size_t offset_size){
         bucket_size_ = offset_size - 1;
-        if (buckets != nullptr) {
-            free(buckets);
-        }
+        free(buckets);
         buckets = (tableint*)malloc(sizeof(tableint) * max_elements_);
         memcpy(buckets, buckets_, sizeof(tableint) * max_elements_);
 
@@ -125,9 +139,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (N == 0 || M <= 0) return {};
 
         // 保留原始索引
-        std::vector<std::pair<int,int>> indexed;
+        std::vector<std::pair<int,int>> indexed; // <value, original_index>
         indexed.reserve(N);
         for (int i = 0; i < N; i++) {
+            // std::cout << "data[" << i << "][" << attr_idx << "]: " << *attr_at(i, attr_idx) << std::endl;
             indexed.push_back({*attr_at(i, attr_idx), i});
         }
 
@@ -142,31 +157,41 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             mapping[i] = indexed[i * N / M].first;
         }
 
+        std::cout << "num-attribute split positions: ";
+        for (int i = 0; i < M; i++) {
+            std::cout << mapping[i] << " ";
+        }
+        std::cout << std::endl;
+
         return mapping;
     }
 
     std::vector<int> distribute_labels(const int attr_idx, int M) {
 
         // count label frequencies
-        int max_label = -1;
-        std::vector<int> label_cnt(2000, 0);
+        std::vector<int> label_cnt(max_cate_size_, 0);
         for (int i = 0; i < max_elements_; ++i){
             int* _attr = attr_at(i, attr_idx);
-            if (_attr[0] > max_label) max_label = _attr[0];
-            for(int j = 1; j <= _attr[0]; ++j){
-                if(_attr[j] > label_cnt.size()){
-                    label_cnt.resize(_attr[j] + 1000, 0);
+
+            for(int k = 0; k < max_cate_size_; ++k){
+                int byte_pos = k >> 5;
+                int bit_pos = k & 31;
+                if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
+                    label_cnt[k]++;
                 }
-                label_cnt[_attr[j]]++;
             }
+            // for(int j = 1; j <= _attr[0]; ++j){
+            //     if(_attr[j] > label_cnt.size()){
+            //         label_cnt.resize(_attr[j] + 1000, 0);
+            //     }
+            //     label_cnt[_attr[j]]++;
+            // }
         }
 
         // sort labels by frequency, sort together with both label and frequency
         std::vector<std::pair<int, int>> label_freq;
-        for (int lbl = 0; lbl <= max_label; lbl++) {
-            if (label_cnt[lbl] > 0) {
-                label_freq.push_back({lbl, label_cnt[lbl]});
-            }
+        for (int lbl = 0; lbl < max_cate_size_; lbl++) {
+            label_freq.push_back({lbl, label_cnt[lbl]});
         }
         std::sort(label_freq.begin(), label_freq.end(),
                   [](auto& a, auto& b){ return a.second > b.second; });
@@ -183,79 +208,89 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             bucket_count[min_bucket]++; // update bucket count
         }
 
+        std::cout << "label distribution to " << M << " buckets: " << std::endl;
+        for (int i = 0; i < M; i++) {
+            if (bucket_count[i] == 0) continue;
+            std::cout << "label=" << i << ", bucket=" << label_to_bucket[i] << ", count=" << label_cnt[i] << "; " << std::endl;
+        }
+        std::cout << std::endl;
+
         return label_to_bucket;
     }
 
-    int* counting_hash_table_at(int attr_idx, int cluster_id) {
-        return &counting_hash_table[cluster_id * bucket_size_ * attr_type_.size() + attr_idx * bucket_size_];
+    inline int* counting_hash_table_at(int cluster_id, int attr_idx) {
+        return &counting_hash_table[cluster_id * table_size_ * attr_type_.size() + attr_idx * table_size_];
     }
 
 
-    inline int lower_bound(const int* mapping, int L, int val) {
-    #ifdef USE_AVX2
-        // -------- AVX2 版本 (一次 8 个 int) --------
-        __m256i vval = _mm256_set1_epi32(val);
-        int i = 0;
-        for (; i + 8 <= L; i += 8) {
-            __m256i vdata = _mm256_loadu_si256((__m256i*)(mapping + i));
+    inline int lower_bound(const int* mapping, int L, int val) const{
+    // #ifdef USE_SSE
+    //     // -------- SSE 版本 (一次 4 个 int) --------
+    //     __m128i vval = _mm_set1_epi32(val);
+    //     int i = 0;
+    //     for (; i + 4 <= L; i += 4) {
+    //         __m128i vdata = _mm_loadu_si128((__m128i*)(mapping + i));
 
-            // cmp = (mapping[j] >= val) ? 0xFFFFFFFF : 0
-            __m256i gt   = _mm256_cmpgt_epi32(vval, vdata); 
-            __m256i ge   = _mm256_xor_si256(gt, _mm256_set1_epi32(-1)); // 取反 => >=
+    //         __m128i gt = _mm_cmpgt_epi32(vval, vdata); 
+    //         __m128i ge = _mm_xor_si128(gt, _mm_set1_epi32(-1)); // >=
 
-            int mask = _mm256_movemask_ps(_mm256_castsi256_ps(ge));
+    //         int mask = _mm_movemask_ps(_mm_castsi128_ps(ge));
 
-            if (mask != 0) {
-                int offset = __builtin_ctz(mask); // 找到第一个 >= val 的位置
-                return i + offset;
-            }
-        }
-        for (; i < L; i++) {
-            if (mapping[i] >= val) return i;
-        }
-        return L;
+    //         if (mask != 0) {
+    //             int offset = __builtin_ctz(mask); // 第一个 >= val
+    //             int pos = i + offset;
+    //             return pos > 0 ? pos - 1 : -1;
+    //         }
+    //     }
 
-    #elif defined(USE_SSE)
-        // -------- SSE 版本 (一次 4 个 int) --------
-        __m128i vval = _mm_set1_epi32(val);
-        int i = 0;
-        for (; i + 4 <= L; i += 4) {
-            __m128i vdata = _mm_loadu_si128((__m128i*)(mapping + i));
+    //     // 如果整个数组都 < val
+    //     if (L > 0) return L - 1;
+    //     return -1;
 
-            __m128i gt = _mm_cmpgt_epi32(vval, vdata); 
-            __m128i ge = _mm_xor_si128(gt, _mm_set1_epi32(-1)); // >=
-
-            int mask = _mm_movemask_ps(_mm_castsi128_ps(ge));
-
-            if (mask != 0) {
-                int offset = __builtin_ctz(mask); // 找到第一个 >= val 的位置
-                return i + offset;
-            }
-        }
-        for (; i < L; i++) {
-            if (mapping[i] >= val) return i;
-        }
-        return L;
-
-    #else
+    // #else
         // -------- 普通顺序扫描 --------
-        for (int i = 0; i < L; i++) {
-            if (mapping[i] >= val) return i;
-        }
-        return L;
-    #endif
+        int pos = 0;
+        while (pos < L && mapping[pos] <= val) pos++;
+        return pos > 0 ? pos - 1 : -1;
+    // #endif
     }
 
+    inline int last_le_index(const int* mapping, int L, int val) const {
+    // #ifdef USE_SSE
+    //     // -------- SSE 版本 (一次 4 个 int) --------
+    //     __m128i vval = _mm_set1_epi32(val);
+    //     int i = 0;
+    //     for (; i + 4 <= L; i += 4) {
+    //         __m128i vdata = _mm_loadu_si128((__m128i*)(mapping + i));
+    //         __m128i gt = _mm_cmpgt_epi32(vdata, vval); // mapping[j] > val
+    //         int mask = _mm_movemask_ps(_mm_castsi128_ps(gt));
+    //         if (mask != 0) {
+    //             int offset = __builtin_ctz(mask);
+    //             return i + offset - 1;
+    //         }
+    //     }
+    //     for (; i < L; i++) {
+    //         if (mapping[i] > val) return i - 1;
+    //     }
+    //     return L - 1;
+    // #else
+        // -------- 普通循环 --------
+        for (int i = 0; i < L; i++) {
+            if (mapping[i] > val) return i-1;
+        }
+        return L-1;
+    // #endif
+    }
 
-    void init_counting_hash_table(int table_size) {
-        table_size_ = table_size;
+    void init_counting_hash_table() {
+        table_size_ = ft_bits_;
         assert(counting_hash_table == nullptr);
         counting_hash_table = new int[table_size_ * bucket_size_ * attr_type_.size()]; // each cluster holds a CHT, table_size_ slots for attr_type_.size() attributes
         memset(counting_hash_table, 0, sizeof(int) * table_size_ * bucket_size_ * attr_type_.size());
 
         for(int i = 0; i < attr_type_.size(); ++i){
             if (attr_type_[i] == 0) { // numerical
-                counting_hash_table_mapping.push_back(bucketize_equal_count(i, max_elements_));
+                counting_hash_table_mapping.push_back(bucketize_equal_count(i, table_size_));
             } else if (attr_type_[i] == 1) { // categorical
                 counting_hash_table_mapping.push_back(distribute_labels(i, table_size_));
             }
@@ -269,16 +304,25 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 int id = buckets[j];
                 int* _attr = attr_at(id, i);
 
-                int* cht = counting_hash_table_at(i, bucket_id);
+                int* cht = counting_hash_table_at(bucket_id, i);
                 if (attr_type_[i] == 0) { // numerical
                     int val = _attr[0];
                     int corresponding_slot = lower_bound(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), val);
+                    if (corresponding_slot == -1) continue;
                     cht[corresponding_slot]++;
                 } else if (attr_type_[i] == 1) { // categorical
-                    for(int k = 1; k <= _attr[0]; ++k){
-                        int val = _attr[k];
-                        int corresponding_slot = counting_hash_table_mapping[i][val];
-                        cht[corresponding_slot]++;
+                    // for(int k = 1; k <= _attr[0]; ++k){
+                    //     int val = _attr[k];
+                    //     int corresponding_slot = counting_hash_table_mapping[i][val];
+                    //     cht[corresponding_slot]++;
+                    // }
+                    for(int k = 0; k < max_cate_size_; ++k){
+                        int byte_pos = k >> 5;
+                        int bit_pos = k & 31;
+                        if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
+                            int corresponding_slot = counting_hash_table_mapping[i][k]; 
+                            cht[corresponding_slot]++;
+                        }
                     }
                 }
             }
@@ -309,6 +353,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t M = 16,
         size_t ef_construction = 200,
         size_t random_seed = 100,
+        size_t ft_bits = 128,
+        std::vector<int> attr_type = {0, 1},
+        size_t max_cate_size = 5,
         bool allow_replace_deleted = false)
         : label_op_locks_(MAX_LABEL_OPERATION_LOCKS),
             link_list_locks_(max_elements),
@@ -317,9 +364,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         max_elements_ = max_elements;
         top_elements_ = top_elements;
         num_deleted_ = 0;
+        ft_bits_ = ft_bits;
+        ft_bytes_ = (ft_bits + 7) / 8;
+        attr_type_ = attr_type;
+        max_cate_size_ = max_cate_size;
+        assert(ft_bits_ % 8 == 0);
         data_size_ = s->get_data_size();
         fstdistfunc_ = s->get_dist_func();
         dist_func_param_ = s->get_dist_func_param();
+
         if ( M <= 10000 ) {
             M_ = M;
         } else {
@@ -336,15 +389,32 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         level_generator_.seed(random_seed);
         update_probability_generator_.seed(random_seed + 1);
 
-        size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
-        size_data_per_element_ = size_links_level0_ + data_size_ + sizeof(labeltype);
+        
+        // init attr space
+        init_attr_space();
+
+        // per element: links(maxM0*4 + 4) + data_size_ + label(4) + filter table * attr size + padding + attr(attr_size * 4)
+        size_links_level0_ = maxM0_ * sizeof(tableint)+ sizeof(linklistsizeint);
+        size_per_ft_ = ft_bytes_ * attr_type_.size();
+
+        // attr is int*, padding the start position to 4 byte alignment
+        padding = sizeof(int) - (size_links_level0_ % sizeof(int));
+        if (padding == sizeof(int)) padding = 0;
+        size_data_per_element_ = size_links_level0_ + data_size_ + sizeof(labeltype) + size_per_ft_* (maxM0_ + 1) + padding + attr_size_per_item_ * sizeof(int);
+        nbr_size_per_element = size_links_level0_ + data_size_ + sizeof(labeltype);
         offsetData_ = size_links_level0_;
         label_offset_ = size_links_level0_ + data_size_;
+        ft_offset_ = size_links_level0_ + data_size_ + sizeof(labeltype);
+        offsetNbrFt_ = ft_offset_ + size_per_ft_;
+        offsetAttr_ = size_links_level0_ + data_size_ + sizeof(labeltype) + size_per_ft_ * (maxM0_ + 1) + padding;
         offsetLevel0_ = 0;
-
+        
         data_level0_memory_ = (char *) malloc(max_elements_ * size_data_per_element_);
+
         if (data_level0_memory_ == nullptr)
             throw std::runtime_error("Not enough memory");
+
+        memset(data_level0_memory_, 0, max_elements_ * size_data_per_element_);
 
         cur_element_count = 0;
 
@@ -360,7 +430,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
         mult_ = 1 / log(1.0 * M_);
         revSize_ = 1.0 / mult_;
+
     }
+
 
 
     ~HierarchicalNSW() {
@@ -368,7 +440,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     void clear() {
-        std::cout << "clearing" << std::endl;
         free(data_level0_memory_);
         data_level0_memory_ = nullptr;
         for (tableint i = 0; i < cur_element_count; i++) {
@@ -380,30 +451,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         cur_element_count = 0;
         visited_list_pool_.reset(nullptr);
 
-
-        // attr_list_
-        if(attr_list_ != nullptr) {
-            free(attr_list_);
-            attr_list_ = nullptr;
-        }
-
         // buckets
-        if(buckets != nullptr) {
-            free(buckets);
-            buckets = nullptr;
-        }
+        free(buckets);
+        buckets = nullptr;
 
         // counting_hash_table
-        if(counting_hash_table != nullptr) {
-            free(counting_hash_table);
-            counting_hash_table = nullptr;
-        }
+        free(counting_hash_table);
+        counting_hash_table = nullptr;
         
-        std::cout << "btrees.clear" << std::endl;
         btrees.clear();
-        std::cout << "btrees.clear done" << std::endl;
         ivf.clear();
-        std::cout << "ivf.clear done" << std::endl;
 
     }
 
@@ -425,51 +482,62 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         ef_top = eftop;
     }
 
-    void init_attr_space(const std::vector<int>& attr_type, int max_cate_size){
-        attr_type_ = attr_type;
+    void init_attr_space(){
         attr_pos_.clear();
-        attr_pos_.resize(attr_type.size());
-        num_size_per_item = 0;
-        for (size_t i = 0; i < attr_type.size(); i++)
+        attr_pos_.resize(attr_type_.size());
+        attr_size_per_item_ = 0;
+        predicate_offset_.resize(attr_type_.size());
+        predicate_size_ = 0;
+        if(max_cate_size_ > 0) cate_int_byte_ = (max_cate_size_ + sizeof(int) * 8 - 1) / (sizeof(int) * 8);
+        else cate_int_byte_ = 0;
+        std::cout << "max_cate_size_:" << max_cate_size_ << ", cate_int_byte_: " << cate_int_byte_ << std::endl;
+        for (size_t i = 0; i < attr_type_.size(); i++)
         {
-            if (attr_type[i] != 0 && attr_type[i] != 1)
+            if (attr_type_[i] != 0 && attr_type_[i] != 1)
             {
                 throw std::runtime_error("Attribute type should be either 0 (numerical) or 1 (categorical)");
             }
         }
-        for (size_t i = 0; i < attr_type.size(); i++)
+        for (size_t i = 0; i < attr_type_.size(); i++)
         {
-            if (attr_type[i] == 0) { // numerical
-                attr_pos_[i] = num_size_per_item;
-                num_size_per_item += 1;
+            if (attr_type_[i] == 0) { // numerical
+                attr_pos_[i] = attr_size_per_item_;
+                attr_size_per_item_ += 1;
+                predicate_offset_[i] = predicate_size_;
+                predicate_size_ += 2;
+            }
+            else if (attr_type_[i] == 1) { // categorical
+                attr_pos_[i] = attr_size_per_item_;
+                attr_size_per_item_ += cate_int_byte_;
+                predicate_offset_[i] = predicate_size_;
+                predicate_size_ += cate_int_byte_;
             }
         }
-        for (size_t i = 0; i < attr_type.size(); i++)
-        {
-            if (attr_type[i] == 1) { // categorical
-                attr_pos_[i] = num_size_per_item;
-                num_size_per_item += max_cate_size + 1;
-            }
-        }
-        attr_list_ = new int[num_size_per_item * max_elements_];
     }
 
-    int* attr_at(int item_id, int attr_idx) {
-        return &attr_list_[item_id * num_size_per_item + attr_pos_[attr_idx]];
-    }
 
     void add_attr(const std::vector<std::vector<std::vector<int>>>& data) {
         for(size_t i = 0; i < data.size(); i++) { // for each item
             for(size_t j = 0; j < data[i].size(); j++) {  // for each attribute
-                int pos = attr_pos_[j];
-                int global_pos = i * num_size_per_item + pos;
                 if (attr_type_[j] == 0) { // numerical
+                    // std::cout << "add attr num data[" << i << "][" << j << "][0]: " << data[i][j][0] << std::endl;
                     assert(data[i][j].size() == 1);
-                    attr_list_[global_pos] = data[i][j][0];
+                    int* num_attr = attr_at(i, j);
+                    *num_attr = data[i][j][0];
                 } else if (attr_type_[j] == 1) { // categorical
-                    int cate_size = data[i][j].size();
-                    attr_list_[global_pos] = cate_size;
-                    memcpy(&attr_list_[global_pos + 1], data[i][j].data(), sizeof(int) * cate_size);
+                    int* attr_space = attr_at(i, j);
+                    // memset(attr_space, 0, cate_int_byte_ * sizeof(int));
+                    for (int m = 0; m < cate_int_byte_; ++m)
+                        attr_space[m] = 0;
+                    for(int k = 0; k < data[i][j].size(); ++k){
+                        // std::cout << "cate data[" << i << "][" << j << "][" << k << "]: " << data[i][j][k] << std::endl;
+                        // mark bit position of attribute to 1 
+                        int val = data[i][j][k];
+                        int byte_pos = val >> 5; 
+                        int bit_pos  = val & 31;
+                        assert(byte_pos < cate_int_byte_);
+                        attr_space[byte_pos] |= (1u << bit_pos);
+                    }
                 }
             }
         }
@@ -484,9 +552,19 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (attr_type_[i] == 0) { // numerical
                 std::cout << "Attribute " << i << ": " << "numerical" << std::endl;
                 // build B+ tree for numerical attribute
-                for(int j = 0; j < max_elements_; ++j){
+                // sort all items by this attribute
+                std::vector<std::pair<int, tableint>> items;
+                for (int j = 0; j < max_elements_; ++j){
                     int* _attr = attr_at(j, i);
-                    btrees[i].insert({j, _attr[0]});
+                    items.push_back({_attr[0], j}); // attr_value, internal_id
+                }
+                std::sort(items.begin(), items.end(),
+                          [](auto& a, auto& b){ return a.first < b.first; });
+                // insert into B+ tree
+                for(int j = 0; j < max_elements_; ++j){
+                    // int* _attr = attr_at(j, i);
+                    // std::cout << "  item " << j << ": " << _attr[0] << std::endl;
+                    btrees[i].insert({items[j].first, {items[j].second, j}}); // value, <internal_id, order>
                 }
             }
         }
@@ -498,8 +576,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (attr_type_[i] == 1) { // categorical
                 // build inverted file for categorical attribute
                 std::cout << "Attribute " << i << ": " << "categorical" << std::endl;
+                ivf[i].resize(max_cate_size_);
                 for(int j = 0; j < max_elements_; ++j){
                     int* _attr = attr_at(j, i);
+                    // std::cout << "  item " << j << ": ";
+                    // for(int k = 1; k <= _attr[0]; ++k){
+                    //     std::cout << _attr[k] << " ";
+                    // }
                     // if (j < 5){
                     //     std::cout << "  item " << j << ": ";
                     //     for(int k = 1; k <= _attr[0]; ++k){
@@ -507,17 +590,28 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     //     }
                     //     std::cout << std::endl;
                     // }
-                    for(int k = 1; k <= _attr[0]; ++k){
-                        int val = _attr[k];
-                        if(val >= ivf[i].size()){
-                            ivf[i].resize(val + 1);
+                    for(int k = 0; k < max_cate_size_; ++k){
+                        int byte_pos = k >> 5;
+                        int bit_pos = k & 31;
+                        if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
+                            if(k >= ivf[i].size()){
+                                ivf[i].resize(k + 1);
+                            }
+                            ivf[i][k].push_back(j);
                         }
-                        ivf[i][val].push_back(j);
                     }
                 }
             }
         }
         std::cout << "Attribute indexes generated." << std::endl;
+
+        
+        // for (size_t i = 0; i < cur_element_count; i++) {
+        //     const int* var = attr_at(i, 0);
+        //     if (var[0] <= 0 || var[0] > 100000) {
+        //         std::cout << " after attr index generation, error attr at id " << i << " attr[0]=" << var[0] << std::endl;
+        //     }
+        // }
     }
 
 
@@ -549,6 +643,33 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     inline char *getDataByInternalId(tableint internal_id) const {
         return (data_level0_memory_ + internal_id * size_data_per_element_ + offsetData_);
+    }
+
+    
+    
+    inline unsigned char* nbr_ft_at(tableint internal_id, int nbr_idx, int attr_idx=0) const {
+        // int* size = get_linklist0(internal_id);
+        // assert(nbr_idx < getListCount((linklistsizeint*)size));
+        return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + offsetNbrFt_ + nbr_idx * size_per_ft_ + attr_idx * ft_bytes_);
+    }
+
+
+
+    inline unsigned char *getFilterTable(tableint internal_id) const {
+        return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + ft_offset_);
+    }
+
+    
+    inline int* attr_at(int internal_id, int attr_idx) {
+        return (int *) (data_level0_memory_ + internal_id * size_data_per_element_ + offsetAttr_) + attr_pos_[attr_idx];
+    }
+
+    inline const int* attr_at(int internal_id, int attr_idx) const {
+        return (const int*)(data_level0_memory_ + internal_id * size_data_per_element_ + offsetAttr_) + attr_pos_[attr_idx];
+    }
+
+    inline unsigned char* ft_at(int internal_id, int attr_idx) const {
+        return (unsigned char*)(data_level0_memory_ + internal_id * size_data_per_element_ + ft_offset_) + attr_idx * ft_bytes_;
     }
 
 
@@ -932,6 +1053,600 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return top_candidates;
     }
 
+    inline bool numerical_attr_check(int attr, int predicate_low, int predicate_high) const {
+        return (attr >= predicate_low && attr <= predicate_high);
+    }
+
+    #ifdef USE_SSE
+    inline bool categorical_attr_check(const int* attr, const int* predicate, int len) const {
+        if (len <= 4) {
+            __m128i a = _mm_loadu_si128((const __m128i*)attr);
+            __m128i p = _mm_loadu_si128((const __m128i*)predicate);
+            __m128i anded = _mm_and_si128(a, p);
+            __m128i cmp   = _mm_cmpeq_epi32(anded, p);
+            int mask = _mm_movemask_ps(_mm_castsi128_ps(cmp));
+            int expected = 0b1000 >> (len-1);  // 对应前 len 个元素匹配
+            return mask & expected == expected;
+        } else if (len <= 8) {
+            __m256i a = _mm256_loadu_si256((const __m256i*)attr);
+            __m256i p = _mm256_loadu_si256((const __m256i*)predicate);
+            __m256i anded = _mm256_and_si256(a, p);
+            __m256i cmp   = _mm256_cmpeq_epi32(anded, p);
+            int mask = _mm256_movemask_epi8(cmp);
+            // 构造一个期望值，只要求前 len 个 int 为 0xF
+            int expected = 0b10000000 >> (len-1);  // 对应前 len 个元素匹配
+            // 屏蔽掉后面不用的位
+            return (mask & expected) == expected;
+        }
+        // fallback（不太可能到这）
+        for (int i = 0; i < len; ++i) {
+            if ((attr[i] & predicate[i]) != predicate[i]) return false;
+        }
+        return true;
+    }
+    #else
+    // 普通版本
+    inline bool categorical_attr_check(const int* attr, const int* predicate, int len) const {
+        for (int i = 0; i < len; ++i) {
+            if ((attr[i] & predicate[i]) != predicate[i]) return false;
+        }
+        return true;
+    }
+    #endif
+
+
+    std::vector<int> cate_to_int(const int* cate) const{
+        std::vector<int> res;
+        for (int i = 0; i < max_cate_size_; ++i) {
+            int byte_pos = i >> 5;
+            int bit_pos = i & 31;
+            if (byte_pos < cate_int_byte_ && (cate[byte_pos] & (1 << bit_pos))) {
+                res.push_back(i);
+            }
+        }
+        return res;
+    }
+
+    inline bool predicate_check(tableint id, std::vector<int> predicate) const {
+        for(int i = 0; i < attr_type_.size(); ++i){
+            const int* attr = attr_at(id, i);
+            if (attr_type_[i] == 0) { // numerical, compare range
+                int low = predicate[predicate_offset_[i]];
+                int high = predicate[predicate_offset_[i]+1];
+                if (low == -1 && high == -1) continue; // no constraint on this attribute
+                if (!numerical_attr_check(attr[0], low, high)) {
+                    // std::cout << "num attr " << attr[0] << " not in range [" << low << ", " << high << "]" << std::endl;
+                    return false;
+                }
+            } else if (attr_type_[i] == 1) { // categorical
+                if(!categorical_attr_check(attr, predicate.data()+predicate_offset_[i] , cate_int_byte_)) {
+                    // std::cout << "cate attr not match" << std::endl;
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+
+#ifdef USE_SSE
+//     inline bool filter_table_check(tableint id, char* mapped_predicate) const {
+//         for(int i = 0; i < attr_type_.size(); ++i) {
+//             char* ft = ft_at(id, i);
+
+//             if (attr_type_[i] == 0) { // numerical
+//                 bool matched = false;
+//                 if (ft_bytes_ == 16) {
+//                     __m128i ft_vec = _mm_loadu_si128((__m128i*)ft);
+//                     __m128i pred_vec = _mm_loadu_si128((__m128i*)(mapped_predicate + i * ft_bytes_));
+//                     __m128i and_vec = _mm_and_si128(ft_vec, pred_vec);
+//                     matched = !_mm_testz_si128(and_vec, and_vec); // 检查是否有非零
+//                 } else if (ft_bytes_ == 32) {
+//                     // 分两段处理
+//                     __m128i ft_vec1 = _mm_loadu_si128((__m128i*)ft);
+//                     __m128i pred_vec1 = _mm_loadu_si128((__m128i*)(mapped_predicate + i * ft_bytes_));
+//                     __m128i and1 = _mm_and_si128(ft_vec1, pred_vec1);
+
+//                     __m128i ft_vec2 = _mm_loadu_si128((__m128i*)(ft + 16));
+//                     __m128i pred_vec2 = _mm_loadu_si128((__m128i*)(mapped_predicate + i * ft_bytes_ + 16));
+//                     __m128i and2 = _mm_and_si128(ft_vec2, pred_vec2);
+
+//                     matched = !_mm_testz_si128(and1, and1) || !_mm_testz_si128(and2, and2);
+//                 }
+//                 if (!matched) return false; // 数值属性没有匹配直接返回 false
+
+//             } else if (attr_type_[i] == 1) { // categorical
+//                 if (ft_bytes_ == 16) {
+//                     __m128i ft_vec = _mm_loadu_si128((__m128i*)ft);
+//                     __m128i pred_vec = _mm_loadu_si128((__m128i*)(mapped_predicate + i * ft_bytes_));
+//                     __m128i and_vec = _mm_and_si128(ft_vec, pred_vec);
+//                     if (!_mm_testc_si128(and_vec, pred_vec)) return false; // 有不匹配直接 false
+//                 } else if (ft_bytes_ == 32) {
+//                     __m128i ft_vec1 = _mm_loadu_si128((__m128i*)ft);
+//                     __m128i pred_vec1 = _mm_loadu_si128((__m128i*)(mapped_predicate + i * ft_bytes_));
+//                     __m128i and1 = _mm_and_si128(ft_vec1, pred_vec1);
+
+//                     __m128i ft_vec2 = _mm_loadu_si128((__m128i*)(ft + 16));
+//                     __m128i pred_vec2 = _mm_loadu_si128((__m128i*)(mapped_predicate + i * ft_bytes_ + 16));
+//                     __m128i and2 = _mm_and_si128(ft_vec2, pred_vec2);
+
+//                     if (!_mm_testc_si128(and1, pred_vec1) || !_mm_testc_si128(and2, pred_vec2))
+//                         return false;
+//                 }
+//             }
+//         }
+//         return true;
+//     }
+// #else
+    inline bool filter_table_check(tableint id, char* mapped_predicate) const {
+        for(int i = 0; i < attr_type_.size(); ++i){
+            unsigned char* ft = ft_at(id, i);
+            
+            // test
+            // std::cout << "ft " << i << ": ";
+            // for (int j = 0; j < ft_bytes_; ++j){
+            //     std::bitset<8> b((unsigned char)ft[j]);
+            //     for (size_t i = 0; i < b.size(); i++) {
+            //         std::cout << b[i];  // 注意 bitset[i] 访问的是低位 -> 高位
+            //     }
+            //     std::cout << " ";
+            // }
+            // std::cout << std::endl;
+
+            
+            // std::cout << "mapped predicate: ";
+            // for (int j = 0; j < ft_bytes_; ++j){
+            //     std::bitset<8> b((unsigned char)mapped_predicate[i * ft_bytes_ + j]);
+            //     for (size_t i = 0; i < b.size(); i++) {
+            //         std::cout << b[i];  // 注意 bitset[i] 访问的是低位 -> 高位
+            //     }
+            //     std::cout << " ";
+            // }
+            // std::cout << std::endl;
+            // ------------------
+            bool matched = false;
+            if (attr_type_[i] == 0) { // numerical
+                for (int j = 0; j < ft_bytes_; ++j) {
+                    if ((ft[j] & mapped_predicate[i * ft_bytes_ + j]) > 0) { // any attr exist for range search
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    // std::cout << "num attr not match" << std::endl;
+                    return false;
+                }
+            }
+            else if (attr_type_[i] == 1) { // categorical
+                for (int j = 0; j < ft_bytes_; ++j) {
+                    if ((ft[j] & mapped_predicate[i * ft_bytes_ + j]) != mapped_predicate[i * ft_bytes_ + j]) { // all attr exist for label search
+                        // std::cout << "cate attr not match" << std::endl;
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+#endif
+
+
+    inline bool nbr_ft_check(tableint id, int nbr_idx, char* mapped_predicate) const {
+        for(int i = 0; i < attr_type_.size(); ++i){
+            unsigned char* ft = nbr_ft_at(id, nbr_idx, i);
+            
+            // test
+            // nbr id:
+            // unsigned int* data = get_linklist0(id);
+            // int size = getListCount(data);
+            // tableint *datal = (tableint *) (data + 1);
+            // if (id == 9701 && datal[nbr_idx] == 9885){ 
+            //     std::cout << "ft " << i << ":             ";
+            //     for (int j = 0; j < ft_bytes_; ++j){
+            //         std::bitset<8> b((unsigned char)ft[j]);
+            //         for (size_t i = 0; i < b.size(); i++) {
+            //             std::cout << b[i];  // 注意 bitset[i] 访问的是低位 -> 高位
+            //         }
+            //         std::cout << " ";
+            //     }
+            //     std::cout << std::endl;
+
+                
+            //     std::cout << "mapped predicate: ";
+            //     for (int j = 0; j < ft_bytes_; ++j){
+            //         std::bitset<8> b((unsigned char)mapped_predicate[i * ft_bytes_ + j]);
+            //         for (size_t i = 0; i < b.size(); i++) {
+            //             std::cout << b[i];  // 注意 bitset[i] 访问的是低位 -> 高位
+            //         }
+            //         std::cout << " ";
+            //     }
+            //     std::cout << std::endl;
+            // }
+            // ------------------
+            bool matched = false;
+            if (attr_type_[i] == 0) { // numerical
+                for (int j = 0; j < ft_bytes_; ++j) {
+                    if ((ft[j] & mapped_predicate[i * ft_bytes_ + j]) > 0) { // any attr exist for range search
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    // if (id == 9701 && datal[nbr_idx] == 9885)
+                    //     std::cout << "num attr not match" << std::endl;
+                    return false;
+                }
+            }
+            else if (attr_type_[i] == 1) { // categorical
+                for (int j = 0; j < ft_bytes_; ++j) {
+                    if ((ft[j] & mapped_predicate[i * ft_bytes_ + j]) != mapped_predicate[i * ft_bytes_ + j]) { // all attr exist for label search
+                        // std::cout << "cate attr not match" << std::endl;
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+
+
+    void attr_check() const {
+        // test
+        for (size_t i = 0; i < cur_element_count; i++) {
+            const int* var = attr_at(i, 0);
+            if (var[0] <= 0 || var[0] > 100000) {
+                std::cout << " error attr at id " << i << " attr[0]=" << var[0] << std::endl;
+            }
+        }
+    }
+
+
+    // translate 1. two dimentional to one dimentional predicate
+    //           2. categorical attribute to bitmap
+    std::vector<int> predicate_translate(std::vector<std::vector<int>> ori_predicate) const{
+        std::vector<int> mapped_predicate(predicate_size_, 0);
+        for(int i = 0; i < ori_predicate.size(); ++i){
+            if (attr_type_[i] == 0) { // numerical
+                if (ori_predicate[i].size() == 0){
+                    // no constraint on this attribute
+                    mapped_predicate[predicate_offset_[i]] = -1;
+                    mapped_predicate[predicate_offset_[i]+1] = -1;
+                    continue;
+                }
+                if (ori_predicate[i].size() != 2){
+                    throw std::runtime_error("Numerical attribute predicate should have exactly two values: [low, high]");
+                }
+                mapped_predicate[predicate_offset_[i]] = ori_predicate[i][0];
+                mapped_predicate[predicate_offset_[i]+1] = ori_predicate[i][1];
+            } else if (attr_type_[i] == 1) { // categorical
+                int byte_pos, bit_pos;
+                for(int j = 0; j < ori_predicate[i].size(); ++j){
+                    int val = ori_predicate[i][j];
+                    byte_pos = val >> 5; 
+                    bit_pos = val & 31;
+                    assert(byte_pos < cate_int_byte_);
+                    mapped_predicate[predicate_offset_[i]+byte_pos] |= (1 << bit_pos);
+                }
+            }
+        }
+        return mapped_predicate;
+    }
+
+    // transform predicate to filter table format
+    // 1. numerical: 1 for matched range
+    // 2. categorical: 1 for matched label
+    std::vector<char> predicate_to_ft(std::vector<std::vector<int>> ori_predicate) const{
+        std::vector<char> predicate_ft(size_per_ft_, 0);
+        for(int i = 0; i < ori_predicate.size(); ++i){
+            if (attr_type_[i] == 0) { // numerical
+                if (ori_predicate[i].size() == 0){
+                    // no constraint on this attribute
+                    for (int k = 0; k < ft_bytes_; ++k){
+                        predicate_ft[i * ft_bytes_ + k] = (char)0xFF;
+                    }
+                }
+                else if (ori_predicate[i].size() == 2){
+                    int low = ori_predicate[i][0];
+                    int high = ori_predicate[i][1];
+                    int low_slot = lower_bound(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), low);
+                    low_slot = low_slot < 0 ? 0 : low_slot;
+                    int high_slot = last_le_index(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), high);
+                    for (int val = low_slot; val <= high_slot; ++val){
+                        int pos = val >> 3;
+                        int bit = val & 7;
+                        if (pos < ft_bytes_){
+                            predicate_ft[i * ft_bytes_ + pos] |= (1 << bit);
+                        }
+                    }
+                } else {
+                    throw std::runtime_error("Numerical attribute predicate should have exactly two values: [low, high]");
+                }
+            }
+            else if (attr_type_[i] == 1) { // categorical
+                int byte_pos, bit_pos;
+                for(int j = 0; j < ori_predicate[i].size(); ++j){
+                    int val = ori_predicate[i][j];
+                    int slot = counting_hash_table_mapping[i][val]; 
+                    byte_pos = slot >> 3;
+                    bit_pos = slot & 7;
+                    predicate_ft[i * ft_bytes_ + byte_pos] |= (1 << bit_pos);
+                }
+            }
+        }
+        return predicate_ft;
+    }
+
+    std::vector<std::vector<int>> get_raw_attr(tableint id) const {
+        std::vector<std::vector<int>> res;
+        for (int i = 0; i < attr_type_.size(); ++i) {
+            const int* attr = attr_at(id, i);
+            if (attr_type_[i] == 0) { // numerical
+                res.push_back({attr[0]});
+            } else if (attr_type_[i] == 1) { // categorical
+                std::vector<int> cate;
+                for (int j = 0; j < max_cate_size_; ++j) {
+                    int byte_pos = j >> 5;
+                    int bit_pos = j & 31;
+                    if (byte_pos < cate_int_byte_ && (attr[byte_pos] & (1 << bit_pos))) {
+                        cate.push_back(j);
+                    }
+                }
+                res.push_back(cate);
+            }
+        }
+        return res;
+    }
+
+    void print_raw_attr(tableint id) const {
+        std::vector<std::vector<int>> attrs = get_raw_attr(id);
+        std::cout << "Attr of id " << id << ":[ ";
+        for (int i = 0; i < attrs.size(); ++i) {
+            if (attr_type_[i] == 0) { // numerical
+                std::cout << "[" << attrs[i][0] << "] ";
+            } else if (attr_type_[i] == 1) { // categorical
+                std::cout << " [";
+                for (int val : attrs[i]) {
+                    std::cout << val << ", ";
+                }
+                std::cout << "]";
+            }
+        }
+        std::cout << "]";
+    }
+
+// #define DEBUG_SEARCH
+
+    // bare_bone_search means there is no check for deletions and stop condition is ignored in return of extra performance
+    template <bool bare_bone_search = true, bool collect_metrics = false>
+    std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
+    hybridSearchBaseLayerST(
+        // tableint ep_id,
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates_,
+        const void *data_point,
+        std::vector<int> predicate,
+        std::vector<char> ft_predicate,
+        size_t ef,
+        BaseFilterFunctor* isIdAllowed = nullptr,
+        BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
+        VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+        vl_type *visited_array = vl->mass;
+        vl_type visited_array_tag = vl->curV;
+
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
+
+        dist_t lowerBound;
+        // mark top candidates as visited, and push to candidate set, and initialize lowerBound
+        int visited = 0;
+
+        // test
+        // std::cout << "entry points:" << std::endl;
+
+        while(!top_candidates_.empty()) {
+            tableint id = top_candidates_.top().second;
+
+            //test 
+            // print_raw_attr(id);
+
+            visited_array[id] = visited_array_tag;
+            visited++;
+            candidate_set.emplace(-top_candidates_.top().first, id);
+            if (predicate_check(id, predicate)) {
+                top_candidates.emplace(top_candidates_.top());
+                // std::cout << " in top candidates" << std::endl;
+            }
+            top_candidates_.pop();
+        }
+
+
+        // if (!top_candidates.empty())
+        //     lowerBound = top_candidates.top().first;
+        // else
+        lowerBound = std::numeric_limits<dist_t>::max();
+        int round = 0;
+        int passed = 0;
+        int ft_passed = 0;
+        while (!candidate_set.empty()) {
+            round++;
+            std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+            dist_t candidate_dist = -current_node_pair.first;
+
+            bool flag_stop_search;
+            if (bare_bone_search) {
+                flag_stop_search = candidate_dist > lowerBound;
+            } else {
+                if (stop_condition) {
+                    flag_stop_search = stop_condition->should_stop_search(candidate_dist, lowerBound);
+                } else {
+                    flag_stop_search = candidate_dist > lowerBound && top_candidates.size() == ef;
+                }
+            }
+            if (flag_stop_search) {
+                break;
+            }
+            candidate_set.pop();
+
+            tableint current_node_id = current_node_pair.second;
+            #ifdef DEBUG_SEARCH
+            std::cout << "round " << round << " checking node " << current_node_id << " candidate dist " << candidate_dist << " lower bound " << lowerBound << std::endl;
+            #endif
+
+            int *data = (int *) get_linklist0(current_node_id);
+            size_t size = getListCount((linklistsizeint*)data);
+//                bool cur_node_deleted = isMarkedDeleted(current_node_id);
+            if (collect_metrics) {
+                metric_hops++;
+                metric_distance_computations+=size;
+            }
+
+#ifdef USE_SSE
+            _mm_prefetch((char *) (visited_array + *(data + 1)), _MM_HINT_T0);
+            _mm_prefetch((char *) (visited_array + *(data + 1) + 64), _MM_HINT_T0);
+            _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+            _mm_prefetch((char *) (data + 2), _MM_HINT_T0);
+#endif
+
+            // test
+
+            for (size_t j = 1; j <= size; j++) {
+                int candidate_id = *(data + j);
+                
+//                    if (candidate_id == 0) continue;
+#ifdef USE_SSE
+                _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
+                _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + offsetData_,
+                                _MM_HINT_T0);  ////////////
+#endif
+                if (!(visited_array[candidate_id] == visited_array_tag)) {
+                    visited_array[candidate_id] = visited_array_tag;
+                    visited++;
+
+                    #ifdef DEBUG_SEARCH
+                    std::cout << "   visiting nbr " << candidate_id << " ";
+                    print_raw_attr(candidate_id);
+                    #endif
+
+                    //test
+                    // print_raw_attr(candidate_id);
+
+                    // check filter table predicate
+                    // if (!filter_table_check(candidate_id, ft_predicate.data())) {
+                    //     ft_passed++;
+                    //     // std::cout << " ft passed" << std::endl;
+                    //     // std::cout << " checking 2 hop nbr " << std::endl;
+                    //     int *data2 = (int *) get_linklist0(candidate_id);
+                    //     size_t size2 = getListCount((linklistsizeint*)data2);
+                    //     for (size_t j2 = 1; j2 <= size2; j2++) {
+                    //         int candidate_id2 = *(data2 + j2);
+                    //         // print_raw_attr(candidate_id2);
+                    //     }
+                    //     // std::cout << std::endl;
+                    //     continue;
+                    // }
+
+                    // check nbr filter table predicate
+                    if (!nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
+                        ft_passed++;
+                        // std::cout << " ft passed" << std::endl;
+                        // std::cout << " checking 2 hop nbr " << std::endl;
+                        // int *data2 = (int *) get_linklist0(candidate_id);
+                        // size_t size2 = getListCount((linklistsizeint*)data2);
+                        // for (size_t j2 = 1; j2 <= size2; j2++) {
+                        //     int candidate_id2 = *(data2 + j2);
+                        //     print_raw_attr(candidate_id2);
+                        // }
+                        // std::cout << std::endl;
+                        #ifdef DEBUG_SEARCH
+                        std::cout << " ft passed " << std::endl;
+                        #endif
+                        continue;
+                    }
+
+                    char *currObj1 = (getDataByInternalId(candidate_id));
+                    dist_t dist = fstdistfunc_(data_point, currObj1, dist_func_param_);
+
+                    #ifdef DEBUG_SEARCH
+                    std::cout << " dist " << dist;
+                    #endif
+
+                    bool flag_consider_candidate;
+                    if (!bare_bone_search && stop_condition) {
+                        flag_consider_candidate = stop_condition->should_consider_candidate(dist, lowerBound);
+                    } else {
+                        flag_consider_candidate = top_candidates.size() < ef || lowerBound > dist;
+                    }
+
+                    #ifdef DEBUG_SEARCH
+                    if (!flag_consider_candidate) {
+                        std::cout << ", farther than lowerbound" << std::endl;
+                    }
+                    #endif
+
+                    if (flag_consider_candidate) {
+                        candidate_set.emplace(-dist, candidate_id);
+#ifdef USE_SSE
+                        _mm_prefetch(data_level0_memory_ + candidate_set.top().second * size_data_per_element_ +
+                                        offsetLevel0_,  ///////////
+                                        _MM_HINT_T0);  ////////////////////////
+#endif
+                        
+                        if (!predicate_check(candidate_id, predicate)) {
+                            passed++;
+                            #ifdef DEBUG_SEARCH
+                            std::cout << " predicate passed" << std::endl;
+                            #endif
+                            continue;
+                        }
+                        
+
+                        if (bare_bone_search || 
+                            (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id))))) {
+                            // std::cout << "pushed to top candidates" << std::endl;
+                            top_candidates.emplace(dist, candidate_id);
+                            #ifdef DEBUG_SEARCH
+                            std::cout << ", pushed to top candidates" << std::endl;
+                            #endif
+                            if (!bare_bone_search && stop_condition) {
+                                stop_condition->add_point_to_result(getExternalLabel(candidate_id), currObj1, dist);
+                            }
+                        }
+                        #ifdef DEBUG_SEARCH
+                        else{
+                            std::cout << ", id not allowed" << std::endl;
+                        }
+                        #endif
+
+                        bool flag_remove_extra = false;
+                        if (!bare_bone_search && stop_condition) {
+                            flag_remove_extra = stop_condition->should_remove_extra();
+                        } else {
+                            flag_remove_extra = top_candidates.size() > ef;
+                        }
+                        while (flag_remove_extra) {
+                            tableint id = top_candidates.top().second;
+                            top_candidates.pop();
+                            if (!bare_bone_search && stop_condition) {
+                                stop_condition->remove_point_from_result(getExternalLabel(id), getDataByInternalId(id), dist);
+                                flag_remove_extra = stop_condition->should_remove_extra();
+                            } else {
+                                flag_remove_extra = top_candidates.size() > ef;
+                            }
+                        }
+
+                        if (!top_candidates.empty())
+                            lowerBound = top_candidates.top().first;
+                    }
+                }
+            }
+        }
+        std::cout << "hybrid search round: " << round << ", visited " << visited << ", ft passed " << ft_passed << ", passed " << passed << std::endl;
+
+        visited_list_pool_->releaseVisitedList(vl);
+        return top_candidates;
+    }
+
+
     // search first layer with ef_search_top
     template <bool bare_bone_search = true, bool collect_metrics = false>
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
@@ -1073,10 +1788,102 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return top_candidates;
     }
 
+    inline void updateft(tableint ft_id, tableint attr_id) {
+        // insert "attr" of attr_id to "ft" of ft_id
+        // unsigned char* ft = getFilterTable(ft_id);
+        for (int attr_idx = 0; attr_idx < attr_type_.size(); attr_idx++) {
+            unsigned char* ft = ft_at(ft_id, attr_idx);
+            int* _attr = attr_at(attr_id, attr_idx);
+            if (attr_type_[attr_idx] == 0) { // numerical
+                // hash by mapping to bucket
+                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0], counting_hash_table_mapping[attr_idx].size(), _attr[0]);
+                if (pos < 0) continue;
+                set_ft_at_pos(ft, pos);
+            }
+            else { // categorical
+                for (int k = 0; k <= max_cate_size_; ++k) {
+                    int byte_pos = k >> 5; 
+                    int bit_pos = k & 31;
+                    if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
+                        int pos = counting_hash_table_mapping[attr_idx][k];
+                        if (pos < 0) continue;
+                        set_ft_at_pos(ft, pos);
+                    }
+                }
+            }
+        }
+    }
+
+    inline void updateft(unsigned char* ft_addr, tableint attr_id) {
+        // insert "attr" of attr_id to "ft" of ft_id
+        // char* ft = getFilterTable(ft_id);
+        for (int attr_idx = 0; attr_idx < attr_type_.size(); attr_idx++) {
+            unsigned char* ft = ft_addr + attr_idx * ft_bytes_;
+            int* _attr = attr_at(attr_id, attr_idx);
+            if (attr_type_[attr_idx] == 0) { // numerical
+                // hash by mapping to bucket
+                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0], counting_hash_table_mapping[attr_idx].size(), _attr[0]);
+                if (pos < 0) continue;
+                set_ft_at_pos(ft, pos);
+            }
+            else { // categorical
+                for (int k = 0; k <= max_cate_size_; ++k) {
+                    int byte_pos = k >> 5; 
+                    int bit_pos = k & 31;
+                    if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
+                        int pos = counting_hash_table_mapping[attr_idx][k];
+                        if (pos < 0) continue;
+                        set_ft_at_pos(ft, pos);
+                    }
+                }
+            }
+        }
+    }
+
+
+    // point_id: id of point who is getting neighbors
+    // nbr_idx: index of the neighbor in the neighbor list of point_id
+    // inline void updateNbrFt(tableint point_id, int nbr_idx, tableint dominated_id) {
+    //     // get nbr id
+    //     // insert "attr" of attr_id to "ft" of ft_id
+    //     for (int attr_idx = 0; attr_idx < attr_type_.size(); attr_idx++) {
+    //         unsigned char* ft = nbr_ft_at(point_id, nbr_idx, attr_idx);
+    //         // add attr of dominated_id
+    //         int* _attr = attr_at(dominated_id, attr_idx);
+    //         if (attr_type_[attr_idx] == 0) { // numerical
+    //             // hash by mapping to bucket
+    //             int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0], counting_hash_table_mapping[attr_idx].size(), _attr[0]);
+    //             if (pos < 0) continue;
+    //             set_ft_at_pos(ft, pos);
+    //         }
+    //         else { // categorical
+    //             for (int k = 0; k <= max_cate_size_; ++k) {
+    //                 int byte_pos = k >> 5; 
+    //                 int bit_pos = k & 31;
+    //                 if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
+    //                     int pos = counting_hash_table_mapping[attr_idx][k];
+    //                     if (pos < 0) continue;
+    //                     set_ft_at_pos(ft, pos);
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+
+    int pruned_count{0};
+    double heuristic_time{0.0};
+
 
     void getNeighborsByHeuristic2(
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> &top_candidates,
-        const size_t M) {
+        const size_t M,
+        bool need_record = false, // if need_record, we will record the pruned candidates and add to filter table
+        tableint cur_id = -1,      // id of point who is getting neighbors. valid only when need_record is true
+        std::vector<std::vector<tableint>>* dominated_list = nullptr // return the dominate list
+    ) {
+
+        // start time
+        auto start = std::chrono::high_resolution_clock::now();
         if (top_candidates.size() < M) {
             return;
         }
@@ -1088,25 +1895,41 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             top_candidates.pop();
         }
 
+        // modify stop condition: stop when new candidate is good
         while (queue_closest.size()) {
-            if (return_list.size() >= M)
-                break;
+            // if (return_list.size() >= M)
+            //     break;
             std::pair<dist_t, tableint> curent_pair = queue_closest.top();
             dist_t dist_to_query = -curent_pair.first;
             queue_closest.pop();
             bool good = true;
 
-            for (std::pair<dist_t, tableint> second_pair : return_list) {
+            
+            for (int i = 0; i < return_list.size(); i++) {
+                std::pair<dist_t, tableint> second_pair = return_list[i];
+            // for (std::pair<dist_t, tableint> second_pair : return_list) {
                 dist_t curdist =
                         fstdistfunc_(getDataByInternalId(second_pair.second),
                                         getDataByInternalId(curent_pair.second),
                                         dist_func_param_);
                 if (curdist < dist_to_query) {
                     good = false;
+
+                    if (need_record) {
+                        // add attr to ft
+                        tableint nbr_id = curent_pair.second;
+                        // std::cout << "push to dominated list: " << i << " with list size: " << dominated_list->size() << std::endl;
+                        // if(nbr_id == 1682 && cur_id == 9701) {
+                        //     std::cout << "1682 is dominated by neighbor " << return_list[i].second << " for point " << cur_id << std::endl;
+                        // }
+                        (*dominated_list)[i].push_back(nbr_id); // nbr_id is dominated by return_list[i]
+                        pruned_count++;
+                    }
                     break;
                 }
             }
             if (good) {
+                if (return_list.size() >= M) break;
                 return_list.push_back(curent_pair);
             }
         }
@@ -1114,6 +1937,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         for (std::pair<dist_t, tableint> curent_pair : return_list) {
             top_candidates.emplace(-curent_pair.first, curent_pair.second);
         }
+
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = end - start;
+        heuristic_time += diff.count();
     }
 
 
@@ -1137,6 +1964,104 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
 
+    void merge_ft(unsigned char* new_ft, unsigned char* old_ft){
+        for (int ft_idx = 0; ft_idx < size_per_ft_; ft_idx++) {
+            new_ft[ft_idx] |= old_ft[ft_idx];
+        }
+    }
+
+    
+    double update_ft_time{0.0};
+
+    void update_nbr_ft(tableint id, std::vector<tableint>& selectedNeighbors, std::vector<std::vector<tableint>>& dominated_list) {
+        // std::cout << "updating filter tables for " << selectedNeighbors.size() << " neighbors for id " << id << std::endl;
+        
+
+        // start time
+        auto start = std::chrono::high_resolution_clock::now();
+
+        std::vector<std::vector<unsigned char>> new_fts; // filter tables of selected neighbors
+        new_fts.resize(selectedNeighbors.size(), std::vector<unsigned char>(size_per_ft_, 0));
+        linklistsizeint *cur_nbrs = get_linklist0(id);               // nbr info of current point
+
+        // initialize new ft.  With old ft if the neighbor was an old neighbor
+        unsigned short int ori_nbr_size = getListCount(cur_nbrs);    // >0 if not first insert
+        // std::cout << "original nbr size: " << ori_nbr_size << std::endl;
+        tableint *nbr = (tableint *)(cur_nbrs + 1);
+
+        // copy old ft to new ft
+        for (size_t i = 0; i < selectedNeighbors.size(); i++) {         // for each new neighbor
+            bool found = false;
+            for (size_t j = 0; j < ori_nbr_size; j++) {             // for each old neighbor
+                if (selectedNeighbors[i] == nbr[j]) {                 // new neighbor i was an old neighbor
+                    memcpy(new_fts[i].data(), nbr_ft_at(id, j), size_per_ft_); // merge old ft to new ft
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // update attr into new ft
+                updateft(new_fts[i].data(), selectedNeighbors[i]);
+            }
+        }
+
+        // merge dominated points's ft to new ft
+        for (size_t i = 0; i < selectedNeighbors.size(); i++) {         // for each new neighbor
+            tableint cur_id = selectedNeighbors[i];                     // id of new neighbor i
+            
+            // std::cout << "dominated list size: " << dominated_list.size() << std::endl;
+            // if (selectedNeighbors.size() < maxM0_) continue;
+            // std::cout << " neighbor " << cur_id << " dominates " << dominated_list[i].size() << " points" << std::endl;
+
+            for (int dominated_idx = 0; dominated_idx < dominated_list[i].size(); dominated_idx++) {
+                tableint dominated_id = dominated_list[i][dominated_idx];
+                // 9701: 9885
+                // if (id == 9701 && cur_id == 9885) {
+                //     std::cout << "9701's neighbor 9885 dominates " << dominated_id << std::endl;
+                // }
+
+
+                // if dominated id was a neighbor, then inherit its filter table
+                unsigned char* old_ft = nullptr; 
+                // if(ori_nbr_size > 0) {                        // neighbor size > 0, not first insert
+                    for (size_t j = 0; j < ori_nbr_size; j++) {// for each neighbor
+                        if (nbr[j] == dominated_id) {                    // dominated_id was a neighbor
+                            old_ft = nbr_ft_at(id, j);        // get its filter table
+                            break;
+                        }
+                    }
+                    if (old_ft) {                                        // add old ft to new ft, if found
+                        merge_ft(new_fts[i].data(), old_ft);
+                    }
+                    else{
+                        // add dominated id's attr to new_ft, if not found
+                        updateft(new_fts[i].data(), dominated_id);
+                    }
+                // }
+            }
+        }
+
+        // cover ft by new_ft
+        for (size_t i = 0; i < selectedNeighbors.size(); i++) {         // for each new neighbor
+            unsigned char* ft = nbr_ft_at(id, i);
+            memcpy(ft, new_fts[i].data(), size_per_ft_);
+        }
+
+        // add attr of itself to ft
+        for (size_t i = 0; i < selectedNeighbors.size(); i++) {
+            updateft(new_fts[i].data(), selectedNeighbors[i]);
+        }
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = end - start;
+        update_ft_time += diff.count();
+        // std::cout << "ft update done" << std::endl;
+        return;
+    }
+
+    int dominate_count{0};
+
+
     tableint mutuallyConnectNewElement(
         const void *data_point,
         tableint cur_c,
@@ -1144,7 +2069,22 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         int level,
         bool isUpdate) {
         size_t Mcurmax = level ? maxM_ : maxM0_;
-        getNeighborsByHeuristic2(top_candidates, M_);
+        // std::cout << "connecting " << cur_c << " at level " << level << " with " << top_candidates.size() << " candidates" << std::endl;
+        std::vector<std::vector<tableint>> dominated_list(level ? 0 : maxM0_); // for each selected neighbor, the list of points it dominates
+        
+        if (level == 0){
+            for (int i = 0; i < maxM0_; i++) {
+                dominated_list[i].reserve(maxM0_);
+            }
+        }
+        // std::cout << "level==0?" << (level==0) << std::endl;
+        getNeighborsByHeuristic2(top_candidates, M_, level==0, cur_c, &dominated_list);
+
+        for(int i = 0; i < dominated_list.size(); i++) {
+            dominate_count += dominated_list[i].size();
+        }
+
+        // std::cout << "connecting for id " << cur_c << " at level " << level << " with " << top_candidates.size() << " candidates, pruned count: " << pruned_count << std::endl;
         if (top_candidates.size() > M_)
             throw std::runtime_error("Should be not be more than M_ candidates returned by the heuristic");
 
@@ -1153,6 +2093,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         while (top_candidates.size() > 0) {
             selectedNeighbors.push_back(top_candidates.top().second);
             top_candidates.pop();
+        }
+
+        
+        // merge attr of dominated points to filter table of neighbors who domianate them
+        std::vector<std::vector<char>> new_fts; // filter tables of selected neighbors
+        if (level == 0) {
+            update_nbr_ft(cur_c, selectedNeighbors, dominated_list);
         }
 
         tableint next_closest_entry_point = selectedNeighbors.back();
@@ -1220,6 +2167,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 if (sz_link_list_other < Mcurmax) {
                     data[sz_link_list_other] = cur_c;
                     setListCount(ll_other, sz_link_list_other + 1);
+                    updateft(nbr_ft_at(selectedNeighbors[idx], sz_link_list_other), cur_c);
                 } else {
                     // finding the "weakest" element to replace it with the new one
                     dist_t d_max = fstdistfunc_(getDataByInternalId(cur_c), getDataByInternalId(selectedNeighbors[idx]),
@@ -1234,14 +2182,34 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                                                 dist_func_param_), data[j]);
                     }
 
-                    getNeighborsByHeuristic2(candidates, Mcurmax);
+                    if (level == 0){
+                        for (int i = 0; i < dominated_list.size(); i++) {
+                            dominated_list[i].clear();
+                        }
+                    }
+                    getNeighborsByHeuristic2(candidates, Mcurmax, level==0, selectedNeighbors[idx], &dominated_list);
+
+                    for(int i = 0; i < dominated_list.size(); i++) {
+                        dominate_count += dominated_list[i].size();
+                    }
 
                     int indx = 0;
+                    std::vector<tableint> selectedNeighbors_other;
+                    selectedNeighbors_other.reserve(M_);
                     while (candidates.size() > 0) {
-                        data[indx] = candidates.top().second;
+                        // data[indx] = candidates.top().second;
+                        selectedNeighbors_other.push_back(candidates.top().second);
                         candidates.pop();
                         indx++;
                     }
+                    if (level == 0) {
+                        update_nbr_ft(selectedNeighbors[idx], selectedNeighbors_other, dominated_list);
+                    }
+
+                    for (int i = 0; i < selectedNeighbors_other.size(); i++) {
+                        data[i] = selectedNeighbors_other[i];
+                    }
+
 
                     setListCount(ll_other, indx);
                     // Nearest K:
@@ -1259,6 +2227,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
         }
+        // std::cout << "connect done" << std::endl;
 
         return next_closest_entry_point;
     }
@@ -1325,6 +2294,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         writeBinaryPOD(output, top_elements_);
         writeBinaryPOD(output, cur_element_count);
         writeBinaryPOD(output, size_data_per_element_);
+        writeBinaryPOD(output, nbr_size_per_element);
         writeBinaryPOD(output, label_offset_);
         writeBinaryPOD(output, offsetData_);
         writeBinaryPOD(output, maxlevel_);
@@ -1335,7 +2305,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         writeBinaryPOD(output, M_);
         writeBinaryPOD(output, mult_);
         writeBinaryPOD(output, ef_construction_);
-        std::cout << "save ef_cons:" << ef_construction_ << std::endl;
+        writeBinaryPOD(output, ft_bits_);
+        writeBinaryPOD(output, cate_int_byte_);
+        writeBinaryPOD(output, max_cate_size_);
         
         
 
@@ -1348,11 +2320,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         for (auto &it : attr_pos_) {
             writeBinaryPOD(output, it);
         }
-        writeBinaryPOD(output, num_size_per_item);
-        output.write((char *) &attr_list_, sizeof(int) * num_size_per_item * max_elements_);
-        std::cout << "num_size_per_item:" << num_size_per_item << ", max_elements_:" << max_elements_ << std::endl;
-        std::cout << "attr_type size:" << attr_type_.size() << ", attr_pos size:" << attr_pos_.size() << " attr_list mem: " << sizeof(int) * num_size_per_item * max_elements_ << std::endl;
-
+        writeBinaryPOD(output, attr_size_per_item_);
+        // std::cout << "attr_size_per_item_:" << attr_size_per_item_ << ", max_elements_:" << max_elements_ << std::endl;
 
         // ---
         writeBinaryPOD(output, ep_ids_.size());
@@ -1373,12 +2342,25 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         for (const auto &vec : counting_hash_table_mapping) {
             writeBinaryPOD(output, vec.size());
             output.write((char *) vec.data(), sizeof(int) * vec.size());
+
+            // std::cout << " itr pos:" << output.tellp() << ", vec_size:" << vec.size() << std::endl;
         }
-        std::cout << "table_size_:" << table_size_ << ", bucket_size_:" << bucket_size_ << ", counting_hash_table_mapping size:" << counting_hash_table_mapping.size() << std::endl;
 
+
+        writeBinaryPOD(output, predicate_size_);
+        writeBinaryPOD(output, predicate_offset_.size());
+        for (auto &it : predicate_offset_) {
+            writeBinaryPOD(output, it);
+        }
+        writeBinaryPOD(output, ft_offset_);
+        writeBinaryPOD(output, offsetAttr_);
+        
+        writeBinaryPOD(output, offsetNbrFt_);
+        writeBinaryPOD(output, size_per_ft_);
         //
-
         output.write(data_level0_memory_, cur_element_count * size_data_per_element_);
+
+
 
         for (size_t i = 0; i < cur_element_count; i++) {
             unsigned int linkListSize = element_levels_[i] > 0 ? size_links_per_element_ * element_levels_[i] : 0;
@@ -1395,9 +2377,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         if (!input.is_open())
             throw std::runtime_error("Cannot open file");
-        std::cout << "clearing index" << std::endl;
+
         clear();
-        std::cout << "loading index from file " << location << std::endl;
         // get file size:
         input.seekg(0, input.end);
         std::streampos total_filesize = input.tellg();
@@ -1413,6 +2394,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             max_elements = max_elements_;
         max_elements_ = max_elements;
         readBinaryPOD(input, size_data_per_element_);
+        readBinaryPOD(input, nbr_size_per_element);
         readBinaryPOD(input, label_offset_);
         readBinaryPOD(input, offsetData_);
         readBinaryPOD(input, maxlevel_);
@@ -1424,7 +2406,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         readBinaryPOD(input, mult_);
         readBinaryPOD(input, ef_construction_);
 
-        std::cout << "load ef_construction:" << ef_construction_ << std::endl;
+        readBinaryPOD(input, ft_bits_);
+        ft_bytes_ = (ft_bits_ + 7) / 8;
+        readBinaryPOD(input, cate_int_byte_);
+        readBinaryPOD(input, max_cate_size_);
 
 
 
@@ -1441,11 +2426,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         for (int i = 0; i < attr_pos_size; i++) {
             readBinaryPOD(input, attr_pos_[i]);
         }
-        readBinaryPOD(input, num_size_per_item);
-        assert(attr_list_ == nullptr);
-        attr_list_ = (int *) malloc(sizeof(int) * num_size_per_item * max_elements_);
-        input.read((char *) attr_list_, sizeof(int) * num_size_per_item * max_elements_);
-        std::cout << "attr_type size:" << attr_type_.size() << ", attr_pos size:" << attr_pos_.size() << " attr_list mem: " << sizeof(int) * num_size_per_item * max_elements_ << std::endl;
+        readBinaryPOD(input, attr_size_per_item_);
+        // std::cout << "attr_size_per_item_:" << attr_size_per_item_ << ", max_elements_:" << max_elements_ << std::endl;
 
 
         size_t ep_ids_size;
@@ -1467,13 +2449,27 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t counting_hash_table_mapping_size;
         readBinaryPOD(input, counting_hash_table_mapping_size);
         counting_hash_table_mapping.resize(counting_hash_table_mapping_size);
-        std::cout << "table_size_:" << table_size_ << ", bucket_size_:" << bucket_size_ << ", counting_hash_table_mapping_size:" << counting_hash_table_mapping_size << std::endl;
         for (size_t i = 0; i < counting_hash_table_mapping_size; i++) {
             size_t vec_size;
             readBinaryPOD(input, vec_size);
             counting_hash_table_mapping[i].resize(vec_size);
             input.read((char *) counting_hash_table_mapping[i].data(), sizeof(int) * vec_size);
+            // std::cout << "table " << i << " itr pos:" << input.tellg() << ", vec_size:" << vec_size << std::endl;
         }   
+
+        readBinaryPOD(input, predicate_size_);
+        size_t predicate_offset_size;
+        readBinaryPOD(input, predicate_offset_size);
+        predicate_offset_.resize(predicate_offset_size);
+        for (size_t i = 0; i < predicate_offset_size; i++) {
+            readBinaryPOD(input, predicate_offset_[i]);
+        }
+        readBinaryPOD(input, ft_offset_);
+        readBinaryPOD(input, offsetAttr_);
+
+        readBinaryPOD(input, offsetNbrFt_);
+        readBinaryPOD(input, size_per_ft_);
+
 
 
         data_size_ = s->get_data_size();
@@ -1484,8 +2480,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         /// Optional - check if index is ok:
         input.seekg(cur_element_count * size_data_per_element_, input.cur);
+
         for (size_t i = 0; i < cur_element_count; i++) {
             if (input.tellg() < 0 || input.tellg() >= total_filesize) {
+                // std::cout << "i=" << i << ", tellg=" << input.tellg() << ", total_filesize=" << total_filesize << std::endl;
                 throw std::runtime_error("Index seems to be corrupted or unsupported");
             }
 
@@ -1498,7 +2496,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         // throw exception if it either corrupted or old index
         if (input.tellg() != total_filesize)
-            throw std::runtime_error("Index seems to be corrupted or unsupported");
+            throw std::runtime_error("Index seems to be corrupted or unsupported by tellg() != total_filesize");
 
         input.clear();
         /// Optional check end
@@ -1506,9 +2504,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         input.seekg(pos, input.beg);
 
         data_level0_memory_ = (char *) malloc(max_elements * size_data_per_element_);
+        memset(data_level0_memory_, 0, max_elements * size_data_per_element_);
+        // tell pointer position
         if (data_level0_memory_ == nullptr)
             throw std::runtime_error("Not enough memory: loadIndex failed to allocate level0");
+
         input.read(data_level0_memory_, cur_element_count * size_data_per_element_);
+
+
+
 
         size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
 
@@ -1547,6 +2551,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 if (allow_replace_deleted_) deleted_elements.insert(i);
             }
         }
+
+
 
         input.close();
 
@@ -1723,6 +2729,62 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
     }
 
+    inline void set_ft_at_pos(unsigned char* ft, int pos) {
+        int byte_pos = pos >> 3;   // 等价于 pos / 8
+        int bit_pos  = pos & 7;    // 等价于 pos % 8
+        ft[byte_pos] |= (1 << bit_pos);
+    }
+
+    std::string ft_to_string(unsigned char* ft) {
+        std::string res = "";
+        for (int attr_idx = 0; attr_idx < attr_type_.size(); attr_idx++) {
+            res += "ft " + std::to_string(attr_idx) + ": ";
+            for (int i = 0; i < ft_bytes_; ++i){
+                std::bitset<8> b((unsigned char)ft[i]);
+                for (size_t i = 0; i < b.size(); i++) {
+                    res += std::to_string(b[i]);  // 注意 bitset[i] 访问的是低位 -> 高位
+                }
+                res += " ";
+            }
+            res += "\n";
+        }
+        return res;
+    }
+
+    // generate filter table for all elements after hnsw index generation
+    void generateFT() {
+        // new version, search for all neighbors and reserve the top ones
+
+        std::cout << "before generateFT, pruned_count:" << pruned_count << ", average " << (pruned_count / (float)max_elements_) << std::endl;
+        std::cout << "dominate_count:" << dominate_count << ", average " << (dominate_count / (float)max_elements_) << std::endl;
+        std::cout << "heuristic time: " << heuristic_time << " s, ft update time: " << update_ft_time << " s" << std::endl;
+
+        // check 9701: 9885
+        // std::cout << "id 9701's neighbor 9885 ft:" << std::endl;
+        // unsigned int* data = get_linklist0(9701);
+        // int size = getListCount(data);
+        // tableint *datal = (tableint *) (data + 1);
+        // for (int nbr_idx = 0; nbr_idx < size; nbr_idx++) {
+        //     if (datal[nbr_idx] == 9885) {
+        //         unsigned char* ft_9885 = nbr_ft_at(9701, nbr_idx);
+        //         std::cout << ft_to_string(ft_9885);
+        //     }
+        // }
+        // ---------------------
+
+        // #pragma omp parallel for
+        for (int i = 0; i < max_elements_; ++i) {
+            unsigned int* data = get_linklist0(i);
+            int size = getListCount(data);
+            tableint *datal = (tableint *) (data + 1);
+            updateft(i, i);
+            for (int nbr_idx = 0; nbr_idx < size; nbr_idx++) {
+                updateft(i, datal[nbr_idx]);
+            }
+        }
+
+    }
+
 
     void updatePoint(const void *dataPoint, tableint internalId, float updateNeighborProbability) {
         // update the feature vector associated with existing point with new vector
@@ -1883,6 +2945,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
     tableint addPoint(const void *data_point, labeltype label, int level) {
+        
         tableint cur_c = 0;
         {
             // Checking if the element with the same label already exists
@@ -1919,7 +2982,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // int curlevel = getRandomLevel(mult_);
         // if (level > 0)
         //     curlevel = level;
-        assert(level >= 0);
+        assert(level == 0 || level == 1);
         int curlevel = level;
 
         element_levels_[cur_c] = curlevel;
@@ -1931,7 +2994,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         tableint currObj = enterpoint_node_;
         tableint enterpoint_copy = enterpoint_node_;
 
-        memset(data_level0_memory_ + cur_c * size_data_per_element_ + offsetLevel0_, 0, size_data_per_element_);
+        memset(data_level0_memory_ + cur_c * size_data_per_element_ + offsetLevel0_, 0, nbr_size_per_element);
 
         // Initialisation of the data and label
         memcpy(getExternalLabeLp(cur_c), &label, sizeof(labeltype));
@@ -1997,6 +3060,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             enterpoint_node_ = cur_c;
             maxlevel_ = curlevel;
         }
+        // std::cout << "construct nbr ft time: " << update_ft_time << std::endl;
+
         return cur_c;
     }
 
@@ -2067,36 +3132,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
 
         assert(maxlevel_ == 1); // for two layers only
-        // for (int level = maxlevel_; level > 0; level--) {
-        //     bool changed = true;
-        //     while (changed) {
-        //         changed = false;
-        //         unsigned int *data;
-
-        //         data = (unsigned int *) get_linklist(currObj, level);
-        //         int size = getListCount(data);
-        //         metric_hops++;
-        //         metric_distance_computations+=size;
-
-        //         tableint *datal = (tableint *) (data + 1);
-        //         for (int i = 0; i < size; i++) {
-        //             tableint cand = datal[i];
-        //             if (cand < 0 || cand > max_elements_)
-        //                 throw std::runtime_error("cand error");
-        //             dist_t d = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
-
-        //             if (d < curdist) {
-        //                 curdist = d;
-        //                 currObj = cand;
-        //                 changed = true;
-        //             }
-        //         }
-        //     }
-        // }
-
-
-        
-
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
@@ -2108,6 +3143,118 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         } else {
             top_candidates = searchBaseLayerST<false>(
                     top_layer_candidates, query_data, std::max(ef_, k), isIdAllowed);
+        }
+
+        while (top_candidates.size() > k) {
+            top_candidates.pop();
+        }
+        while (top_candidates.size() > 0) {
+            std::pair<dist_t, tableint> rez = top_candidates.top();
+            result.push(std::pair<dist_t, labeltype>(rez.first, getExternalLabel(rez.second)));
+            top_candidates.pop();
+        }
+        return result;
+    }
+
+
+    // hybrid searchKnn with two layers
+    // predicate format:
+    //    predicate[i]: filtering restriction for attribute i
+    //      numerical:
+    //        predicate[i][0] <= value <= predicate[i][1]
+    //      categorical:
+    //        attr[item] contains all the predicate[i][:]
+    std::priority_queue<std::pair<dist_t, labeltype >>
+    hybridSearch(const void *query_data, std::vector<int> predicate, std::vector<char> ft_predicate, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const {
+        // selectivity check before search
+        // std::vector<std::vector<double>> selectivities;
+        // selectivities.resize(predicate.size());
+        // double min_sel = 1.0;
+        // int min_attr1 = -1;
+        // int min_attr2 = -1;
+        // assert(predicate.size() <= attr_type_.size());
+        // int predicate_cnt = 0;
+        // for (int i = 0; i < predicate.size(); i++) { // iterate all predicate to check the selectivity
+        //     if (predicate[i].size() == 0) continue;
+        //     if (attr_type_[i] == 0) { // numerical
+        //         auto left = btrees[i].lower_bound(predicate[i][0]);
+        //         auto right = btrees[i].upper_bound(predicate[i][1]);
+        //         double sel = static_cast<double>(right->second - left->second) / max_elements_;
+        //         selectivities[i].push_back(sel);
+
+        //         if (sel < min_sel) {
+        //             min_sel = sel;
+        //             min_attr1 = i;
+        //             min_attr2 = 0;
+        //         }
+        //         predicate_cnt++;
+        //     }
+        //     else { // categorical  
+        //         for (int j = 0; j < predicate[i].size(); j++) {
+        //             int num = ivfs[i][predicate[i][j]];
+        //             double sel = static_cast<double>(num) / max_elements_;
+        //             selectivities[i].push_back(sel);
+
+        //             if (sel < min_sel) {
+        //                 min_sel = sel;
+        //                 min_attr1 = i;
+        //                 min_attr2 = j;
+        //             }
+        //             predicate_cnt++;
+        //         }
+        //     }
+        // }
+
+        // double final_sel = 1.0;
+
+        // std::vector<tableint> candidate_set; // candidate set after filtering with all predicate
+        
+        // int scan_flag = 0; // 0: not scan, 1: scan on btree/ivf, 2: scan selected buckets
+        // if(predicate_cnt == 0) { // no predicate condition
+        //     throw std::runtime_error("No filtering condition in hybrid search");
+        // }
+        // else if (predicate_cnt == 1) { // one predicate condition
+        //     final_sel = min_sel;
+        //     if (final_sel < total_scan_factor_) {
+        //         scan_flag = 1;
+        //     }
+        // }
+        // else { // multiple predicate conditions
+        //     double estimated_sel = 1.0; // estimated selectivity assuming independence
+        //     for (int i = 0; i < selectivities.size(); i++) {
+        //         for (int j = 0; j < selectivities[i].size(); j++) {
+        //             estimated_sel *= selectivities[i][j];
+        //         }
+        //     }
+        //     if (estimated_sel < esti_scan_factor_) {
+        //         final_sel = estimated_sel;
+        //         scan_flag = 2;
+        //     }
+        //     else if (min_sel < total_scan_factor_) {
+        //         final_sel = min_sel;
+        //         scan_flag = 2;
+        //     }
+        // }
+        // attr_check();
+
+        std::priority_queue<std::pair<dist_t, labeltype >> result;
+        if (cur_element_count == 0) return result;
+
+        tableint currObj = enterpoint_node_;
+        dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
+
+        assert(maxlevel_ == 1); // for two layers only
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+
+        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top, isIdAllowed);
+        bool bare_bone_search = !num_deleted_ && !isIdAllowed;
+        if (bare_bone_search) {
+            top_candidates = hybridSearchBaseLayerST<true>(
+                    top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), isIdAllowed);
+        } else {
+            top_candidates = hybridSearchBaseLayerST<false>(
+                    top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), isIdAllowed);
         }
 
         while (top_candidates.size() > k) {

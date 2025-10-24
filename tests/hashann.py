@@ -85,7 +85,9 @@ class HashANN:
 
         # generate Counting hash table
         self.index.addEpIds(closest_ids.tolist())
+        print("bucket[0:10]:", buckets[0:10])
         self.index.addBuckets(buckets, offsets)
+        self.index.generateIdToBucket()
         print("add buckets done, time:", time.time() - start)
         self.index.initCountingHashTable()
         print("init counting hash table done, time:", time.time() - start)
@@ -114,6 +116,7 @@ class HashANN:
         self.index.load_index(index_save_path)
         print("index loaded")
         self.index.generateAttrIndexes() # B+ tree (numerical) and inverted list (categorical)
+        self.index.generateIdToBucket()
         end = time.time()
 
         print(f"Index loaded: {name}, duration: {end-start}.")
@@ -170,7 +173,7 @@ class HashANN:
 
     def clustering(self, base_scalars):
         seed = 1234
-        centroid_size = int(np.sqrt(self.N)) * 10
+        centroid_size = int(np.sqrt(self.N)) # * 10
         # centroid_size = int(np.sqrt(self.N) / 100)
         print("d:", self.d, "N:", self.N, "centroid_size:", centroid_size)
         clustering = faiss.Clustering(self.d, centroid_size)
@@ -231,10 +234,10 @@ class HashANN:
         end = 0
         offsets[0] = 0
         for i in range(centroid_size):
-            selected = I == i
-            size = np.sum(selected)
+            selected = np.where(I == i)[0]
+            size = selected.shape[0]
             end += size
-            buckets[start:end] = I[selected]
+            buckets[start:end] = selected
             start = end
             offsets[i + 1] = end
 

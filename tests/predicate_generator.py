@@ -14,7 +14,9 @@ def arg_init():
     parser.add_argument("--N", type=int, required=True, help="Number of data points")
     parser.add_argument("--numerical_max_attr", type=int, default=100000, help="Max value for numerical attributes")
     parser.add_argument("--categorical_attr_max_cardinality", type=int, default=5, help="Max cardinality for each categorical attribute")
-    parser.add_argument("--query_sel", type=str, default="[0.5,0.5]", help="selectivity for each attribute. e.g., [0.1,[1,2]], 0.1 for numerical sel, [1,2] for categorical label(s)", required=True)
+    # parser.add_argument("--query_sel", type=str, default="[0.5,0.5]", help="selectivity for each attribute. e.g., [0.1,[1,2]], 0.1 for numerical sel, [1,2] for categorical label(s)", required=True)
+    parser.add_argument("--num_query_sel", type=str, default="0.5", help="selectivity for numerical attribute. e.g., 0.1 for numerical sel", required=True)
+    parser.add_argument("--cate_query_sel", type=str, default="[1]", help="selectivity for categorical attribute. e.g., [1,2] for categorical label(s)", required=True)
     parser.add_argument("--query_size", type=int, default=100, help="Number of queries", required=True)
     parser.add_argument("--predicate_file", type=str, help="Output predicate file path", required=True)
     args = parser.parse_args()
@@ -40,29 +42,33 @@ def assign_labels(probs, num_items):
         all_labels.append(labels)  # 可能为空
     return all_labels
 
-def generate_query_selectivity(attr_type_list, query_sel_list):
+def generate_query_selectivity(attr_type_list, num_query_sel, cate_query_sel):
     sel_list = []
     for idx, attr_type in enumerate(attr_type_list):
         if attr_type == 0:
-            sel_list.append(query_sel_list[idx])
+            print("numerical attr selectivity:", num_query_sel)
+            sel_list.append(num_query_sel)
         else:
-            if isinstance(query_sel_list[idx], list):
-                sel_list.append(query_sel_list[idx])
+            if isinstance(cate_query_sel, list):
+                print("categorical predicate:", cate_query_sel)
+                sel_list.append(cate_query_sel)
             else:
-                assert isinstance(query_sel_list[idx], int)
-                sel_list.append([query_sel_list[idx]])
+                assert isinstance(cate_query_sel, int)
+                print("categorical predicate:", cate_query_sel)
+                sel_list.append([cate_query_sel])
     return sel_list
 
 if __name__ == "__main__":
     args = arg_init()
 
     attr_type_list = ast.literal_eval(args.attr_type_list)
-    query_sel_list = ast.literal_eval(args.query_sel)
+    num_query_sel = ast.literal_eval(args.num_query_sel)
+    cate_query_sel = ast.literal_eval(args.cate_query_sel)
     num_max_val = args.numerical_max_attr
     num_min_val = 0
     N = args.N
     zipf_prob = zipfProb(N=args.categorical_attr_max_cardinality, s=1.5)
-    sel_list = generate_query_selectivity(attr_type_list, query_sel_list)
+    sel_list = generate_query_selectivity(attr_type_list, num_query_sel, cate_query_sel)
     _attr = read_multy_attr(args.attr_file)
     # print("ori attr:", _attr[:5])
 

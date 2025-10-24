@@ -2,6 +2,22 @@
 
 source ./conf.sh
 
+# check files exist
+if [ ! -f "$dataset_attr_file" ]; then
+    echo "$dataset_attr_file does not exist. Please check."
+    exit 1
+fi
+
+if [ ! -f "$query_predicate_file" ]; then
+    echo "$query_predicate_file does not exist. Please check."
+    exit 1
+fi
+
+if [ ! -f "$ground_truth_file" ]; then
+    echo "$ground_truth_file does not exist. Please check."
+    exit 1
+fi
+
 echo "dataset: $dataset"
 echo "datasize: $N"
 echo "query_size: $query_size"
@@ -15,12 +31,16 @@ echo "top_k: $K"
 echo "threads: $threads"
 echo "ef_search: $ef_search"
 
+
+
 if [ "$mode" == "construction" ] || [ "$mode" == "all" ]; then
     if [ -e $index_file ]; then
         echo "index file already exist"
         exit 0
     fi
 fi
+
+
 
 # /bin/time -v -p python -u hnswlib/tests/python/nsw_build.py --data_path $dataset_file \
 #                                                --index_cache_path $nsw_index_file \
@@ -40,7 +60,7 @@ fi
 #                                                --threads $threads \
 #                                                &>> $log_file
 
-python -u hashann_build.py --data_path $dataset_file \
+python -u tests/hashann_build.py --data_path $dataset_file \
                                                --index_cache_path $index_file \
                                                --ef_list $ef_search \
                                                --k $K \
@@ -55,7 +75,7 @@ python -u hashann_build.py --data_path $dataset_file \
                                                --qrange_path $query_predicate_file \
                                                --gt_path $ground_truth_file \
                                                --n_query_to_use $query_size \
-                                               --attr_type_list "[0,1]" \
+                                               --attr_type_list $attr_type \
                                                --ft_bits ${ft_bits} \
                                                --threads $threads
 

@@ -11,7 +11,7 @@
 #include <list>
 #include <memory>
 #include <bitset>
-
+#include <unordered_map>
 
 namespace hnswlib {
 typedef unsigned int tableint;
@@ -38,9 +38,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t maxM0_{0};
     size_t ef_construction_{0};
     size_t ef_{ 0 };
-    size_t ef_top{ 0 };
+    size_t ef_top_{ 0 };
     size_t padding{0};
-    std::vector<BTree> btrees; // B+ tree for attributes
+    std::vector<BTree> btrees; // B+ tree for attributes   <value, <internal_id, order>>
     std::vector<std::vector<std::vector<tableint>>> ivf; // inverted file for categorical attributes
 
     //attributes
@@ -52,6 +52,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
     double mult_{0.0}, revSize_{0.0};
+    double threshold_1_{0.01}, threshold_2_{0.01}, threshold_3_{0.1}; // threshold to decide whether scan the bucket or not
     int maxlevel_{0};
 
     std::unique_ptr<VisitedListPool> visited_list_pool_{nullptr};
@@ -96,8 +97,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     // cluster buckets
     int bucket_size_;            // number of buckets(clusters)
-    tableint* buckets = nullptr; // max_elements, cluster[i]: buckets[bucket_offsets[i] ~ bucket_offsets[i+1]-1]
+    tableint* buckets = nullptr; // buckets to id, cluster[i]: buckets[bucket_offsets[i] ~ bucket_offsets[i+1]-1]
     std::vector<tableint> bucket_offsets; // offsets for buckets
+    std::vector<tableint> id_to_buckets_; // id to buckets
     int cate_int_byte_{0};
     int max_cate_size_{0};
 
@@ -111,13 +113,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     double bucket_scan_factor_{0.01}; // scan points within the bucket whose CHT selectivity is lower than this factor
     double esti_scan_factor_{0.1}; // scan if the estimated selectivity is lower than this factor
 
+    // std::unordered_map<int, int> entry_to_bucket_;
+    std::vector<tableint> id_to_bucket_; // map from internal id to bucket id, size = max_elements_
 
     int offsetNbrFt_{0};
     int size_per_ft_{0};
 
-    void add_ep_ids(const std::vector<int>& ep_ids){
-        ep_ids_.clear();
-        ep_ids_.insert(ep_ids_.end(), ep_ids.begin(), ep_ids.end());
+    bool use_ft_{true}; 
+
+    void set_ft_flag(bool flag){
+        use_ft_ = flag;
+    }
+
+    void add_ep_ids(const std::vector<tableint>& ep_ids){
+        ep_ids_ = ep_ids;
     }
 
     void add_buckets(const int *buckets_, const int * bucket_offsets_, size_t offset_size){
@@ -222,64 +231,68 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return &counting_hash_table[cluster_id * table_size_ * attr_type_.size() + attr_idx * table_size_];
     }
 
+    inline int* counting_hash_table_at(int cluster_id, int attr_idx) const {
+        return &counting_hash_table[cluster_id * table_size_ * attr_type_.size() + attr_idx * table_size_];
+    }
+
 
     inline int lower_bound(const int* mapping, int L, int val) const{
-    // #ifdef USE_SSE
-    //     // -------- SSE 版本 (一次 4 个 int) --------
-    //     __m128i vval = _mm_set1_epi32(val);
-    //     int i = 0;
-    //     for (; i + 4 <= L; i += 4) {
-    //         __m128i vdata = _mm_loadu_si128((__m128i*)(mapping + i));
+    #ifdef USE_SSE
+        // -------- SSE 版本 (一次 4 个 int) --------
+        __m128i vval = _mm_set1_epi32(val);
+        int i = 0;
+        for (; i + 4 <= L; i += 4) {
+            __m128i vdata = _mm_loadu_si128((__m128i*)(mapping + i));
 
-    //         __m128i gt = _mm_cmpgt_epi32(vval, vdata); 
-    //         __m128i ge = _mm_xor_si128(gt, _mm_set1_epi32(-1)); // >=
+            __m128i gt = _mm_cmpgt_epi32(vval, vdata); 
+            __m128i ge = _mm_xor_si128(gt, _mm_set1_epi32(-1)); // >=
 
-    //         int mask = _mm_movemask_ps(_mm_castsi128_ps(ge));
+            int mask = _mm_movemask_ps(_mm_castsi128_ps(ge));
 
-    //         if (mask != 0) {
-    //             int offset = __builtin_ctz(mask); // 第一个 >= val
-    //             int pos = i + offset;
-    //             return pos > 0 ? pos - 1 : -1;
-    //         }
-    //     }
+            if (mask != 0) {
+                int offset = __builtin_ctz(mask); // 第一个 >= val
+                int pos = i + offset;
+                return pos > 0 ? pos - 1 : -1;
+            }
+        }
 
-    //     // 如果整个数组都 < val
-    //     if (L > 0) return L - 1;
-    //     return -1;
+        // 如果整个数组都 < val
+        if (L > 0) return L - 1;
+        return -1;
 
-    // #else
+    #else
         // -------- 普通顺序扫描 --------
         int pos = 0;
         while (pos < L && mapping[pos] <= val) pos++;
         return pos > 0 ? pos - 1 : -1;
-    // #endif
+    #endif
     }
 
     inline int last_le_index(const int* mapping, int L, int val) const {
-    // #ifdef USE_SSE
-    //     // -------- SSE 版本 (一次 4 个 int) --------
-    //     __m128i vval = _mm_set1_epi32(val);
-    //     int i = 0;
-    //     for (; i + 4 <= L; i += 4) {
-    //         __m128i vdata = _mm_loadu_si128((__m128i*)(mapping + i));
-    //         __m128i gt = _mm_cmpgt_epi32(vdata, vval); // mapping[j] > val
-    //         int mask = _mm_movemask_ps(_mm_castsi128_ps(gt));
-    //         if (mask != 0) {
-    //             int offset = __builtin_ctz(mask);
-    //             return i + offset - 1;
-    //         }
-    //     }
-    //     for (; i < L; i++) {
-    //         if (mapping[i] > val) return i - 1;
-    //     }
-    //     return L - 1;
-    // #else
+    #ifdef USE_SSE
+        // -------- SSE 版本 (一次 4 个 int) --------
+        __m128i vval = _mm_set1_epi32(val);
+        int i = 0;
+        for (; i + 4 <= L; i += 4) {
+            __m128i vdata = _mm_loadu_si128((__m128i*)(mapping + i));
+            __m128i gt = _mm_cmpgt_epi32(vdata, vval); // mapping[j] > val
+            int mask = _mm_movemask_ps(_mm_castsi128_ps(gt));
+            if (mask != 0) {
+                int offset = __builtin_ctz(mask);
+                return i + offset - 1;
+            }
+        }
+        for (; i < L; i++) {
+            if (mapping[i] > val) return i - 1;
+        }
+        return L - 1;
+    #else
         // -------- 普通循环 --------
         for (int i = 0; i < L; i++) {
             if (mapping[i] > val) return i-1;
         }
         return L-1;
-    // #endif
+    #endif
     }
 
     void init_counting_hash_table() {
@@ -327,6 +340,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
         }
+
+        // init entry_to_bucket_ by iterating the layer of each ep_ids
+        // entry_to_bucket_.clear();
+        // for(int i = 0; i < cur_element_count; ++i){
+        //     // get layer of each element
+        //     entry_to_bucket_[ep_ids[i]] = i;
+        // }
+
+
     }
 
 
@@ -384,7 +406,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         maxM0_ = M_ * 2;
         ef_construction_ = std::max(ef_construction, M_);
         ef_ = 10;
-        ef_top = 1;
+        ef_top_ = 1;
 
         level_generator_.seed(random_seed);
         update_probability_generator_.seed(random_seed + 1);
@@ -479,7 +501,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
     void setEfTop(size_t eftop) {
-        ef_top = eftop;
+        ef_top_ = eftop;
     }
 
     void init_attr_space(){
@@ -605,13 +627,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         std::cout << "Attribute indexes generated." << std::endl;
 
-        
         // for (size_t i = 0; i < cur_element_count; i++) {
         //     const int* var = attr_at(i, 0);
         //     if (var[0] <= 0 || var[0] > 100000) {
         //         std::cout << " after attr index generation, error attr at id " << i << " attr[0]=" << var[0] << std::endl;
         //     }
         // }
+    }
+
+    void generate_id_to_bucket(){
+        // init id_to_bucket_
+        id_to_bucket_.resize(max_elements_, -1);
+        int cur_bucket_id = 0;
+        for(int i = 0; i < max_elements_; ++i){
+            int id = buckets[i];
+            if (i >= bucket_offsets[cur_bucket_id + 1]) cur_bucket_id++;
+            id_to_bucket_[id] = cur_bucket_id;
+        }
     }
 
 
@@ -652,8 +684,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // assert(nbr_idx < getListCount((linklistsizeint*)size));
         return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + offsetNbrFt_ + nbr_idx * size_per_ft_ + attr_idx * ft_bytes_);
     }
-
-
 
     inline unsigned char *getFilterTable(tableint internal_id) const {
         return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + ft_offset_);
@@ -1181,29 +1211,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     inline bool filter_table_check(tableint id, char* mapped_predicate) const {
         for(int i = 0; i < attr_type_.size(); ++i){
             unsigned char* ft = ft_at(id, i);
-            
-            // test
-            // std::cout << "ft " << i << ": ";
-            // for (int j = 0; j < ft_bytes_; ++j){
-            //     std::bitset<8> b((unsigned char)ft[j]);
-            //     for (size_t i = 0; i < b.size(); i++) {
-            //         std::cout << b[i];  // 注意 bitset[i] 访问的是低位 -> 高位
-            //     }
-            //     std::cout << " ";
-            // }
-            // std::cout << std::endl;
-
-            
-            // std::cout << "mapped predicate: ";
-            // for (int j = 0; j < ft_bytes_; ++j){
-            //     std::bitset<8> b((unsigned char)mapped_predicate[i * ft_bytes_ + j]);
-            //     for (size_t i = 0; i < b.size(); i++) {
-            //         std::cout << b[i];  // 注意 bitset[i] 访问的是低位 -> 高位
-            //     }
-            //     std::cout << " ";
-            // }
-            // std::cout << std::endl;
-            // ------------------
             bool matched = false;
             if (attr_type_[i] == 0) { // numerical
                 for (int j = 0; j < ft_bytes_; ++j) {
@@ -1320,6 +1327,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 mapped_predicate[predicate_offset_[i]] = ori_predicate[i][0];
                 mapped_predicate[predicate_offset_[i]+1] = ori_predicate[i][1];
             } else if (attr_type_[i] == 1) { // categorical
+                if (ori_predicate[i].size() == 0){
+                    // no constraint on this attribute
+                    for (int k = 0; k < cate_int_byte_; ++k){
+                        mapped_predicate[predicate_offset_[i]+k] = (int)0xFFFFFFFF;
+                    }
+                    continue;
+                }
                 int byte_pos, bit_pos;
                 for(int j = 0; j < ori_predicate[i].size(); ++j){
                     int val = ori_predicate[i][j];
@@ -1339,6 +1353,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::vector<char> predicate_to_ft(std::vector<std::vector<int>> ori_predicate) const{
         std::vector<char> predicate_ft(size_per_ft_, 0);
         for(int i = 0; i < ori_predicate.size(); ++i){
+            if (ori_predicate[i].size() == 0){
+                // no constraint on this attribute
+                for (int k = 0; k < ft_bytes_; ++k){
+                    predicate_ft[i * ft_bytes_ + k] = (char)0xFF;
+                }
+                continue;
+            }
             if (attr_type_[i] == 0) { // numerical
                 if (ori_predicate[i].size() == 0){
                     // no constraint on this attribute
@@ -1416,6 +1437,19 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
 // #define DEBUG_SEARCH
+// #define DEBUG_SEARCH_WORKFLOW
+
+    std::vector<tableint> copy_to_vector(const std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>& pq) const {
+        auto pq_copy = pq;  // 拷贝一份
+        std::vector<tableint> result;
+        result.reserve(pq_copy.size());
+
+        while (!pq_copy.empty()) {
+            result.push_back(pq_copy.top().second);
+            pq_copy.pop();
+        }
+        return result;
+    }
 
     // bare_bone_search means there is no check for deletions and stop condition is ignored in return of extra performance
     template <bool bare_bone_search = true, bool collect_metrics = false>
@@ -1427,9 +1461,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::vector<int> predicate,
         std::vector<char> ft_predicate,
         size_t ef,
+        VisitedList *vl,
         BaseFilterFunctor* isIdAllowed = nullptr,
         BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
-        VisitedList *vl = visited_list_pool_->getFreeVisitedList();
         vl_type *visited_array = vl->mass;
         vl_type visited_array_tag = vl->curV;
 
@@ -1546,7 +1580,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     // }
 
                     // check nbr filter table predicate
-                    if (!nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
+                    if (use_ft_ && !nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
                         ft_passed++;
                         // std::cout << " ft passed" << std::endl;
                         // std::cout << " checking 2 hop nbr " << std::endl;
@@ -1642,7 +1676,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         std::cout << "hybrid search round: " << round << ", visited " << visited << ", ft passed " << ft_passed << ", passed " << passed << std::endl;
 
-        visited_list_pool_->releaseVisitedList(vl);
         return top_candidates;
     }
 
@@ -2329,19 +2362,19 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             writeBinaryPOD(output, id);
         }
         writeBinaryPOD(output, bucket_size_);
-        output.write((char *) &buckets, sizeof(tableint) * max_elements_);
+        output.write((char *)buckets, sizeof(tableint) * max_elements_);
         // std::vector<tableint> bucket_offsets; 
         writeBinaryPOD(output, bucket_offsets.size());
-        output.write((char *) bucket_offsets.data(), sizeof(tableint) * bucket_offsets.size());
+        output.write((char *)bucket_offsets.data(), sizeof(tableint) * bucket_offsets.size());
         // int table_size_;
         writeBinaryPOD(output, table_size_);
         // int* counting_hash_table = nullptr; // counting hash table
-        output.write((char *) counting_hash_table, sizeof(int) * table_size_ * bucket_size_ * attr_type_.size());
+        output.write((char *)counting_hash_table, sizeof(int) * table_size_ * bucket_size_ * attr_type_.size());
         // std::vector<std::vector<int>> counting_hash_table_mapping;
         writeBinaryPOD(output, counting_hash_table_mapping.size());
         for (const auto &vec : counting_hash_table_mapping) {
             writeBinaryPOD(output, vec.size());
-            output.write((char *) vec.data(), sizeof(int) * vec.size());
+            output.write((char *)vec.data(), sizeof(int) * vec.size());
 
             // std::cout << " itr pos:" << output.tellp() << ", vec_size:" << vec.size() << std::endl;
         }
@@ -2438,7 +2471,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         readBinaryPOD(input, bucket_size_);
         buckets = (tableint *) malloc(sizeof(tableint) * max_elements_);
-        input.read((char *) buckets, sizeof(tableint) * max_elements_);
+        input.read((char *)buckets, sizeof(tableint) * max_elements_);
         size_t bucket_offsets_size;
         readBinaryPOD(input, bucket_offsets_size);
         bucket_offsets.resize(bucket_offsets_size);
@@ -2528,7 +2561,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         element_levels_ = std::vector<int>(max_elements);
         revSize_ = 1.0 / mult_;
         ef_ = 10;
-        ef_top = 1;
+        ef_top_ = 1;
         for (size_t i = 0; i < cur_element_count; i++) {
             label_lookup_[getExternalLabel(i)] = i;
             unsigned int linkListSize;
@@ -3123,6 +3156,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     // }
 
     // searchKnn with two layers
+
     std::priority_queue<std::pair<dist_t, labeltype >>
     searchKnn(const void *query_data, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const {
         std::priority_queue<std::pair<dist_t, labeltype >> result;
@@ -3135,7 +3169,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
-        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top, isIdAllowed);
+        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top_, isIdAllowed);
         bool bare_bone_search = !num_deleted_ && !isIdAllowed;
         if (bare_bone_search) {
             top_candidates = searchBaseLayerST<true>(
@@ -3156,6 +3190,32 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
+    int get_cnt_via_CHT(std::vector<char> ft_predicate, int bucket_id, int min_attr1, int min_attr2, int attr_type) const {
+        // estimate the selectivity of a bucket by counting hash table
+        // attr_idx: attribute index
+        int* cht = counting_hash_table_at(bucket_id, min_attr1);
+
+        if (attr_type == 0) {
+            int sel_count = 0;
+            int byte_pos = 0;
+            int bit_pos = 0;
+            int overall_pos = 0;
+            while(overall_pos < ft_bits_) {
+                byte_pos = overall_pos >> 3;   // 等价于 pos / 8
+                bit_pos  = overall_pos & 7;    // 等价于 pos % 8
+                if (ft_predicate[min_attr1 * ft_bytes_ + byte_pos] & (1 << bit_pos)) {
+                    sel_count += cht[overall_pos];
+                }
+                overall_pos++;
+            }
+            return sel_count;
+        }
+        else {
+            // one label
+            return cht[min_attr2];
+        }
+    }
+
 
     // hybrid searchKnn with two layers
     // predicate format:
@@ -3164,79 +3224,210 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     //        predicate[i][0] <= value <= predicate[i][1]
     //      categorical:
     //        attr[item] contains all the predicate[i][:]
+    //    
+    // workflow:
+    //                                                 -----------
+    //                                                 |  query  |
+    //                                                 -----------
+    //                                                      |
+    //                              ---------------------------------------------------------------
+    //                              |      estimate selectivity for all attributes                |
+    //                              ---------------------------------------------------------------
+    //                                   |                                                      |
+    //            --------------------------------------------------------                 ---------------------------------
+    //            |               one attribute                          |<---             |      multiple attributes      |
+    //            --------------------------------------------------------   |             ---------------------------------
+    //             |                               |                         |                 |                         |
+    //   -----------------                  -----------------                |      ----------------------------       -----------------------------
+    //   |  <threshold1  |                  | >=threshold1  |                |      | hybrid sel < threshold3  |       | hybrid sel >= threshold3  |
+    //   -----------------                  -----------------                |      ----------------------------       -----------------------------
+    //             |                               |                         |                 |                                                 |
+    //   ---------------------        -----------------------                |     -----------------------------------------------------------   |
+    //   | scan on btree/ivf |        | search on top layer |<---------      ------|   scan btree/ivf on one attr with smallest sel, get sel |   |
+    //   ---------------------        -----------------------         |            -----------------------------------------------------------   |       
+    //                                   |               |            ----------------------------------------------------------------------------                                                                                 |
+    //                  ----------------------------  -----------------------------                                                              
+    //                  | buecet sel < threshould2 |  | buecet sel >= threshould2 |                                                              
+    //                  ----------------------------  -----------------------------                                                              
+    //                                   |                     |
+    //                      -----------------------       --------------      
+    //                      | scan on this bucket |       | ann search |     (for single attribute, bucket sel is estimated by counting hash table(CHT))
+    //                      -----------------------       --------------     (for multi-attributes, bucket sel is counted by scaning on btree with smallest sel)
     std::priority_queue<std::pair<dist_t, labeltype >>
-    hybridSearch(const void *query_data, std::vector<int> predicate, std::vector<char> ft_predicate, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const {
-        // selectivity check before search
-        // std::vector<std::vector<double>> selectivities;
-        // selectivities.resize(predicate.size());
-        // double min_sel = 1.0;
-        // int min_attr1 = -1;
-        // int min_attr2 = -1;
-        // assert(predicate.size() <= attr_type_.size());
-        // int predicate_cnt = 0;
-        // for (int i = 0; i < predicate.size(); i++) { // iterate all predicate to check the selectivity
-        //     if (predicate[i].size() == 0) continue;
-        //     if (attr_type_[i] == 0) { // numerical
-        //         auto left = btrees[i].lower_bound(predicate[i][0]);
-        //         auto right = btrees[i].upper_bound(predicate[i][1]);
-        //         double sel = static_cast<double>(right->second - left->second) / max_elements_;
-        //         selectivities[i].push_back(sel);
-
-        //         if (sel < min_sel) {
-        //             min_sel = sel;
-        //             min_attr1 = i;
-        //             min_attr2 = 0;
-        //         }
-        //         predicate_cnt++;
-        //     }
-        //     else { // categorical  
-        //         for (int j = 0; j < predicate[i].size(); j++) {
-        //             int num = ivfs[i][predicate[i][j]];
-        //             double sel = static_cast<double>(num) / max_elements_;
-        //             selectivities[i].push_back(sel);
-
-        //             if (sel < min_sel) {
-        //                 min_sel = sel;
-        //                 min_attr1 = i;
-        //                 min_attr2 = j;
-        //             }
-        //             predicate_cnt++;
-        //         }
-        //     }
-        // }
-
-        // double final_sel = 1.0;
-
-        // std::vector<tableint> candidate_set; // candidate set after filtering with all predicate
+    hybridSearch(const void *query_data, std::vector<std::vector<int>> raw_predicate, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const {
         
-        // int scan_flag = 0; // 0: not scan, 1: scan on btree/ivf, 2: scan selected buckets
-        // if(predicate_cnt == 0) { // no predicate condition
-        //     throw std::runtime_error("No filtering condition in hybrid search");
-        // }
-        // else if (predicate_cnt == 1) { // one predicate condition
-        //     final_sel = min_sel;
-        //     if (final_sel < total_scan_factor_) {
-        //         scan_flag = 1;
-        //     }
-        // }
-        // else { // multiple predicate conditions
-        //     double estimated_sel = 1.0; // estimated selectivity assuming independence
-        //     for (int i = 0; i < selectivities.size(); i++) {
-        //         for (int j = 0; j < selectivities[i].size(); j++) {
-        //             estimated_sel *= selectivities[i][j];
-        //         }
-        //     }
-        //     if (estimated_sel < esti_scan_factor_) {
-        //         final_sel = estimated_sel;
-        //         scan_flag = 2;
-        //     }
-        //     else if (min_sel < total_scan_factor_) {
-        //         final_sel = min_sel;
-        //         scan_flag = 2;
-        //     }
-        // }
-        // attr_check();
+        std::vector<int> predicate = predicate_translate(raw_predicate);
+        std::vector<char> ft_predicate = predicate_to_ft(raw_predicate);
 
+        // estimate selectivity for all attributes
+        std::vector<std::vector<double>> selectivities;
+        selectivities.resize(predicate.size());
+        double min_sel = 1.0;
+        int min_attr1 = -1;
+        int min_attr2 = -1;
+        assert(predicate.size() <= attr_type_.size());
+        int predicate_cnt = 0;
+        
+        std::vector<std::vector<tableint>> multi_attr_bucket_candidates; // inverted file index for categorical attribute
+        multi_attr_bucket_candidates.resize(bucket_size_);
+        for (int i = 0; i < raw_predicate.size(); i++) { // iterate all predicate to check the selectivity
+            if (raw_predicate[i].size() == 0) {
+                // no filtering condition on this attribute
+                selectivities[i].push_back(1.0);
+                continue;
+            }
+            if (attr_type_[i] == 0) { // numerical, check btree
+                predicate_cnt++;
+                auto left = btrees[i].lower_bound(raw_predicate[i][0]);
+                auto right = btrees[i].upper_bound(raw_predicate[i][1]);
+                double sel = static_cast<double>(right->second.second - left->second.second) / max_elements_;
+                selectivities[i].push_back(sel);
+                if (sel < min_sel) {
+                    min_sel = sel;
+                    min_attr1 = i;
+                    min_attr2 = 0;
+                }
+            }
+            else { // categorical, check ivf
+                for (int j = 0; j < raw_predicate[i].size(); j++) {
+                    // each label performs "and" operation, so we static all labels separately
+                    int num = ivf[i][raw_predicate[i][j]].size();
+                    double sel = static_cast<double>(num) / max_elements_;
+                    selectivities[i].push_back(sel);
+                    predicate_cnt++;
+
+                    if (sel < min_sel) {
+                        min_sel = sel;
+                        min_attr1 = i;
+                        min_attr2 = j;
+                    }
+                }
+            }
+        }
+
+        #ifdef DEBUG_SEARCH_WORKFLOW
+        std::cout << "predicate size:" << predicate_cnt << std::endl;
+        std::cout << "min sel:" << min_sel << ", attr idx:" << min_attr1 << ", attr type:" << attr_type_[min_attr1] << " attr idx2: " << min_attr2 << std::endl;
+        #endif
+
+        double final_sel = 1.0;
+        if (predicate_cnt > 1) {
+            // multi-attribute
+
+            // compute approximate hybrid selectivity, assume to be uniformly distributed and independent
+            double hybrid_sel = 1.0;
+            for (int i = 0; i < selectivities.size(); i++) {
+                for (int j = 0; j < selectivities[i].size(); j++) {
+                    hybrid_sel *= selectivities[i][j];
+                }
+            }
+    
+            #ifdef DEBUG_SEARCH_WORKFLOW
+            std::cout << "hybrid sel:" << hybrid_sel << std::endl;
+            #endif
+            if (hybrid_sel < threshold_3_) {
+                // scan on subset with smallest sel
+                int valid_cnt = 0;
+                if (attr_type_[min_attr1] == 0) { // numerical, scan on btree
+                    
+                    #ifdef DEBUG_SEARCH_WORKFLOW
+                    std::cout << "smaller than threshold 3, scan all valid attributes from btree" << std::endl;
+                    #endif
+                    auto left = btrees[min_attr1].lower_bound(raw_predicate[min_attr1][0]);
+                    auto right = btrees[min_attr1].upper_bound(raw_predicate[min_attr1][1]);
+                    for (auto iter = left; iter != right; iter++) {
+                        tableint id = iter->first;
+                        if (predicate_check(id, predicate)) {
+                            // candidate_set.push_back(id);
+                            valid_cnt++;
+                            multi_attr_bucket_candidates[id_to_bucket_[id]].push_back(id);
+                        }
+                    }
+                }
+                else { // categorical, scan on ivf bucket
+                    #ifdef DEBUG_SEARCH_WORKFLOW
+                    std::cout << "smaller than threshold 3, collect all valid vectors from ivf" << std::endl;
+                    #endif
+                    int label = raw_predicate[min_attr1][min_attr2];
+                    for (auto id : ivf[min_attr1][label]) {
+                        if (predicate_check(id, predicate)) {
+                            // candidate_set.push_back(id);
+                            valid_cnt++;
+                            multi_attr_bucket_candidates[id_to_bucket_[id]].push_back(id);
+                        }
+                    }
+                }
+                final_sel = valid_cnt * 1.0 / (double)max_elements_;
+
+                #ifdef DEBUG_SEARCH_WORKFLOW
+                std::cout << "final sel for multi-attribute: " << final_sel << std::endl;
+                #endif
+            }
+        }
+        else {
+            final_sel = min_sel;
+            #ifdef DEBUG_SEARCH_WORKFLOW
+            std::cout << "final sel for one-attribute: " << final_sel << std::endl;
+            #endif
+        }
+
+        // smaller than threshold 1, scan on candidate set or btree/ivf
+        std::vector<tableint> candidate_set; // candidate set after filtering with all predicate
+        if (final_sel < threshold_1_) {
+            #ifdef DEBUG_SEARCH_WORKFLOW
+            std::cout << "final sel smaller than threshold 1" << std::endl;
+            #endif
+            if (predicate_cnt == 1) {
+                #ifdef DEBUG_SEARCH_WORKFLOW
+                std::cout << "one predicate, scan on btree/ivf" << std::endl;
+                #endif
+
+                if (attr_type_[min_attr1] == 0) { // numerical, scan on btree
+                    auto left = btrees[min_attr1].lower_bound(raw_predicate[min_attr1][0]);
+                    auto right = btrees[min_attr1].upper_bound(raw_predicate[min_attr1][1]);
+                    for (auto iter = left; iter != right; iter++) {
+                        tableint id = iter->first;
+                        if (predicate_check(id, predicate)) candidate_set.push_back(id);
+                    }
+                }
+                else { // categorical, scan on ivf bucket
+                    int label = raw_predicate[min_attr1][min_attr2];
+                    for (auto id : ivf[min_attr1][label]) {
+                        if (predicate_check(id, predicate)) candidate_set.push_back(id);
+                    }
+                }
+            }
+            else{
+                #ifdef DEBUG_SEARCH_WORKFLOW
+                std::cout << "multi predicate, collect multi_attr_bucket_candidates" << std::endl;
+                #endif
+                for (auto& bucket : multi_attr_bucket_candidates) {
+                    for (auto id : bucket) {
+                        candidate_set.push_back(id);
+                    }
+                }
+            }
+
+            // scan on candidate set
+            #ifdef DEBUG_SEARCH_WORKFLOW
+            std::cout << "scan candidate set" << std::endl;
+            #endif
+            std::priority_queue<std::pair<dist_t, labeltype >> result;
+            for (auto id : candidate_set) {
+                dist_t distance = fstdistfunc_(query_data, getDataByInternalId(id), dist_func_param_);
+                if (result.size() < k) {
+                    result.emplace(distance, getExternalLabel(id));
+                } else {
+                    if (distance < result.top().first) {
+                        result.pop();
+                        result.emplace(distance, getExternalLabel(id));
+                    }
+                }
+            }
+            return result;
+        }
+
+        // search on top layer
         std::priority_queue<std::pair<dist_t, labeltype >> result;
         if (cur_element_count == 0) return result;
 
@@ -3247,15 +3438,117 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
-        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top, isIdAllowed);
+        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top_, isIdAllowed);
+
+        std::vector<tableint> top_vector = copy_to_vector(top_layer_candidates);
+
+        // search on base layer
         bool bare_bone_search = !num_deleted_ && !isIdAllowed;
+        
+        VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+        vl_type *visited_array = vl->mass;
+        vl_type visited_array_tag = vl->curV;
         if (bare_bone_search) {
             top_candidates = hybridSearchBaseLayerST<true>(
-                    top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), isIdAllowed);
+                    top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), vl, isIdAllowed);
         } else {
             top_candidates = hybridSearchBaseLayerST<false>(
-                    top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), isIdAllowed);
+                    top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), vl, isIdAllowed);
         }
+
+        // for each bucket, scan if CHT selectivity is smaller than threshold 2
+        // for multi-attribute, CHT is unnecessary since we have scanned on btree with smallest sel
+
+        // top vector id to bucket id
+        for (int i = 0; i < top_vector.size(); i++) {
+            int bucket_id = id_to_bucket_[top_vector[i]];
+            #ifdef DEBUG_SEARCH_WORKFLOW
+            std::cout << "checking for ep " << i << ", bucket " << bucket_id << std::endl;
+            #endif
+            if (predicate_cnt > 1) {
+                
+                #ifdef DEBUG_SEARCH_WORKFLOW
+                std::cout << "multi attr, checking sel for each selected bucket" << std::endl;
+                #endif
+                // check candidates filtered when scanning on btree with smallest sel
+                if (multi_attr_bucket_candidates[bucket_id].size() > 0) {
+                    int this_bucket_size = bucket_offsets[bucket_id+1] - bucket_offsets[bucket_id];
+                    double sel = multi_attr_bucket_candidates[bucket_id].size() * 1.0 / (double)this_bucket_size;
+                    #ifdef DEBUG_SEARCH_WORKFLOW
+                    std::cout << "bucket " << bucket_id << " sel " << sel << std::endl;
+                    #endif
+                    if (sel < threshold_2_) {
+                        #ifdef DEBUG_SEARCH_WORKFLOW
+                        std::cout << "low sel for bucket " << bucket_id << " scan it" << std::endl;
+                        #endif
+                        // scan on this bucket
+                        for (auto id : multi_attr_bucket_candidates[bucket_id]) {
+                            // skip if visited
+                            if (visited_array[id] == visited_array_tag) continue;
+                            visited_array[id] = visited_array_tag;
+
+                            dist_t distance = fstdistfunc_(query_data, getDataByInternalId(id), dist_func_param_);
+                            if (top_candidates.size() < k) {
+                                top_candidates.emplace(distance, id);
+                            } else {
+                                if (distance < top_candidates.top().first) {
+                                    top_candidates.pop();
+                                    top_candidates.emplace(distance, id);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                else {
+                    // larger that threshold 2, do nothing
+                    #ifdef DEBUG_SEARCH_WORKFLOW
+                    std::cout << "large sel, thus multi_attr_bucket_candidates is empty, do nothing" << std::endl;
+                    #endif
+                }
+            }
+            else {
+                #ifdef DEBUG_SEARCH_WORKFLOW
+                std::cout << "single attr, checking local sel" << std::endl;
+                #endif
+                // one predicate, estimate local selectivity with CHT
+                int this_bucket_size = bucket_offsets[bucket_id+1] - bucket_offsets[bucket_id];
+
+                // cht size
+                int cht_size = get_cnt_via_CHT(ft_predicate, bucket_id, min_attr1, min_attr2, attr_type_[min_attr1]);
+                double sel = cht_size * 1.0 / (double)this_bucket_size;
+                #ifdef DEBUG_SEARCH_WORKFLOW
+                std::cout << "bucket " << bucket_id << " sel " << sel << std::endl;
+                #endif
+                if (sel < threshold_2_) {
+                    #ifdef DEBUG_SEARCH_WORKFLOW
+                    std::cout << "low sel for bucket " << bucket_id << " scan it" << std::endl;
+                    #endif
+                    // scan on this bucket
+                    int start = bucket_offsets[bucket_id];
+                    int end = bucket_offsets[bucket_id+1];
+                    for (int idx = start; idx < end; idx++) {
+                        tableint id = buckets[idx];
+                        // skip if visited
+                        if (visited_array[id] == visited_array_tag) continue;
+                        visited_array[id] = visited_array_tag;
+
+                        dist_t distance = fstdistfunc_(query_data, getDataByInternalId(id), dist_func_param_);
+                        if (top_candidates.size() < k) {
+                            top_candidates.emplace(distance, id);
+                        } else {
+                            if (distance < top_candidates.top().first) {
+                                top_candidates.pop();
+                                top_candidates.emplace(distance, id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+        visited_list_pool_->releaseVisitedList(vl);
 
         while (top_candidates.size() > k) {
             top_candidates.pop();

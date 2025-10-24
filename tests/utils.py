@@ -109,13 +109,13 @@ def arg_init():
         default="l2",
         help="l2 or cosine",
     )
-    parser.add_argument(
-        "--ef_list",
-        type=int,
-        nargs="+",
-        default=list(range(10, 2000, 20)),
-        help="List of EF values",
-    )
+    # parser.add_argument(
+    #     "--ef_list",
+    #     type=int,
+    #     nargs="+",
+    #     default=list(range(10, 2000, 20)),
+    #     help="List of EF values",
+    # )
     parser.add_argument(
         "--N",
         type=int,
@@ -150,15 +150,18 @@ def arg_init():
     )
     parser.add_argument(
         "--ef_search",
-        type=int,
-        default=100,
-        help="ef search",
+        type=str,
+        default="[100]",
+        help="ef search list",
     )
     parser.add_argument(
         "--ef_top",
         type=int,
         default=10,
         help="ef top",
+    )
+    parser.add_argument(
+        "--use_ft", type=str, required=False, default="true", help="Use filter table"
     )
 
 

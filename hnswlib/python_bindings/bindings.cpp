@@ -209,8 +209,13 @@ class Index {
         index_inited = true;
         ep_added = false;
         appr_alg->ef_ = default_ef;
-        appr_alg->ef_top = default_ef_top;
+        appr_alg->ef_top_ = default_ef_top;
         seed = random_seed;
+    }
+
+    void set_ft_flag(bool flag){
+        if(appr_alg)
+            appr_alg->set_ft_flag(flag);
     }
 
 
@@ -224,7 +229,7 @@ class Index {
     void set_ef_top(size_t ef_top) {
       default_ef_top = ef_top;
       if (appr_alg)
-          appr_alg->ef_top = ef_top;
+          appr_alg->ef_top_ = ef_top;
     }
 
 
@@ -491,7 +496,7 @@ class Index {
                 free_when_done_ll));
     }
 
-    void addEpIds(const std::vector<int>& ep_ids_){
+    void addEpIds(const std::vector<unsigned int>& ep_ids_){
         appr_alg->add_ep_ids(ep_ids_);
     }
 
@@ -517,6 +522,10 @@ class Index {
 
     void generateAttrIndexes(){
         appr_alg->generate_attr_indexes();
+    }
+
+    void generateIdToBucket(){
+        appr_alg->generate_id_to_bucket();
     }
 
     std::vector<std::vector<int>> predicateTranslate(const std::vector<std::vector<std::vector<int>>>& predicate) const {
@@ -798,8 +807,7 @@ class Index {
 
     py::object hybridKnnQuery_return_numpy(
         py::object input,
-        std::vector<std::vector<int>> predicate, 
-        std::vector<std::vector<char>> ft_predicate, 
+        std::vector<std::vector<std::vector<int>>> raw_predicate, 
         size_t k = 1,
         int num_threads = -1,
         const std::function<bool(hnswlib::labeltype)>& filter = nullptr) {
@@ -831,7 +839,7 @@ class Index {
             if (normalize == false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->hybridSearch(
-                        (void*)items.data(row), predicate[row], ft_predicate[row], k, p_idFilter);
+                        (void*)items.data(row), raw_predicate[row], k, p_idFilter);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -851,7 +859,7 @@ class Index {
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
 
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->hybridSearch(
-                        (void*)items.data(row), predicate[row], ft_predicate[row], k, p_idFilter);
+                        (void*)items.data(row), raw_predicate[row], k, p_idFilter);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -1706,7 +1714,6 @@ PYBIND11_PLUGIN(hashannlib) {
             &Index<float>::hybridKnnQuery_return_numpy,
             py::arg("data"),
             py::arg("predicate"),
-            py::arg("ft_predicate"),
             py::arg("k") = 1,
             py::arg("num_threads") = -1,
             py::arg("filter") = py::none())
@@ -1724,6 +1731,7 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("addBuckets", &Index<float>::addBuckets, py::arg("bucket_data"), py::arg("bucket_offsets"))
         .def("get_ids_list", &Index<float>::getIdsList)
         .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
+        .def("set_ft_flag", &Index<float>::set_ft_flag, py::arg("ft_flag"))
         .def("set_ef_top", &Index<float>::set_ef_top, py::arg("ef_top"))
         .def("addEpIds", &Index<float>::addEpIds, py::arg("ep_ids"))
         .def("predicateTranslate", &Index<float>::predicateTranslate, py::arg("predicate"))
@@ -1731,6 +1739,7 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("generateFT", &Index<float>::generateFT)
         .def("initCountingHashTable", &Index<float>::initCountingHashTable)
         .def("generateAttrIndexes", &Index<float>::generateAttrIndexes)
+        .def("generateIdToBucket", &Index<float>::generateIdToBucket)
         .def("set_num_threads", &Index<float>::set_num_threads, py::arg("num_threads"))
         .def("index_file_size", &Index<float>::indexFileSize)
         .def("save_index", &Index<float>::saveIndex, py::arg("path_to_index"))

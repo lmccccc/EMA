@@ -28,7 +28,7 @@ source ./conf.sh
 
 
 
-python groundtruth_generator.py --dataset_file ${dataset_file} \
+python tests/groundtruth_generator.py --dataset_file ${dataset_file} \
                              --d ${dim} \
                              --attr_file ${dataset_attr_file} \
                              --query_file ${query_file} \

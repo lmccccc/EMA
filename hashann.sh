@@ -29,7 +29,7 @@ echo "ground_truth_file: $ground_truth_file"
 echo "index_file: $index_file"
 echo "top_k: $K"
 echo "threads: $threads"
-echo "ef_search: $ef_search"
+echo "ef_search: $ef_search_list"
 
 
 
@@ -62,7 +62,7 @@ fi
 
 python -u tests/hashann_build.py --data_path $dataset_file \
                                                --index_cache_path $index_file \
-                                               --ef_list $ef_search \
+                                               --ef_search $ef_search_list \
                                                --k $K \
                                                --N $N \
                                                --M $M \

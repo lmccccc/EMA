@@ -36,6 +36,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t M_{0};
     size_t maxM_{0};
     size_t maxM0_{0};
+    size_t M0_mul_{2};
+    size_t minM0_{16};
     size_t ef_construction_{0};
     size_t ef_{ 0 };
     size_t ef_top_{ 0 };
@@ -97,8 +99,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     // cluster buckets
     int bucket_size_;            // number of buckets(clusters)
-    tableint* buckets = nullptr; // buckets to id, cluster[i]: buckets[bucket_offsets[i] ~ bucket_offsets[i+1]-1]
-    std::vector<tableint> bucket_offsets; // offsets for buckets
+    std::vector<tableint> bucket_data_; // buckets to id, cluster[i]: buckets[bucket_offsets_[i] ~ bucket_offsets_[i+1]-1]
+    std::vector<tableint> bucket_offsets_; // offsets for bucket_data_
     std::vector<tableint> id_to_buckets_; // id to buckets
     int cate_int_byte_{0};
     int max_cate_size_{0};
@@ -109,12 +111,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::vector<std::vector<int>> counting_hash_table_mapping;
 
     // search hyper-parameters
-    double total_scan_factor_{0.001}; // scan all points belonging to top buckets
-    double bucket_scan_factor_{0.01}; // scan points within the bucket whose CHT selectivity is lower than this factor
-    double esti_scan_factor_{0.1}; // scan if the estimated selectivity is lower than this factor
-
-    // std::unordered_map<int, int> entry_to_bucket_;
-    std::vector<tableint> id_to_bucket_; // map from internal id to bucket id, size = max_elements_
+    // double total_scan_factor_{0.001}; // scan all points belonging to top buckets
+    // double bucket_scan_factor_{0.01}; // scan points within the bucket whose CHT selectivity is lower than this factor
+    // double esti_scan_factor_{0.1}; // scan if the estimated selectivity is lower than this factor
 
     int offsetNbrFt_{0};
     int size_per_ft_{0};
@@ -129,17 +128,27 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         ep_ids_ = ep_ids;
     }
 
-    void add_buckets(const int *buckets_, const int * bucket_offsets_, size_t offset_size){
-        bucket_size_ = offset_size - 1;
-        free(buckets);
-        buckets = (tableint*)malloc(sizeof(tableint) * max_elements_);
-        memcpy(buckets, buckets_, sizeof(tableint) * max_elements_);
+    void set_thresholds(double threshold_1, double threshold_2, double threshold_3){
+        threshold_1_ = threshold_1;
+        threshold_2_ = threshold_2;
+        threshold_3_ = threshold_3;
+    }
 
-        bucket_offsets.clear();
+    void add_buckets(const int *bucket_data, const int * bucket_offsets, size_t offset_size){
+        bucket_size_ = offset_size - 1;
+        bucket_data_.resize(max_elements_);
+        memcpy(bucket_data_.data(), bucket_data, sizeof(tableint) * max_elements_);
+
+        bucket_offsets_.clear();
         assert(ep_ids_.size() > 0);
         for(size_t i = 0; i < offset_size; i++) {
-            bucket_offsets.push_back(bucket_offsets_[i]);
+            bucket_offsets_.push_back(bucket_offsets[i]);
         }
+    }
+
+    void add_id_to_bucket(const int *id_to_bucket_data){
+        id_to_buckets_.resize(max_elements_);
+        memcpy(id_to_buckets_.data(), id_to_bucket_data, sizeof(tableint) * max_elements_);
     }
 
 
@@ -295,12 +304,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     #endif
     }
 
-    void init_counting_hash_table() {
+    void init_attr_mapping(){
         table_size_ = ft_bits_;
-        assert(counting_hash_table == nullptr);
-        counting_hash_table = new int[table_size_ * bucket_size_ * attr_type_.size()]; // each cluster holds a CHT, table_size_ slots for attr_type_.size() attributes
-        memset(counting_hash_table, 0, sizeof(int) * table_size_ * bucket_size_ * attr_type_.size());
-
+        counting_hash_table_mapping.clear();
         for(int i = 0; i < attr_type_.size(); ++i){
             if (attr_type_[i] == 0) { // numerical
                 counting_hash_table_mapping.push_back(bucketize_equal_count(i, table_size_));
@@ -308,13 +314,46 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 counting_hash_table_mapping.push_back(distribute_labels(i, table_size_));
             }
         }
+    }
+
+    void update_cht(int* cht, tableint id){
+        for(int i = 0; i < attr_type_.size(); ++i){
+            int* _attr = attr_at(id, i);
+            int base = i * table_size_;
+            if (attr_type_[i] == 0) { // numerical
+                int val = _attr[0];
+                int corresponding_slot = lower_bound(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), val);
+                if (corresponding_slot == -1) continue;
+                cht[base + corresponding_slot]++;
+            } else if (attr_type_[i] == 1) { // categorical
+                for(int k = 0; k < max_cate_size_; ++k){
+                    int byte_pos = k >> 5;
+                    int bit_pos = k & 31;
+                    if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
+                        int corresponding_slot = counting_hash_table_mapping[i][k]; 
+                        cht[base + corresponding_slot]++;
+                    }
+                }
+            }
+        }
+    }
+
+    void init_counting_hash_table() {
+        assert(counting_hash_table == nullptr);
+        assert(bucket_size_ > 0);
+        assert(bucket_offsets_.size() == bucket_size_ + 1);
+        bucket_size_ = ep_ids_.size();
+        counting_hash_table = new int[table_size_ * bucket_size_ * attr_type_.size()]; // each cluster holds a CHT, table_size_ slots for attr_type_.size() attributes
+        memset(counting_hash_table, 0, sizeof(int) * table_size_ * bucket_size_ * attr_type_.size());
+        
+        assert(counting_hash_table_mapping.size() == attr_type_.size());
 
         // Initialize counting hash table for each attribute
         for(int i = 0; i < attr_type_.size(); ++i){
             int bucket_id = 0;
             for(int j = 0; j < max_elements_; ++j){
-                if (j >= bucket_offsets[bucket_id + 1]) bucket_id++;
-                int id = buckets[j];
+                if (j >= bucket_offsets_[bucket_id + 1]) bucket_id++;
+                int id = bucket_data_[j];
                 int* _attr = attr_at(id, i);
 
                 int* cht = counting_hash_table_at(bucket_id, i);
@@ -403,7 +442,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             M_ = 10000;
         }
         maxM_ = M_;
-        maxM0_ = M_ * 2;
+        maxM0_ = M_ * M0_mul_;
+
         ef_construction_ = std::max(ef_construction, M_);
         ef_ = 10;
         ef_top_ = 1;
@@ -473,9 +513,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         cur_element_count = 0;
         visited_list_pool_.reset(nullptr);
 
-        // buckets
-        free(buckets);
-        buckets = nullptr;
 
         // counting_hash_table
         free(counting_hash_table);
@@ -635,16 +672,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // }
     }
 
-    void generate_id_to_bucket(){
-        // init id_to_bucket_
-        id_to_bucket_.resize(max_elements_, -1);
-        int cur_bucket_id = 0;
-        for(int i = 0; i < max_elements_; ++i){
-            int id = buckets[i];
-            if (i >= bucket_offsets[cur_bucket_id + 1]) cur_bucket_id++;
-            id_to_bucket_[id] = cur_bucket_id;
-        }
-    }
+    // void generate_id_to_bucket(){
+    //     // init id_to_bucket_
+    //     id_to_bucket_.resize(max_elements_, -1);
+    //     int cur_bucket_id = 0;
+    //     for(int i = 0; i < max_elements_; ++i){
+    //         int id = bucket_data_[i];
+    //         if (i >= bucket_offsets_[cur_bucket_id + 1]) cur_bucket_id++;
+    //         id_to_bucket_[id] = cur_bucket_id;
+    //     }
+    // }
 
 
 
@@ -1467,6 +1504,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         vl_type *visited_array = vl->mass;
         vl_type visited_array_tag = vl->curV;
 
+        int backbone_edge_size = 10;
+
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
 
@@ -1490,6 +1529,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 top_candidates.emplace(top_candidates_.top());
                 // std::cout << " in top candidates" << std::endl;
             }
+            if (candidate_set.size() >= ef_top_) {
+                // prevent candidate set from being too large
+                break;
+            }
             top_candidates_.pop();
         }
 
@@ -1501,6 +1544,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         int round = 0;
         int passed = 0;
         int ft_passed = 0;
+        int deg = 0;
+        int max_deg = 0;
+        int ft_deg = 0;
         while (!candidate_set.empty()) {
             round++;
             std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
@@ -1534,22 +1580,45 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 metric_distance_computations+=size;
             }
 
-#ifdef USE_SSE
-            _mm_prefetch((char *) (visited_array + *(data + 1)), _MM_HINT_T0);
-            _mm_prefetch((char *) (visited_array + *(data + 1) + 64), _MM_HINT_T0);
-            _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
-            _mm_prefetch((char *) (data + 2), _MM_HINT_T0);
-#endif
 
             // test
+            deg += size;
+            if (size > max_deg) {
+                max_deg = size;
+            }
+            std::vector<size_t> nbrs;
+            nbrs.reserve(size);
+            if (use_ft_) {
+                for (size_t j = 1; j <= size; j++) {
+                    if (nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
+                        nbrs.push_back(j); // indicate filtered nbr
+                    }
+                }
+            }
+            else {
+                for (size_t j = 1; j <= size; j++) {
+                    nbrs.push_back(j);
+                }
+            }
+            ft_deg += nbrs.size();
+            ft_passed += (size - nbrs.size());
+#ifdef USE_SSE
+            if (nbrs.size() == 0) continue;
+            _mm_prefetch((char *) (visited_array + *(data + nbrs[0])), _MM_HINT_T0);
+            _mm_prefetch((char *) (visited_array + *(data + nbrs[0]) + 64), _MM_HINT_T0);
+            _mm_prefetch(data_level0_memory_ + (*(data + nbrs[0])) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+            _mm_prefetch((char *) (data + nbrs[1]), _MM_HINT_T0);
+#endif
 
-            for (size_t j = 1; j <= size; j++) {
+            for (int nbr_idx = 0; nbr_idx < nbrs.size(); ++nbr_idx) {
+                size_t j = nbrs[nbr_idx];
+                size_t j_next = nbr_idx + 1 < nbrs.size() ? nbrs[nbr_idx + 1] : size + 1;
                 int candidate_id = *(data + j);
                 
 //                    if (candidate_id == 0) continue;
 #ifdef USE_SSE
-                _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
-                _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + offsetData_,
+                _mm_prefetch((char *) (visited_array + *(data + j_next)), _MM_HINT_T0);
+                _mm_prefetch(data_level0_memory_ + (*(data + j_next)) * size_data_per_element_ + offsetData_,
                                 _MM_HINT_T0);  ////////////
 #endif
                 if (!(visited_array[candidate_id] == visited_array_tag)) {
@@ -1580,22 +1649,22 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     // }
 
                     // check nbr filter table predicate
-                    if (use_ft_ && !nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
-                        ft_passed++;
-                        // std::cout << " ft passed" << std::endl;
-                        // std::cout << " checking 2 hop nbr " << std::endl;
-                        // int *data2 = (int *) get_linklist0(candidate_id);
-                        // size_t size2 = getListCount((linklistsizeint*)data2);
-                        // for (size_t j2 = 1; j2 <= size2; j2++) {
-                        //     int candidate_id2 = *(data2 + j2);
-                        //     print_raw_attr(candidate_id2);
-                        // }
-                        // std::cout << std::endl;
-                        #ifdef DEBUG_SEARCH
-                        std::cout << " ft passed " << std::endl;
-                        #endif
-                        continue;
-                    }
+                    // if (j > backbone_edge_size && use_ft_ && !nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
+                    //     ft_passed++;
+                    //     // std::cout << " ft passed" << std::endl;
+                    //     // std::cout << " checking 2 hop nbr " << std::endl;
+                    //     // int *data2 = (int *) get_linklist0(candidate_id);
+                    //     // size_t size2 = getListCount((linklistsizeint*)data2);
+                    //     // for (size_t j2 = 1; j2 <= size2; j2++) {
+                    //     //     int candidate_id2 = *(data2 + j2);
+                    //     //     print_raw_attr(candidate_id2);
+                    //     // }
+                    //     // std::cout << std::endl;
+                    //     #ifdef DEBUG_SEARCH
+                    //     std::cout << " ft passed " << std::endl;
+                    //     #endif
+                    //     continue;
+                    // }
 
                     char *currObj1 = (getDataByInternalId(candidate_id));
                     dist_t dist = fstdistfunc_(data_point, currObj1, dist_func_param_);
@@ -1674,7 +1743,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
         }
-        std::cout << "hybrid search round: " << round << ", visited " << visited << ", ft passed " << ft_passed << ", passed " << passed << std::endl;
+        // std::cout << "hybrid search round: " << round
+        //              << ", visited " << visited 
+        //              << ", ft passed " << ft_passed 
+        //              << ", passed " << passed 
+        //              << ", avg degree " << deg * 1.0 / round 
+        //              << ", ft avg degree "<< ft_deg * 1.0 / round 
+        //              << ", max degree " << max_deg
+        //              << std::endl;
 
         return top_candidates;
     }
@@ -1904,7 +1980,63 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     // }
 
     int pruned_count{0};
+    int attr_pruned_count{0};
     double heuristic_time{0.0};
+    // #define DEBUG_BUILD
+
+    bool cht_low_degree(int* cht, tableint src_id, tableint nbr_id, int return_list_size) {
+        if (return_list_size < maxM_ / 3) return true;
+
+        // check if id has unique attr not covered by cht
+        for (int attr_idx = 0; attr_idx < attr_type_.size(); attr_idx++) {
+            int* src_attr = attr_at(src_id, attr_idx);
+            int* nbr_attr = attr_at(nbr_id, attr_idx);
+            if (attr_type_[attr_idx] == 0) { // numerical
+                // hash by mapping to bucket
+                int src_pos = lower_bound(&counting_hash_table_mapping[attr_idx][0], counting_hash_table_mapping[attr_idx].size(), src_attr[0]);
+                int nbr_pos = lower_bound(&counting_hash_table_mapping[attr_idx][0], counting_hash_table_mapping[attr_idx].size(), nbr_attr[0]);
+                int range_left = std::min(src_pos, nbr_pos);
+                int range_right = std::max(src_pos, nbr_pos);
+                
+                int cnt = 0;
+                for (int cht_pos = range_left; cht_pos <= range_right; ++cht_pos){
+                    cnt += cht[attr_idx * table_size_ + cht_pos];
+                }
+
+                #ifdef DEBUG_BUILD
+                std::cout << " num attr degree range [" << range_left << ", " << range_right << "] cnt: " << cnt << std::endl;
+                if (cnt < minM0_)  std::cout << " num attr low degree range " << std::endl;
+                #endif
+
+                if (cnt < minM0_) return true; // range search degree less than minM0
+            }
+            else { // categorical
+                int* src_attr = attr_at(src_id, attr_idx);
+                int* nbr_attr = attr_at(nbr_id, attr_idx);
+                for (int byte = 0; byte < cate_int_byte_; ++byte) {
+                    uint32_t overlap = ((uint32_t*)src_attr)[byte] & ((uint32_t*)nbr_attr)[byte];
+                    if (overlap == 0) continue; 
+
+                    while (overlap) {
+                        uint32_t lowbit = overlap & -overlap;
+                        int bit_pos = __builtin_ctz(overlap);
+                        int k = (byte << 5) + bit_pos;
+
+                        int pos = counting_hash_table_mapping[attr_idx][k];
+                        if (pos >= 0 && cht[attr_idx * table_size_ + pos] < minM0_) {
+                            return true;   // OK
+                        }
+
+                        overlap &= (overlap - 1);
+                    }
+                }
+            }
+        }
+        #ifdef DEBUG_BUILD
+        std::cout << " pruned by cht " << std::endl;
+        #endif
+        return false;
+    }
 
 
     void getNeighborsByHeuristic2(
@@ -1929,6 +2061,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         // modify stop condition: stop when new candidate is good
+        std::vector<int> temp_cht;
+        if (need_record) temp_cht.resize(table_size_ * attr_type_.size(), 0);
+
         while (queue_closest.size()) {
             // if (return_list.size() >= M)
             //     break;
@@ -1951,10 +2086,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     if (need_record) {
                         // add attr to ft
                         tableint nbr_id = curent_pair.second;
-                        // std::cout << "push to dominated list: " << i << " with list size: " << dominated_list->size() << std::endl;
-                        // if(nbr_id == 1682 && cur_id == 9701) {
-                        //     std::cout << "1682 is dominated by neighbor " << return_list[i].second << " for point " << cur_id << std::endl;
-                        // }
                         (*dominated_list)[i].push_back(nbr_id); // nbr_id is dominated by return_list[i]
                         pruned_count++;
                     }
@@ -1962,8 +2093,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
             if (good) {
+
                 if (return_list.size() >= M) break;
-                return_list.push_back(curent_pair);
+
+
+                bool need_push = !need_record;
+                if (need_record && cht_low_degree(temp_cht.data(), cur_id, curent_pair.second, return_list.size())) {
+                    need_push = true;
+                    update_cht(temp_cht.data(), curent_pair.second);
+                }
+                else{
+                    attr_pruned_count++;
+                }
+
+                if (need_push)
+                {
+                    return_list.push_back(curent_pair);
+                }
             }
         }
 
@@ -2074,16 +2220,17 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
 
+        // add attr of itself to ft
+        for (size_t i = 0; i < selectedNeighbors.size(); i++) {
+            updateft(new_fts[i].data(), selectedNeighbors[i]);
+        }
+        
         // cover ft by new_ft
         for (size_t i = 0; i < selectedNeighbors.size(); i++) {         // for each new neighbor
             unsigned char* ft = nbr_ft_at(id, i);
             memcpy(ft, new_fts[i].data(), size_per_ft_);
         }
 
-        // add attr of itself to ft
-        for (size_t i = 0; i < selectedNeighbors.size(); i++) {
-            updateft(new_fts[i].data(), selectedNeighbors[i]);
-        }
         
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> diff = end - start;
@@ -2111,26 +2258,26 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
         // std::cout << "level==0?" << (level==0) << std::endl;
-        getNeighborsByHeuristic2(top_candidates, M_, level==0, cur_c, &dominated_list);
+        getNeighborsByHeuristic2(top_candidates, level==0 ? Mcurmax : M_, level==0, cur_c, &dominated_list);
 
         for(int i = 0; i < dominated_list.size(); i++) {
             dominate_count += dominated_list[i].size();
         }
 
         // std::cout << "connecting for id " << cur_c << " at level " << level << " with " << top_candidates.size() << " candidates, pruned count: " << pruned_count << std::endl;
-        if (top_candidates.size() > M_)
+        if (top_candidates.size() > (level==0 ? Mcurmax : M_))
             throw std::runtime_error("Should be not be more than M_ candidates returned by the heuristic");
 
         std::vector<tableint> selectedNeighbors;
-        selectedNeighbors.reserve(M_);
+        selectedNeighbors.reserve(level==0 ? Mcurmax : M_);
         while (top_candidates.size() > 0) {
             selectedNeighbors.push_back(top_candidates.top().second);
             top_candidates.pop();
         }
-
+        std::reverse(selectedNeighbors.begin(), selectedNeighbors.end());
         
         // merge attr of dominated points to filter table of neighbors who domianate them
-        std::vector<std::vector<char>> new_fts; // filter tables of selected neighbors
+        // std::vector<std::vector<char>> new_fts; // filter tables of selected neighbors
         if (level == 0) {
             update_nbr_ft(cur_c, selectedNeighbors, dominated_list);
         }
@@ -2202,6 +2349,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     setListCount(ll_other, sz_link_list_other + 1);
                     updateft(nbr_ft_at(selectedNeighbors[idx], sz_link_list_other), cur_c);
                 } else {
+                    // for bottom layer, edges within valid_M0_ follows traditional rng prune
+                    // edges above valid_M0_, prune redundant edge by attribute
+                    // for num attr, reserve if |{[attr(cur), attr(nbr)]}| < min_M0_
+                    // for cate attr, reserve if {attr(cur) U attr(nbr)} not empty and |{attr(cur) ∪ attr(nbr)}| < min_M0_
+
                     // finding the "weakest" element to replace it with the new one
                     dist_t d_max = fstdistfunc_(getDataByInternalId(cur_c), getDataByInternalId(selectedNeighbors[idx]),
                                                 dist_func_param_);
@@ -2235,6 +2387,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         candidates.pop();
                         indx++;
                     }
+                    std::reverse(selectedNeighbors_other.begin(), selectedNeighbors_other.end());
                     if (level == 0) {
                         update_nbr_ft(selectedNeighbors[idx], selectedNeighbors_other, dominated_list);
                     }
@@ -2335,6 +2488,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         writeBinaryPOD(output, maxM_);
 
         writeBinaryPOD(output, maxM0_);
+        writeBinaryPOD(output, M0_mul_);
+        writeBinaryPOD(output, minM0_);
         writeBinaryPOD(output, M_);
         writeBinaryPOD(output, mult_);
         writeBinaryPOD(output, ef_construction_);
@@ -2362,10 +2517,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             writeBinaryPOD(output, id);
         }
         writeBinaryPOD(output, bucket_size_);
-        output.write((char *)buckets, sizeof(tableint) * max_elements_);
-        // std::vector<tableint> bucket_offsets; 
-        writeBinaryPOD(output, bucket_offsets.size());
-        output.write((char *)bucket_offsets.data(), sizeof(tableint) * bucket_offsets.size());
+        writeBinaryPOD(output, bucket_data_.size());
+        output.write((char *)bucket_data_.data(), sizeof(tableint) * bucket_data_.size());
+        // std::vector<tableint> bucket_offsets_; 
+        writeBinaryPOD(output, bucket_offsets_.size());
+        output.write((char *)bucket_offsets_.data(), sizeof(tableint) * bucket_offsets_.size());
+
+        writeBinaryPOD(output, id_to_buckets_.size());
+        output.write((char *)id_to_buckets_.data(), sizeof(tableint) * id_to_buckets_.size());
+
         // int table_size_;
         writeBinaryPOD(output, table_size_);
         // int* counting_hash_table = nullptr; // counting hash table
@@ -2435,6 +2595,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         readBinaryPOD(input, maxM_);
         readBinaryPOD(input, maxM0_);
+        readBinaryPOD(input, M0_mul_);
+        readBinaryPOD(input, minM0_);
         readBinaryPOD(input, M_);
         readBinaryPOD(input, mult_);
         readBinaryPOD(input, ef_construction_);
@@ -2470,12 +2632,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             readBinaryPOD(input, ep_ids_[i]);
         }
         readBinaryPOD(input, bucket_size_);
-        buckets = (tableint *) malloc(sizeof(tableint) * max_elements_);
-        input.read((char *)buckets, sizeof(tableint) * max_elements_);
+        size_t bucket_data_size;
+        readBinaryPOD(input, bucket_data_size);
+        bucket_data_.resize(bucket_data_size);
+        input.read((char *)bucket_data_.data(), sizeof(tableint) * bucket_data_.size());
         size_t bucket_offsets_size;
         readBinaryPOD(input, bucket_offsets_size);
-        bucket_offsets.resize(bucket_offsets_size);
-        input.read((char *) bucket_offsets.data(), sizeof(tableint) * bucket_offsets.size());
+        bucket_offsets_.resize(bucket_offsets_size);
+        input.read((char *) bucket_offsets_.data(), sizeof(tableint) * bucket_offsets_.size());
+
+        size_t id_to_buckets_size;
+        readBinaryPOD(input, id_to_buckets_size);
+        id_to_buckets_.resize(id_to_buckets_size);
+        input.read((char *) id_to_buckets_.data(), sizeof(tableint) * id_to_buckets_.size());   
+
         readBinaryPOD(input, table_size_);
         counting_hash_table = (int *) malloc(sizeof(int) * table_size_ * bucket_size_ * attr_type_.size());
         input.read((char *) counting_hash_table, sizeof(int) * table_size_ * bucket_size_ * attr_type_.size());
@@ -3216,6 +3386,59 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
     }
 
+    // construct bucket from constructed bottom layer graph, not clustering
+    // each node is assigned to at most two buckets
+    void graph_partition(){
+        std::vector<std::vector<tableint>> temp_buckets;
+        std::vector<int> visited_queue;
+        temp_buckets.resize(ep_ids_.size());
+        visited_queue.resize(ep_ids_.size(), 0);
+        std::vector<uint8_t> visited(cur_element_count, 0);
+
+        for (tableint i = 0; i < ep_ids_.size(); i++) {
+            tableint ep_id = ep_ids_[i];
+            temp_buckets[i].push_back(ep_id);
+            visited[ep_id] = 1;
+        }
+        while (true) {
+            bool queue_empty = true;
+            for (tableint i = 0; i < ep_ids_.size(); i++) {
+                if(visited_queue[i] >= temp_buckets[i].size()) {
+                    continue;
+                }
+                queue_empty = false;
+                tableint cur_id = temp_buckets[i][visited_queue[i]];
+                visited_queue[i]++;
+                unsigned int *data = get_linklist0(cur_id);
+                int size = getListCount(data);
+                tableint *datal = (tableint *) (data + 1);
+                for (int j = 0; j < size; j++) {
+                    tableint nbr_id = datal[j];
+                    if (visited[nbr_id] <= 1) {
+                        temp_buckets[i].push_back(nbr_id);
+                        visited[nbr_id]++;
+                    }
+                }
+            }
+            if (queue_empty) {
+                break;
+            }
+        }
+
+        // flatten to bucket storage
+        int bucket_data_cnt = 0;
+        bucket_data_.clear();
+        bucket_offsets_.clear();
+        bucket_offsets_.push_back(0);
+        for (tableint i = 0; i < temp_buckets.size(); i++) {
+            bucket_data_cnt += temp_buckets[i].size();
+        }
+        for (tableint i = 0; i < temp_buckets.size(); i++) {
+            bucket_data_.insert(bucket_data_.end(), temp_buckets[i].begin(), temp_buckets[i].end());
+            bucket_offsets_.push_back(bucket_data_.size());
+        }
+    }
+
 
     // hybrid searchKnn with two layers
     // predicate format:
@@ -3340,7 +3563,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         if (predicate_check(id, predicate)) {
                             // candidate_set.push_back(id);
                             valid_cnt++;
-                            multi_attr_bucket_candidates[id_to_bucket_[id]].push_back(id);
+                            multi_attr_bucket_candidates[id_to_buckets_[id]].push_back(id);
                         }
                     }
                 }
@@ -3353,7 +3576,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         if (predicate_check(id, predicate)) {
                             // candidate_set.push_back(id);
                             valid_cnt++;
-                            multi_attr_bucket_candidates[id_to_bucket_[id]].push_back(id);
+                            multi_attr_bucket_candidates[id_to_buckets_[id]].push_back(id);
                         }
                     }
                 }
@@ -3438,7 +3661,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
-        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top_, isIdAllowed);
+        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top_ * 2, isIdAllowed);
 
         std::vector<tableint> top_vector = copy_to_vector(top_layer_candidates);
 
@@ -3460,8 +3683,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // for multi-attribute, CHT is unnecessary since we have scanned on btree with smallest sel
 
         // top vector id to bucket id
+        bool unsearched = false;
+        if (top_candidates.size() < k) {
+            unsearched = true;
+        }
+
+        double overall_sel = 0.0;
         for (int i = 0; i < top_vector.size(); i++) {
-            int bucket_id = id_to_bucket_[top_vector[i]];
+            int bucket_id = id_to_buckets_[top_vector[i]];
             #ifdef DEBUG_SEARCH_WORKFLOW
             std::cout << "checking for ep " << i << ", bucket " << bucket_id << std::endl;
             #endif
@@ -3472,39 +3701,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 #endif
                 // check candidates filtered when scanning on btree with smallest sel
                 if (multi_attr_bucket_candidates[bucket_id].size() > 0) {
-                    int this_bucket_size = bucket_offsets[bucket_id+1] - bucket_offsets[bucket_id];
+                    int this_bucket_size = bucket_offsets_[bucket_id+1] - bucket_offsets_[bucket_id];
                     double sel = multi_attr_bucket_candidates[bucket_id].size() * 1.0 / (double)this_bucket_size;
                     #ifdef DEBUG_SEARCH_WORKFLOW
                     std::cout << "bucket " << bucket_id << " sel " << sel << std::endl;
                     #endif
-                    if (sel < threshold_2_) {
-                        #ifdef DEBUG_SEARCH_WORKFLOW
-                        std::cout << "low sel for bucket " << bucket_id << " scan it" << std::endl;
-                        #endif
-                        // scan on this bucket
-                        for (auto id : multi_attr_bucket_candidates[bucket_id]) {
-                            // skip if visited
-                            if (visited_array[id] == visited_array_tag) continue;
-                            visited_array[id] = visited_array_tag;
-
-                            dist_t distance = fstdistfunc_(query_data, getDataByInternalId(id), dist_func_param_);
-                            if (top_candidates.size() < k) {
-                                top_candidates.emplace(distance, id);
-                            } else {
-                                if (distance < top_candidates.top().first) {
-                                    top_candidates.pop();
-                                    top_candidates.emplace(distance, id);
-                                }
-                            }
-                        }
-                    }
+                    overall_sel += sel;
                 }
-
                 else {
-                    // larger that threshold 2, do nothing
-                    #ifdef DEBUG_SEARCH_WORKFLOW
-                    std::cout << "large sel, thus multi_attr_bucket_candidates is empty, do nothing" << std::endl;
-                    #endif
+                    overall_sel = 1; // large sel, no need to estimate
                 }
             }
             else {
@@ -3512,26 +3717,83 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 std::cout << "single attr, checking local sel" << std::endl;
                 #endif
                 // one predicate, estimate local selectivity with CHT
-                int this_bucket_size = bucket_offsets[bucket_id+1] - bucket_offsets[bucket_id];
+                int this_bucket_size = bucket_offsets_[bucket_id+1] - bucket_offsets_[bucket_id];
 
                 // cht size
                 int cht_size = get_cnt_via_CHT(ft_predicate, bucket_id, min_attr1, min_attr2, attr_type_[min_attr1]);
                 double sel = cht_size * 1.0 / (double)this_bucket_size;
+
+                overall_sel += sel;
+            }
+        }
+        overall_sel /= top_vector.size();
+        
+        if (overall_sel < threshold_2_) {
+            unsearched = true;
+        }
+
+        if (unsearched) {
+            for (int i = 0; i < top_vector.size(); i++) {
+                int bucket_id = id_to_buckets_[top_vector[i]];
                 #ifdef DEBUG_SEARCH_WORKFLOW
-                std::cout << "bucket " << bucket_id << " sel " << sel << std::endl;
+                std::cout << "checking for ep " << i << ", bucket " << bucket_id << std::endl;
                 #endif
-                if (sel < threshold_2_) {
-                    #ifdef DEBUG_SEARCH_WORKFLOW
-                    std::cout << "low sel for bucket " << bucket_id << " scan it" << std::endl;
-                    #endif
+                if (predicate_cnt > 1) {
                     // scan on this bucket
-                    int start = bucket_offsets[bucket_id];
-                    int end = bucket_offsets[bucket_id+1];
+                    #ifdef USE_SSE
+                        auto &cands = multi_attr_bucket_candidates[bucket_id];
+                        int prefetch_n = std::min<int>(3, cands.size());
+                        for (int i = 0; i < prefetch_n; i++) {
+                            int id = cands[i];
+                            _mm_prefetch((char*)(visited_array + id), _MM_HINT_T0);
+                            _mm_prefetch(getDataByInternalId(id), _MM_HINT_T0);
+                        }
+                    #endif
+
+                    for (int idx = 0; idx < multi_attr_bucket_candidates[bucket_id].size(); idx++) {
+                        // skip if visited
+                        int id = multi_attr_bucket_candidates[bucket_id][idx];
+
+                        #ifdef USE_SSE
+                            if (idx + 3 < multi_attr_bucket_candidates[bucket_id].size()) {
+                                int next_id = multi_attr_bucket_candidates[bucket_id][idx + 3];
+                                _mm_prefetch((char *) (visited_array + next_id), _MM_HINT_T0);
+                                _mm_prefetch(getDataByInternalId(next_id), _MM_HINT_T0);
+                            }
+                        #endif
+
+                        if (visited_array[id] == visited_array_tag) continue;
+                        visited_array[id] = visited_array_tag;
+
+                        dist_t distance = fstdistfunc_(query_data, getDataByInternalId(id), dist_func_param_);
+                        if (top_candidates.size() < k) {
+                            top_candidates.emplace(distance, id);
+                        } else {
+                            if (distance < top_candidates.top().first) {
+                                top_candidates.pop();
+                                top_candidates.emplace(distance, id);
+                            }
+                        }
+                    }
+                }
+                else {
+                    // scan on this bucket
+                    int start = bucket_offsets_[bucket_id];
+                    int end = bucket_offsets_[bucket_id+1];
+
+                    #ifdef USE_SSE
+                        _mm_prefetch((char *) (visited_array + bucket_data_[start]), _MM_HINT_T0);
+                        _mm_prefetch((char *) (visited_array + bucket_data_[start + 1]), _MM_HINT_T0);
+                        _mm_prefetch(getDataByInternalId(bucket_data_[start]), _MM_HINT_T0);
+                        _mm_prefetch(getDataByInternalId(bucket_data_[start + 1]), _MM_HINT_T0);
+                    #endif
+
                     for (int idx = start; idx < end; idx++) {
-                        tableint id = buckets[idx];
+                        tableint id = bucket_data_[idx];
                         // skip if visited
                         if (visited_array[id] == visited_array_tag) continue;
                         visited_array[id] = visited_array_tag;
+                        if (!predicate_check(id, predicate)) continue;
 
                         dist_t distance = fstdistfunc_(query_data, getDataByInternalId(id), dist_func_param_);
                         if (top_candidates.size() < k) {

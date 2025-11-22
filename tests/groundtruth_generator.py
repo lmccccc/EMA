@@ -56,20 +56,24 @@ if __name__ == "__main__":
         uri="http://localhost:19530"
     )
     fields = ["id", "vector"] + [f"attr_{i}" for i in range(len(attr_type_list))]
-
     # create collection
     if client.has_collection(args.c_name):
-        print("collection ", args.c_name, " exists")
+        try:
+            print("collection ", args.c_name, " exists")
+            client.load_collection(collection_name=args.c_name, 
+                                replica_number=1,
+                                load_fields=fields)
+            res = client.query(
+                collection_name=args.c_name,
+                output_fields=["count(*)"]
+            )
 
-        client.load_collection(collection_name=args.c_name, 
-                               replica_number=1,
-                               load_fields=fields)
-        res = client.query(
-            collection_name=args.c_name,
-            output_fields=["count(*)"]
-        )
-
-        print("collection size:", res)
+            print("collection size:", res)
+        except Exception as e:
+            print("error loading collection:", e)
+            client.drop_collection(args.c_name)
+            print("drop existing collection ", args.c_name)
+            exit()
 
 
     elif ((not client.has_collection(args.c_name)) or args.mode == "construction"):

@@ -6,13 +6,13 @@ now=$(date +"%m-%d-%Y")
 algo=HNSW
 
 
-attr_type="[0]"  # 0 for numerical, 1 for categorical
+attr_type="[1]"  # 0 for numerical, 1 for categorical
 distribution_type="random"  # random, normal, zipf
 
 # query_sel="[0.5,[1]]"  # 0.5 for numerical, [1,2] for categorical label(s)
-num_query_sel="0.2"
-cate_query_sel="[1]"
-categorical_attr_max_cardinality=5
+num_query_sel="0.5"
+cate_query_sel="[2,3]"
+categorical_attr_max_cardinality=21
 numerical_max_attr=100000
 
 
@@ -66,16 +66,15 @@ ground_truth_file=${label_root}"gt_"${query_file_prefix}".json"
 
 index_root=${hashann_root}index/
 
-M=120
+M=180
 threads=64 # 1
 ef_construction=1000
-ef_search=100
-ef_top=10
+ef_top=100
 K=10
 dim=128
 ft_bits=128
 use_ft=true
-ef_search_list="[50,100,200,300]"
+ef_search_list="[20,30,50,100,500]"
 # use_ft=false
 
 index_file=${index_root}index_${M}_${ef_construction}_${attr_index_type}

@@ -18,6 +18,7 @@ Thumbs.db
 .idea/
 
 hashann.egg-info/
+hashannlib.egg-info/
 build/
 dist/
 tmp/

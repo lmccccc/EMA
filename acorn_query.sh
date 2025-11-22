@@ -27,7 +27,7 @@ echo "dataset attr file: ${dataset_attr_file}"
 echo "query predicate file: ${query_predicate_file}"
 echo "ground truth file: ${ground_truth_file}"
 echo "acorn index file: ${acorn_index_file}"
-echo "efs: $ef_search"
+echo "efs: $ef_search_list"
 echo "dim: ${dim}"
 echo "attr type: ${attr_type}"
 echo "test query size: ${test_query_size}"
@@ -45,7 +45,7 @@ echo "test query size: ${test_query_size}"
                                 $query_predicate_file \
                                 $ground_truth_file \
                                 $acorn_index_file \
-                                $ef_search \
+                                $ef_search_list \
                                 $dim \
                                 $attr_type \
                                 $test_query_size

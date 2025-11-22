@@ -10,6 +10,7 @@ typedef unsigned short int vl_type;
 class VisitedList {
  public:
     vl_type curV;
+    vl_type curV_ft;
     // vl_type curVtop;
     vl_type *mass;
     // vl_type *top_mass;
@@ -18,6 +19,7 @@ class VisitedList {
 
     VisitedList(int numelements1) {
         curV = -1;
+        curV_ft = 1;
         // curVtop = -1;
         numelements = numelements1;
         mass = new vl_type[numelements];
@@ -40,6 +42,10 @@ class VisitedList {
             memset(mass, 0, sizeof(vl_type) * numelements);
             // if(top_mass) memset(top_mass, 0, sizeof(vl_type) * (top_numelements));
             curV++;
+        }
+        curV_ft = curV + 1;
+        if (curV_ft == 0) {
+            curV_ft++;
         }
     }
 

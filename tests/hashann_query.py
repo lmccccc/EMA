@@ -82,7 +82,8 @@ if __name__ == "__main__":
         # for i in range(queries.shape[0]):
         # target_id = [i for i in range(queries.shape[0])]
         target_id = [i for i in range(100)]
-        # target_id = [0]
+        # target_id = [1]
+        print("query size:", len(target_id))
         # print(f"Query: {target_id}")
         _queries = queries[target_id]
         # _flatten_predicate = [flatten_predicate[i] for i in target_id]
@@ -104,34 +105,33 @@ if __name__ == "__main__":
             # print("result:", ids[i])
             # print("ground truth:", _query_gt[i])
             gt = _query_gt[i]
-            label = ids[i]
-            if len(gt) != len(label):
-                print(f"Error: ground truth and label length mismatch at query {i}, gt: {len(gt)}, label: {len(label)}")
+            res = ids[i]
+            if len(gt) != len(res):
+                print(f"Error: ground truth and label length mismatch at query {i}, gt: {len(gt)}, label: {len(res)}")
                 continue
-            correct = np.isin(gt, label)
+            correct = np.isin(gt, res)
             correct_sum += np.sum(correct)
             recall_list.append(np.sum(correct)/len(gt))
             # print("query id:", target_id[i], "recall:", np.sum(correct)/len(gt))
-        # print("recall list:", recall_list)  
-            # if True:
-            #     print(f"Query {i}:")
-            #     print("recall:", np.sum(correct)/len(gt))
-            #     attr = read_multy_attr(args.attr_path)
-            #     # print example
-            #     print("predicate:", raw_predicate[i])
-            #     print("gt id:", gt)
 
+            # print(f"Query {i}:")
+            # print("recall:", np.sum(correct)/len(gt))
+            # attr = read_multy_attr(args.attr_path)
+            # # print example
+            # print("predicate:", _raw_predicate[i])
+            # print("gt id:", gt)
+            # gt_attr = []
+            # for gt_id in gt:
+            #     gt_attr.append(attr[gt_id])
+            # print("gt attr:", gt_attr)
+            # print("result id:", res)
+            # result_attr = []
+            # for res_id in res:
+            #     result_attr.append(attr[res_id])
+            # print("result attr:", result_attr)
+            # print("result distance:", distances[0])
 
-            #     gt_attr = []
-            #     for gt_id in gt:
-            #         gt_attr.append(attr[gt_id])
-            #     print("gt attr:", gt_attr)
-            #     print("result id:", label)
-            #     result_attr = []
-            #     for res_id in label:
-            #         result_attr.append(attr[res_id])
-            #     print("result attr:", result_attr)
-            #     print("result distance:", distances[0])
+        print("recall list:", recall_list)  
 
         recall = correct_sum / (len(target_id) * args.K)
         print(f"ef search: {efs}, recall: {recall:.4f}")

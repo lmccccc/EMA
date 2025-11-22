@@ -15,6 +15,30 @@ def arg_init():
     args = parser.parse_args()
     return args
 
+cate_attr_dist = {
+    0: 1,
+    1: 0.9,
+    2: 0.8,
+    3: 0.7,
+    4: 0.6,
+    5: 0.5,
+    6: 0.4,
+    7: 0.3,
+    8: 0.2,
+    9: 0.1,
+    10: 0.09,
+    11: 0.08,
+    12: 0.07,
+    13: 0.06,
+    14: 0.05,
+    15: 0.04,
+    16: 0.03,
+    17: 0.02,
+    18: 0.01,
+    19: 0.001,
+}
+cate_prob_list = [cate_attr_dist[i] for i in range(len(cate_attr_dist))]
+
 def zipfProb(N=5, s=1.0):
     # 广义调和级数 H_{N,s}
     H_Ns = np.sum([1.0 / (k**s) for k in range(1, N+1)])
@@ -34,6 +58,7 @@ def assign_labels(probs, num_items):
         labels = [i for i, p in enumerate(probs, start=1) if np.random.rand() < p]
         all_labels.append(labels)  # 可能为空
     return all_labels
+
 
 if __name__ == "__main__":
     args = arg_init()
@@ -56,7 +81,8 @@ if __name__ == "__main__":
             attrs.append(num_attrs.tolist())
         else:
             # generate 
-            cat_attrs = assign_labels(zipf_prob, N)
+            # cat_attrs = assign_labels(zipf_prob, N)
+            cat_attrs = assign_labels(cate_prob_list, N)
             attrs.append(cat_attrs)
 
     final_attrs = []

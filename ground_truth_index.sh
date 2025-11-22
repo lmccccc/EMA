@@ -11,7 +11,7 @@ python tests/groundtruth_generator.py --dataset_file ${dataset_file} \
                              --query_size ${query_size} \
                              --predicate_file ${query_predicate_file} \
                              --c_name ${ground_truth_collection_name} \
-                             --mode construction \
+                             --mode "construction" \
                              --max_cate_val ${categorical_attr_max_cardinality} \
                              --K ${K} \
                              --gt_file ${ground_truth_file}

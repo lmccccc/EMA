@@ -10,7 +10,7 @@ from setuptools.command.build_ext import build_ext
 
 __version__ = '0.8.0'
 
-DEBUG=True
+DEBUG=False
 
 include_dirs = [
     pybind11.get_include(),
@@ -80,6 +80,7 @@ class BuildExt(build_ext):
         print("building in debug mode")
         flag_list.append('-O0')
         flag_list.append('-g')
+        # flag_list.append('-D_GLIBCXX_DEBUG')
     else:
         flag_list.append('-O3')
     c_opts = {

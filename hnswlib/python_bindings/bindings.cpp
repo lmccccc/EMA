@@ -218,6 +218,11 @@ class Index {
             appr_alg->set_ft_flag(flag);
     }
 
+    void set_thresholds(double threshold_1, double threshold_2, double threshold_3){
+        if(appr_alg)
+            appr_alg->set_thresholds(threshold_1, threshold_2, threshold_3);
+    }
+
 
     void set_ef(size_t ef) {
       default_ef = ef;
@@ -319,6 +324,9 @@ class Index {
             if (normalize == false) {
                 ParallelFor(start, rows, num_threads, [&](size_t row, size_t threadId) {
                     size_t id = ids.size() ? ids.at(row) : (cur_l + row);
+                    if(id % 1000 == 0){
+                        std::cout << "Adding point id: " << id << std::endl;
+                    }
                     int level = levels.size() ? levels.at(row) : 0;
                     appr_alg->addPoint((void*)items.data(row), (size_t)id, replace_deleted, level);
                     });
@@ -330,6 +338,9 @@ class Index {
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
 
                     size_t id = ids.size() ? ids.at(row) : (cur_l + row);
+                    if(id % 1000 == 0){
+                        std::cout << "Adding point id: " << id << std::endl;
+                    }
                     int level = levels.size() ? levels.at(row) : 0;
                     appr_alg->addPoint((void*)(norm_array.data() + start_idx), (size_t)id, replace_deleted, level);
                     });
@@ -520,13 +531,25 @@ class Index {
         appr_alg->add_buckets(bucket_ptr, bucket_offsets_ptr, length);
     }
 
+    void addIdToBucket(py::array_t<int> id_to_bucket_){
+        py::buffer_info buf = id_to_bucket_.request();
+        int* id_to_bucket_ptr = static_cast<int*>(buf.ptr);
+
+        appr_alg->add_id_to_bucket(id_to_bucket_ptr);
+    }
+
     void generateAttrIndexes(){
         appr_alg->generate_attr_indexes();
     }
 
-    void generateIdToBucket(){
-        appr_alg->generate_id_to_bucket();
+    void graphPartition() {
+        appr_alg->graph_partition();
     }
+
+    void initAttrMapping() {
+        appr_alg->init_attr_mapping();
+    }
+
 
     std::vector<std::vector<int>> predicateTranslate(const std::vector<std::vector<std::vector<int>>>& predicate) const {
         std::vector<std::vector<int>> result;
@@ -1728,10 +1751,12 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("addAttr", &Index<float>::addAttr, py::arg("attr_data"))
         .def("attrCheck", &Index<float>::attrCheck)
         .def("get_items", &Index<float>::getData, py::arg("ids") = py::none(), py::arg("return_type") = "numpy")
-        .def("addBuckets", &Index<float>::addBuckets, py::arg("bucket_data"), py::arg("bucket_offsets"))
+        .def("addBuckets", &Index<float>::addBuckets, py::arg("bucket2id_data"), py::arg("bucket_offsets"))
+        .def("addIdToBucket", &Index<float>::addIdToBucket, py::arg("id2bucket_data"))
         .def("get_ids_list", &Index<float>::getIdsList)
         .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
         .def("set_ft_flag", &Index<float>::set_ft_flag, py::arg("ft_flag"))
+        .def("set_thresholds", &Index<float>::set_thresholds, py::arg("threshold_1"), py::arg("threshold_2"), py::arg("threshold_3"))
         .def("set_ef_top", &Index<float>::set_ef_top, py::arg("ef_top"))
         .def("addEpIds", &Index<float>::addEpIds, py::arg("ep_ids"))
         .def("predicateTranslate", &Index<float>::predicateTranslate, py::arg("predicate"))
@@ -1739,7 +1764,8 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("generateFT", &Index<float>::generateFT)
         .def("initCountingHashTable", &Index<float>::initCountingHashTable)
         .def("generateAttrIndexes", &Index<float>::generateAttrIndexes)
-        .def("generateIdToBucket", &Index<float>::generateIdToBucket)
+        .def("graphPartition", &Index<float>::graphPartition)
+        .def("initAttrMapping", &Index<float>::initAttrMapping)
         .def("set_num_threads", &Index<float>::set_num_threads, py::arg("num_threads"))
         .def("index_file_size", &Index<float>::indexFileSize)
         .def("save_index", &Index<float>::saveIndex, py::arg("path_to_index"))

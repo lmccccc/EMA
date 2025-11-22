@@ -22,6 +22,13 @@ class HashANN:
         self.layer = None # is entry point=2, otherwise 1
         self.buckets = None  # buckets for clustering
         self.offsets = None # offsets for buckets
+
+
+        self.threshold_1 = 0.0001  # < threshold_1: scan on B+ tree / inverted list
+        self.threshold_2 = 0.0001  # < threshold_2: scan within the bucket
+        self.threshold_3 = 0.1   # < threshold_3: hybrid search only, scan on B+ tree / inverted list to estimate selectivity
+
+        self.save_root = ""
         
         # counting hash table
         self.bits = 32
@@ -38,6 +45,7 @@ class HashANN:
         self.N = params.get("N", None)
 
     def build_index(self, params, base_scalars, attr, attr_type_list, index_save_path, threads: int, name: str = "HNSW"):
+        self.save_root = os.path.dirname(index_save_path)
         self.index_method = name
         print("name:", name)
         if name == "HNSW":
@@ -61,7 +69,7 @@ class HashANN:
                 print(f"max cate value for attr {i}: {max_cate_value}")
         print(f"iterate label time: {time.time() - start}")
 
-        centroid_size, layers, closest_ids, best_dist, buckets, offsets = self.clustering(base_scalars)
+        centroid_size, layers, closest_ids, id2bucket = self.clustering(base_scalars)
         self.index = hashannlib.Index(space=params["metric"], dim=params["dim"])
         self.index.init_index(max_elements=self.N, 
                               top_elements=centroid_size, 
@@ -85,16 +93,21 @@ class HashANN:
 
         # generate Counting hash table
         self.index.addEpIds(closest_ids.tolist())
-        print("bucket[0:10]:", buckets[0:10])
-        self.index.addBuckets(buckets, offsets)
-        self.index.generateIdToBucket()
-        print("add buckets done, time:", time.time() - start)
-        self.index.initCountingHashTable()
-        print("init counting hash table done, time:", time.time() - start)
-        print("generate filter table done, time:", time.time() - start)
+        # print("bucket[0:10]:", bucket_data[0:10])
+        # self.index.addBuckets(bucket_data, offsets)
+        # self.index.generateIdToBucket()
+        self.index.initAttrMapping()
+        print("generate attr mapping done, time:", time.time() - start)
 
         # add data points into index
         self.index.add_items(base_scalars, levels=layers)
+        print("add items done, time:", time.time() - start)
+        self.index.addIdToBucket(id2bucket)
+        print("add id to bucket done, time:", time.time() - start)
+        self.index.graphPartition()
+        print("graph partition done, time:", time.time() - start)
+        self.index.initCountingHashTable()
+        print("init counting hash table done, time:", time.time() - start)
         self.index.generateFT()
         end = time.time()
         print(f"Index built: {name}, duration: {end-start}.")
@@ -116,8 +129,10 @@ class HashANN:
         self.index.load_index(index_save_path)
         print("index loaded")
         self.index.generateAttrIndexes() # B+ tree (numerical) and inverted list (categorical)
-        self.index.generateIdToBucket()
+        # self.index.generateIdToBucket()
         end = time.time()
+
+        self.index.set_thresholds(self.threshold_1, self.threshold_2, self.threshold_3)
 
         print(f"Index loaded: {name}, duration: {end-start}.")
 
@@ -172,8 +187,20 @@ class HashANN:
     
 
     def clustering(self, base_scalars):
+
+        save_file = "clustering.npz"
+        if os.path.exists(save_file):
+            print("loading clustering from file:", save_file)
+            data = np.load(save_file)
+            centroid_size = data['centroid_size']
+            layers = data['layers']
+            closest_ids = data['closest_ids']
+            id2bucket = data['id2bucket']
+            print("clustering loaded")
+            return centroid_size, layers, closest_ids, id2bucket
+
         seed = 1234
-        centroid_size = int(np.sqrt(self.N)) # * 10
+        centroid_size = int(np.sqrt(self.N)) * 4 # * 10
         # centroid_size = int(np.sqrt(self.N) / 100)
         print("d:", self.d, "N:", self.N, "centroid_size:", centroid_size)
         clustering = faiss.Clustering(self.d, centroid_size)
@@ -201,6 +228,8 @@ class HashANN:
         D = D.reshape(-1)
         I = I.reshape(-1)
 
+        id2bucket = I
+
         # -----------------------------
         # Step 4: Find closest vector to each centroid
         # -----------------------------
@@ -222,7 +251,7 @@ class HashANN:
         best_dist = best_dist
         layers[closest_ids] = 1
 
-        buckets = np.zeros(self.N, dtype=int)
+        bucket_data = np.zeros(self.N, dtype=int)
         offsets = np.zeros(centroid_size + 1, dtype=int)
 
         print("ep id len:", len(closest_ids))
@@ -237,8 +266,12 @@ class HashANN:
             selected = np.where(I == i)[0]
             size = selected.shape[0]
             end += size
-            buckets[start:end] = selected
+            bucket_data[start:end] = selected
             start = end
             offsets[i + 1] = end
 
-        return centroid_size, layers, closest_ids, best_dist, buckets, offsets
+        # save clustering result
+        np.savez(save_file, centroid_size=centroid_size, layers=layers, closest_ids=closest_ids, id2bucket=id2bucket)
+        print("clustering saved to file:", save_file)
+
+        return centroid_size, layers, closest_ids, id2bucket

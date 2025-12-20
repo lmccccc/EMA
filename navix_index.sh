@@ -10,17 +10,15 @@
 # make -C build test_acorn
 
 source ./conf.sh
-source ./acorn_conf.sh
+source ./navix_conf.sh
 
-../code/ACORN/build/demos/acorn_build $dataset \
+../code/faiss-navix/build/demos/navix_build $dataset \
                             $N \
-                            $gamma \
                             $M \
-                            $M_beta \
                             $K \
                             $threads \
                             $dataset_file \
                             $dataset_attr_file \
-                            $acorn_index_file \
+                            $navix_index_file \
                             $dim \
-                            $metric
+                            $metric 

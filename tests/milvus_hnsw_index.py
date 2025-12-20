@@ -10,6 +10,42 @@ import json
 import ast
 from utils import *
 
+def load_query_data(query_file, qrange_file, gt_file, N, Nq, k):# fvecs, fvecs, json, json, json
+
+    if(".fvecs" in query_file):
+        queries = fvecs_read(query_file)
+        print(f"ori query shape: {queries.shape}")
+        assert queries.shape[0] >= Nq
+        if queries.shape[0] > Nq:
+            queries = queries[:Nq]
+        print(f"used query shape: {queries.shape}")
+    else:
+        print("error: query file format not supported")
+        sys.exit(-1)
+    if(".json" in qrange_file):
+        query_filter_ranges = read_multy_attr(qrange_file)
+        #convert array into turple list
+        # query_filter_ranges = [(query_filter_ranges[i], query_filter_ranges[i+1]) for i in range(0, len(query_filter_ranges), 2)]
+        assert len(query_filter_ranges) >= Nq
+        if len(query_filter_ranges) > Nq:
+            query_filter_ranges = query_filter_ranges[:Nq]
+    else:    
+        print("error: query range file format not supported")
+        sys.exit(-1)
+    if(".json" in gt_file):
+        query_gt = read_attr(gt_file)
+        query_gt = query_gt.reshape(-1, k)
+        assert len(query_gt) >= Nq
+        if len(query_gt) > Nq:
+            query_gt = query_gt[:Nq]
+
+    else:
+        print("error: groundtruth file format not supported")
+        sys.exit(-1)
+    # print("sorting for label")
+
+    return queries, query_filter_ranges, query_gt
+
 def read_data(data_file, attr_file, N, d, query_file, predicate_file, Nq):
     dataset = fvecs_read(data_file)
     assert(dataset.shape[0] == N)
@@ -48,6 +84,9 @@ def arg_init():
     parser.add_argument("--K", type=int, default=10, help="Top K")
     parser.add_argument("--gt_file", type=str, help="Output groundtruth file", required=True)
     parser.add_argument("--metric", type=str, default="L2", help="Distance metric, L2 or IP")
+    parser.add_argument("--ef_construction", type=int, required=True, help="ef construction parameter for HNSW")
+    parser.add_argument("--M", type=int, required=True, help="M parameter for HNSW")
+    parser.add_argument("--ef_search", type=str, required=True, help="ef search list parameter for HNSW")
     args = parser.parse_args()
     return args
 
@@ -64,6 +103,9 @@ if __name__ == "__main__":
     fields = ["id", "vector"] + [f"attr_{i}" for i in range(len(attr_type_list))]
     print("mode:", args.mode, " collection name:", args.c_name)
     # create collection
+    if args.mode == "query" and not client.has_collection(args.c_name):
+        print("error: collection ", args.c_name, " does not exist")
+        exit()
     if client.has_collection(args.c_name):
         try:
             print("collection ", args.c_name, " exists")
@@ -77,6 +119,10 @@ if __name__ == "__main__":
             )
 
             print("collection size:", res)
+
+            if args.mode == "construction":
+                print("collection exists, skip construction")
+                exit()
         except Exception as e:
             print("error loading collection:", e)
             # client.drop_collection(args.c_name)
@@ -87,13 +133,28 @@ if __name__ == "__main__":
     elif ((not client.has_collection(args.c_name)) or args.mode == "construction"):
         # if client.has_collection(args.c_name):
         #     client.drop_collection(args.c_name)
-
+        print("start construction")
         dataset, attr, query, predicate = read_data(args.dataset_file, args.attr_file, args.N, args.d, args.query_file, args.predicate_file, args.query_size)
 
 
+        # label_set = set(attr)
+        # label_cnt = len(label_set)
+        # partition_size = min(64, label_cnt)
+        partition_attr_type = attr_type_list[-1]
+        if partition_attr_type == 0:
+            partition_size = 64
+        elif partition_attr_type == 1:
+            partition_size = min(64, args.max_cate_val+1)
+        else:
+            print("error: unsupported partition attribute type ", partition_attr_type)
+            exit()
+        print("partition size:", partition_size)
         # create collection
+        partition_attr = f"attr_{len(attr_type_list)-1}"
         schema = MilvusClient.create_schema(
-            auto_id=False
+            auto_id=False,
+            partition_key_field=partition_attr,      # default partition=64
+            num_partitions=partition_size
         )
         schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
         schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=args.d)
@@ -138,10 +199,10 @@ if __name__ == "__main__":
         index_params = client.prepare_index_params()
         index_params.add_index(
             field_name="vector", 
-            index_type="FLAT",# IVF_FLAT IVF_PQ IVF_SQ8 HNSW SCANN
+            index_type="HNSW",# IVF_FLAT IVF_PQ IVF_SQ8 HNSW SCANN
             metric_type=args.metric,
-            index_name="FLAT",
-            params={}, # see https://milvus.io/docs/configure_querynode.md#queryNodesegcoreinterimIndexnlist
+            index_name="HNSW",
+            params={ "M": args.M, "efConstruction": args.ef_construction }, # see https://milvus.io/docs/configure_querynode.md#queryNodesegcoreinterimIndexnlist
             sync=True
         )
         # print("creating index")
@@ -163,55 +224,82 @@ if __name__ == "__main__":
 
         print("collection size:", res)
         # print("create index suc, time cost:", t2-t1)
-        print("insert suc, time cost:", t2-t1)
-        if args.mode == "construction":
-            print("construction done")
-            exit()
+        print("construction suc, time cost:", t2-t1)
+        print("construction done")
+        exit()
 
-    dataset, attr, query, predicate = read_data(args.dataset_file, args.attr_file, args.N, args.d, args.query_file, args.predicate_file, args.query_size)
+    # query -------------------------
+    queries, raw_predicate, query_gt = load_query_data(args.query_file, args.predicate_file, args.gt_file, args.N, args.query_size, args.K)
+    
 
-
-    ids = []
-    q_t = 0
-    hist = np.array([0 for _ in range(11)], dtype='float')
-    total_size = args.N * args.K
-    positive_size = 0
-    for i in range(args.query_size):
-        # if(i % 100 == 0):
-        #     print("batch ", i)
-        q_cnt = 0
-        exp = ""
-        for j in range(len(attr_type_list)):
-            if attr_type_list[j] == 0:
-                if j != 0:
-                    exp += " and "
-                exp += f"{predicate[i][j][0]} <= attr_{j} <= {predicate[i][j][1]}"
-            else:
-                for k in range(len(predicate[i][j])):
-                    if j != 0 or k != 0:
+    efs_list = ast.literal_eval(args.ef_search)
+    result = []
+    for efs in efs_list:
+        ids = []
+        q_t = 0
+        hist = np.array([0 for _ in range(11)], dtype='float')
+        total_size = args.N * args.K
+        positive_size = 0
+        time_one_batch = 0
+        for i in range(args.query_size):
+            # if(i % 100 == 0):
+            #     print("batch ", i)
+            q_cnt = 0
+            exp = ""
+            for j in range(len(attr_type_list)):
+                if attr_type_list[j] == 0:
+                    if j != 0:
                         exp += " and "
-                    exp += f"array_contains(attr_{j}, {predicate[i][j][k]})"
-        # qr = [i for i in range(qrange[i][0], qrange[i][1] + 1)]
-        # exp = "label in " + str(qr)
-        t0 = time.time()
-        res = client.search(
-                            collection_name=args.c_name,
-                            data=[query[i].tolist()], 
-                            filter=exp,
-                            limit=args.K,
-                            group_strict_size=True,
-                            )
-        t1 = time.time()
-        q_t += t1 - t0
-        res_id = [x['id'] for x in res[0]]
-        ids.append(res_id)
+                    exp += f"{raw_predicate[i][j][0]} <= attr_{j} <= {raw_predicate[i][j][1]}"
+                else:
+                    for k in range(len(raw_predicate[i][j])):
+                        if j != 0 or k != 0:
+                            exp += " and "
+                        exp += f"array_contains(attr_{j}, {raw_predicate[i][j][k]})"
+            # qr = [i for i in range(qrange[i][0], qrange[i][1] + 1)]
+            # exp = "label in " + str(qr)
+            s_params = {"metric_type": args.metric, "params": {"ef": efs}}
+            start = time.time()
+            res = client.search(
+                                collection_name=args.c_name,
+                                data=[queries[i].tolist()], 
+                                filter=exp,
+                                limit=args.K,
+                                search_params=s_params, 
+                                group_strict_size=True,
+                                )
+            end = time.time()
+            time_one_batch += end - start
+            res_id = [x['id'] for x in res[0]]
+            ids.append(res_id)
+        qps = args.query_size/time_one_batch
+        print(f"Query time: {time_one_batch} seconds, QPS:{qps}")
 
-    total_size = args.query_size * args.K
+        # recall
+        correct_sum = 0
+        recall_list = []
+        for i in range(args.query_size):
+            # print("predicate:", raw_predicate[i])
+            # print("result:", ids[i])
+            # print("ground truth:", _query_gt[i])
+            gt = query_gt[i]
+            res = ids[i]
+            if len(gt) != len(res):
+                print(f"Error: ground truth and label length mismatch at query {i}, gt: {len(gt)}, label: {len(res)}")
+                continue
+            correct = np.isin(gt, res)
+            correct_sum += np.sum(correct)
+            recall_list.append(np.sum(correct)/len(gt))
+        recall = correct_sum / (args.query_size * args.K)
+        print(f"ef search: {efs}, recall: {recall:.4f}")
+        result.append([efs, recall, qps])
 
-    # write to json file
-    with open(args.gt_file, 'w') as file:
-        json.dump(ids, file)
-    print("groundtruth file saved to ", args.gt_file)
+    # total_size = args.query_size * args.K
+    print("Final results (ef_search, recall, QPS):")
+    for res in result:
+        print(res)
+    exit()
+
 
 
         

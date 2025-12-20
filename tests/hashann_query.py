@@ -20,7 +20,9 @@ def load_query_data(query_file, qrange_file, gt_file, N, Nq, k):# fvecs, fvecs, 
     if(".fvecs" in query_file):
         queries = fvecs_read(query_file)
         print(f"query shape: {queries.shape}")
-        assert queries.shape[0] == Nq
+        assert queries.shape[0] >= Nq
+        if queries.shape[0] > Nq:
+            queries = queries[:Nq]
     else:
         print("error: query file format not supported")
         sys.exit(-1)
@@ -28,14 +30,19 @@ def load_query_data(query_file, qrange_file, gt_file, N, Nq, k):# fvecs, fvecs, 
         query_filter_ranges = read_multy_attr(qrange_file)
         #convert array into turple list
         # query_filter_ranges = [(query_filter_ranges[i], query_filter_ranges[i+1]) for i in range(0, len(query_filter_ranges), 2)]
-        assert len(query_filter_ranges) == Nq
+        assert len(query_filter_ranges) >= Nq
+        if len(query_filter_ranges) > Nq:
+            query_filter_ranges = query_filter_ranges[:Nq]
     else:    
         print("error: query range file format not supported")
         sys.exit(-1)
     if(".json" in gt_file):
         query_gt = read_attr(gt_file)
         query_gt = query_gt.reshape(-1, k)
-        assert len(query_gt) == Nq
+        assert len(query_gt) >= Nq
+        if len(query_gt) > Nq:
+            query_gt = query_gt[:Nq]
+
     else:
         print("error: groundtruth file format not supported")
         sys.exit(-1)
@@ -51,13 +58,15 @@ if __name__ == "__main__":
     # data_path query_path attr_path qrange_path gt_path N n_query_to_use k
     nq = args.n_query_to_use
     attr_type_list = ast.literal_eval(args.attr_type_list)
-    params = {"M": args.M, "ef_construction": args.efConstruction, "metric": args.metric, "dim": args.dim, "N": args.N, "ef_search": args.ef_search, "ef_top": args.ef_top}
+    params = {"M": args.M, "ef_construction": args.efConstruction, "metric": args.metric.lower(), "dim": args.dim, "N": args.N, "ef_search": args.ef_search, "ef_top": args.ef_top}
     queries, raw_predicate, query_gt = load_query_data(args.query_path, args.qrange_path, args.gt_path, args.N, nq, args.k)
     hash_ann.init_params(params)
+
     
     index = hash_ann.load_index(
         params, attr_type_list, args.index_cache_path, args.threads, args.name
     )
+    # index.save_index(args.index_cache_path)
     print("start query")
     # query
     efs_list = ast.literal_eval(args.ef_search)
@@ -75,13 +84,13 @@ if __name__ == "__main__":
         # print("predicate translated")
         # ft_predicate = index.predicateToFT(raw_predicate)
         # print("ft predicate translated")
-        start = time.time()
 
 
         # for test
         # for i in range(queries.shape[0]):
         # target_id = [i for i in range(queries.shape[0])]
-        target_id = [i for i in range(100)]
+        # target_id = [i for i in range(min(100, queries.shape[0]))]
+        target_id = [i for i in range(queries.shape[0])]
         # target_id = [1]
         print("query size:", len(target_id))
         # print(f"Query: {target_id}")
@@ -92,6 +101,10 @@ if __name__ == "__main__":
         _query_gt = [query_gt[i] for i in target_id]
         # print("query predicate:", raw_predicate[target_id])
 
+        # warm up
+        _, _ = index.hybrid_knn_query(_queries[:min(3, len(_queries))], _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
+
+        start = time.time()
         ids, distances = index.hybrid_knn_query(_queries, _raw_predicate, k=args.K)
         end = time.time()
         qps = len(target_id)/(end-start)
@@ -112,11 +125,23 @@ if __name__ == "__main__":
             correct = np.isin(gt, res)
             correct_sum += np.sum(correct)
             recall_list.append(np.sum(correct)/len(gt))
+
+
+            # if (np.sum(correct)/len(gt) < 0.5):
+            #     print("query id:", target_id[i], "recall:", np.sum(correct)/len(gt))
+            #     attr = read_multy_attr(args.attr_path)
+            #     print(f"Query {i} not full recall:")
+            #     print("predicate:", _raw_predicate[i])
+            #     print("gt id:", gt)
+            #     print("gt attr:", [attr[gt_id] for gt_id in gt])
+            #     print("result id:", res)
+            #     print("result attr:", [attr[res_id] for res_id in res])
+
+            #     exit()
             # print("query id:", target_id[i], "recall:", np.sum(correct)/len(gt))
 
             # print(f"Query {i}:")
             # print("recall:", np.sum(correct)/len(gt))
-            # attr = read_multy_attr(args.attr_path)
             # # print example
             # print("predicate:", _raw_predicate[i])
             # print("gt id:", gt)
@@ -131,7 +156,7 @@ if __name__ == "__main__":
             # print("result attr:", result_attr)
             # print("result distance:", distances[0])
 
-        print("recall list:", recall_list)  
+        # print("recall list:", recall_list)  
 
         recall = correct_sum / (len(target_id) * args.K)
         print(f"ef search: {efs}, recall: {recall:.4f}")

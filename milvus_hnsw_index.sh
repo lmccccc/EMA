@@ -1,8 +1,8 @@
 source ./conf.sh
+source ./milvus_conf.sh
 
 
-
-python tests/groundtruth_generator.py --dataset_file ${dataset_file} \
+python tests/milvus_hnsw_index.py --dataset_file ${dataset_file} \
                              --d ${dim} \
                              --attr_file ${dataset_attr_file} \
                              --query_file ${query_file} \
@@ -10,9 +10,12 @@ python tests/groundtruth_generator.py --dataset_file ${dataset_file} \
                              --N ${N} \
                              --query_size ${query_size} \
                              --predicate_file ${query_predicate_file} \
-                             --c_name ${ground_truth_collection_name} \
+                             --c_name ${milvus_collection_name} \
                              --mode "construction" \
                              --max_cate_val ${categorical_attr_max_cardinality} \
                              --K ${K} \
                              --gt_file ${ground_truth_file} \
-                             --metric ${metric}
+                             --metric ${metric} \
+                             --M ${M} \
+                             --ef_construction ${ef_construction} \
+                             --ef_search ${ef_search_list}

@@ -254,14 +254,14 @@ class Index {
         appr_alg->init_attr_space();
     }
 
-    void addAttr(const std::vector<std::vector<std::vector<int>>>& data){
-        appr_alg->add_attr(data);
-    }
+    // void addAttr(const std::vector<std::vector<std::vector<int>>>& data){
+    //     appr_alg->add_attr(data);
+    // }
 
-    void generateFT(){
-        py::gil_scoped_release l;
-        appr_alg->generateFT();
-    }
+    // void generateFT(){
+    //     py::gil_scoped_release l;
+    //     appr_alg->generateFT();
+    // }
 
 
     void loadIndex(const std::string &path_to_index, size_t max_elements, size_t top_elements, bool allow_replace_deleted) {
@@ -285,7 +285,7 @@ class Index {
     }
 
 
-    void addItems(py::object input, py::object ids_ = py::none(), int num_threads = -1, bool replace_deleted = false, const py::array_t<int>& levels = py::array_t<int>()) {
+    void addItems(py::object input, const std::vector<std::vector<std::vector<int>>>& attr_data, py::object ids_ = py::none(), int num_threads = -1, bool replace_deleted = false, const py::array_t<int>& levels = py::array_t<int>()) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
         if (num_threads <= 0)
@@ -293,6 +293,8 @@ class Index {
 
         size_t rows, features;
         get_input_array_shapes(buffer, &rows, &features);
+
+        std::cout << "Adding " << rows << " items with dimension " << features << std::endl;
 
         if (features != dim)
             throw std::runtime_error("Wrong dimensionality of the vectors");
@@ -315,7 +317,7 @@ class Index {
                     normalize_vector(vector_data, norm_array.data());
                     vector_data = norm_array.data();
                 }
-                appr_alg->addPoint((void*)vector_data, (size_t)id, replace_deleted, level);
+                appr_alg->addPoint((void*)vector_data, (size_t)id, attr_data[0], replace_deleted, level);
                 start = 1;
                 ep_added = true;
             }
@@ -328,7 +330,7 @@ class Index {
                         std::cout << "Adding point id: " << id << std::endl;
                     }
                     int level = levels.size() ? levels.at(row) : 0;
-                    appr_alg->addPoint((void*)items.data(row), (size_t)id, replace_deleted, level);
+                    appr_alg->addPoint((void*)items.data(row), (size_t)id, attr_data[row], replace_deleted, level);
                     });
             } else {
                 std::vector<float> norm_array(num_threads * dim);
@@ -342,7 +344,7 @@ class Index {
                         std::cout << "Adding point id: " << id << std::endl;
                     }
                     int level = levels.size() ? levels.at(row) : 0;
-                    appr_alg->addPoint((void*)(norm_array.data() + start_idx), (size_t)id, replace_deleted, level);
+                    appr_alg->addPoint((void*)(norm_array.data() + start_idx), (size_t)id, attr_data[row], replace_deleted, level);
                     });
             }
             cur_l += rows;
@@ -546,8 +548,8 @@ class Index {
         appr_alg->graph_partition();
     }
 
-    void initAttrMapping() {
-        appr_alg->init_attr_mapping();
+    void initAttrMapping(const std::vector<std::vector<std::vector<int>>>& attr){
+        appr_alg->init_attr_mapping(attr);
     }
 
 
@@ -1743,12 +1745,13 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("add_items",
             &Index<float>::addItems,
             py::arg("data"),
+            py::arg("data_attr"),
             py::arg("ids") = py::none(),
             py::arg("num_threads") = -1,
             py::arg("replace_deleted") = false,
             py::arg("levels") = py::array_t<int>() )
         .def("initAttrSpace", &Index<float>::initAttrSpace)
-        .def("addAttr", &Index<float>::addAttr, py::arg("attr_data"))
+        // .def("addAttr", &Index<float>::addAttr, py::arg("attr_data"))
         .def("attrCheck", &Index<float>::attrCheck)
         .def("get_items", &Index<float>::getData, py::arg("ids") = py::none(), py::arg("return_type") = "numpy")
         .def("addBuckets", &Index<float>::addBuckets, py::arg("bucket2id_data"), py::arg("bucket_offsets"))
@@ -1761,11 +1764,11 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("addEpIds", &Index<float>::addEpIds, py::arg("ep_ids"))
         .def("predicateTranslate", &Index<float>::predicateTranslate, py::arg("predicate"))
         .def("predicateToFT", &Index<float>::predicate_to_ft, py::arg("predicate"))
-        .def("generateFT", &Index<float>::generateFT)
+        // .def("generateFT", &Index<float>::generateFT)
         .def("initCountingHashTable", &Index<float>::initCountingHashTable)
         .def("generateAttrIndexes", &Index<float>::generateAttrIndexes)
         .def("graphPartition", &Index<float>::graphPartition)
-        .def("initAttrMapping", &Index<float>::initAttrMapping)
+        .def("initAttrMapping", &Index<float>::initAttrMapping, py::arg("attr"))
         .def("set_num_threads", &Index<float>::set_num_threads, py::arg("num_threads"))
         .def("index_file_size", &Index<float>::indexFileSize)
         .def("save_index", &Index<float>::saveIndex, py::arg("path_to_index"))

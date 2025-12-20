@@ -1,8 +1,8 @@
 source ./conf.sh
+source ./msvbase_conf.sh
 
 
-
-python tests/groundtruth_generator.py --dataset_file ${dataset_file} \
+python tests/msvbase.py --dataset_file ${dataset_file} \
                              --d ${dim} \
                              --attr_file ${dataset_attr_file} \
                              --query_file ${query_file} \
@@ -10,7 +10,9 @@ python tests/groundtruth_generator.py --dataset_file ${dataset_file} \
                              --N ${N} \
                              --query_size ${query_size} \
                              --predicate_file ${query_predicate_file} \
-                             --c_name ${ground_truth_collection_name} \
+                             --schema_name ${vbase_schema_name} \
+                             --table_name ${vbase_table_name} \
+                             --table_file ${vbase_dataset_file} \
                              --mode "construction" \
                              --max_cate_val ${categorical_attr_max_cardinality} \
                              --K ${K} \

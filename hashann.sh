@@ -26,7 +26,7 @@ echo "query_file: $query_file"
 echo "dataset_attr_file: $dataset_attr_file"
 echo "query_predicate_file: $query_predicate_file"
 echo "ground_truth_file: $ground_truth_file"
-echo "index_file: $index_file"
+echo "index_file: $hashann_index_file"
 echo "top_k: $K"
 echo "threads: $threads"
 echo "ef_search: $ef_search_list"
@@ -61,13 +61,13 @@ fi
 #                                                &>> $log_file
 
 python -u tests/hashann_build.py --data_path $dataset_file \
-                                               --index_cache_path $index_file \
+                                               --index_cache_path $hashann_index_file \
                                                --ef_search $ef_search_list \
                                                --k $K \
                                                --N $N \
                                                --M $M \
                                                --dim $dim \
-                                               --metric "l2" \
+                                               --metric ${metric} \
                                                --efConstruction $ef_construction \
                                                --name $algo \
                                                --query_path $query_file \
@@ -77,7 +77,7 @@ python -u tests/hashann_build.py --data_path $dataset_file \
                                                --n_query_to_use $query_size \
                                                --attr_type_list $attr_type \
                                                --ft_bits ${ft_bits} \
-                                               --threads $threads
+                                               --threads $threads \
 
 if [ $? -ne 0 ]; then
     echo "HashANN failed to run."

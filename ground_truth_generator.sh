@@ -25,7 +25,10 @@ source ./conf.sh
 #                              --max_cate_val 5 \
 #                              --K 10 \
 #                              --gt_file ${ground_truth_file}
-
+if [ -f ${ground_truth_file} ]; then
+    echo "${ground_truth_file} exists, skip predicate generation."
+    exit 0
+fi
 
 
 python tests/groundtruth_generator.py --dataset_file ${dataset_file} \
@@ -40,7 +43,8 @@ python tests/groundtruth_generator.py --dataset_file ${dataset_file} \
                              --mode query \
                              --max_cate_val ${categorical_attr_max_cardinality} \
                              --K ${K} \
-                             --gt_file ${ground_truth_file}
+                             --gt_file ${ground_truth_file} \
+                             --metric ${metric}
 
 # python selectivity.py --d ${dim} \
 #                              --attr_file ${dataset_attr_file} \

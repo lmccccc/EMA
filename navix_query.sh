@@ -10,15 +10,13 @@
 # make -C build test_acorn
 
 source ./conf.sh
-source ./acorn_conf.sh
+source ./navix_conf.sh
 
 threads=1
 
 echo "dataset: ${dataset}"
 echo "N: ${N}"
-echo "gamma: ${gamma}"
 echo "M: ${M}"
-echo "M_beta: ${M_beta}"
 echo "K: ${K}"
 echo "threads: ${threads}"
 echo "dataset file: ${dataset_file}"
@@ -26,7 +24,7 @@ echo "query file: ${query_file}"
 echo "dataset attr file: ${dataset_attr_file}"
 echo "query predicate file: ${query_predicate_file}"
 echo "ground truth file: ${ground_truth_file}"
-echo "acorn index file: ${acorn_index_file}"
+echo "navix index file: ${navix_index_file}"
 echo "efs: $ef_search_list"
 echo "dim: ${dim}"
 echo "attr type: ${attr_type}"
@@ -35,13 +33,11 @@ echo "test query size: ${test_query_size}"
 echo "dataset: $dataset" >> logs.txt
 echo "attr: $attr_type" >> logs.txt
 echo "sel: $query_sel" >> logs.txt
-echo "algo: acorn" >> logs.txt
+echo "algo: navix" >> logs.txt
 
-../code/ACORN/build/demos/acorn_query_arbi $dataset \
+../code/faiss-navix/build/demos/navix_query_arbi $dataset \
                                 $N \
-                                $gamma \
                                 $M \
-                                $M_beta \
                                 $K \
                                 $threads \
                                 $dataset_file \
@@ -49,11 +45,12 @@ echo "algo: acorn" >> logs.txt
                                 $dataset_attr_file \
                                 $query_predicate_file \
                                 $ground_truth_file \
-                                $acorn_index_file \
+                                $navix_index_file \
                                 $ef_search_list \
                                 $dim \
                                 $attr_type \
                                 $test_query_size \
-                                2>&1 | tee logs/acorn.log
-                                
-python tests/extract_results.py "logs/acorn.log"
+                                2>&1 | tee logs/navix.log
+
+
+python tests/extract_results.py "logs/navix.log"

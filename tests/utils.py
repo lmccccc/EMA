@@ -37,7 +37,9 @@ def load_data(dataset_file, query_file, attr_file, qrange_file, gt_file, N, Nq, 
     if(".fvecs" in query_file):
         queries = fvecs_read(query_file)
         print(f"query shape: {queries.shape}")
-        assert queries.shape[0] == Nq
+        assert queries.shape[0] >= Nq
+        if queries.shape[0] > Nq:
+            queries = queries[:Nq]
     else:
         print("error: query file format not supported")
         sys.exit(-1)
@@ -51,14 +53,18 @@ def load_data(dataset_file, query_file, attr_file, qrange_file, gt_file, N, Nq, 
         query_filter_ranges = read_multy_attr(qrange_file)
         #convert array into turple list
         # query_filter_ranges = [(query_filter_ranges[i], query_filter_ranges[i+1]) for i in range(0, len(query_filter_ranges), 2)]
-        assert len(query_filter_ranges) == Nq
+        assert len(query_filter_ranges) >= Nq
+        if len(query_filter_ranges) > Nq:
+            query_filter_ranges = query_filter_ranges[:Nq]
     else:    
         print("error: query range file format not supported")
         sys.exit(-1)
     if(".json" in gt_file):
         query_gt = read_attr(gt_file)
         query_gt = query_gt.reshape(-1, k)
-        assert len(query_gt) == Nq
+        assert len(query_gt) >= Nq
+        if len(query_gt) > Nq:
+            query_gt = query_gt[:Nq]
     else:
         print("error: groundtruth file format not supported")
         sys.exit(-1)

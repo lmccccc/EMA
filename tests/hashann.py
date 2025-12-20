@@ -26,15 +26,14 @@ class HashANN:
 
         self.threshold_1 = 0.0001  # < threshold_1: scan on B+ tree / inverted list
         self.threshold_2 = 0.0001  # < threshold_2: scan within the bucket
-        self.threshold_3 = 0.1   # < threshold_3: hybrid search only, scan on B+ tree / inverted list to estimate selectivity
+        self.threshold_3 = 0.0001   # < threshold_3: hybrid search only, scan on B+ tree / inverted list to estimate selectivity
 
         self.save_root = ""
         
         # counting hash table
         self.bits = 32
+        self.metric = "l2"
 
-    def search(self, query, k=None):
-        pass
 
 
     def init_params(self, params):
@@ -43,6 +42,7 @@ class HashANN:
         self.index_method = params.get("name", "HNSW")
         self.d = params.get("dim", None)
         self.N = params.get("N", None)
+        self.metric = params.get("metric", "l2")
 
     def build_index(self, params, base_scalars, attr, attr_type_list, index_save_path, threads: int, name: str = "HNSW"):
         self.save_root = os.path.dirname(index_save_path)
@@ -70,7 +70,10 @@ class HashANN:
         print(f"iterate label time: {time.time() - start}")
 
         centroid_size, layers, closest_ids, id2bucket = self.clustering(base_scalars)
-        self.index = hashannlib.Index(space=params["metric"], dim=params["dim"])
+
+        print("base scalar shape:", base_scalars.shape, " layer shape:", layers.shape)
+
+        self.index = hashannlib.Index(space=self.metric, dim=params["dim"])
         self.index.init_index(max_elements=self.N, 
                               top_elements=centroid_size, 
                               ef_construction=params["ef_construction"], 
@@ -84,31 +87,28 @@ class HashANN:
 
         # add attributes into index
         assert(attr_type_list is not None)
-        self.add_attr(attr, attr_type_list)
-        print("add attr done, time:", time.time() - start)
+        # self.add_attr(attr, attr_type_list)
+        # print("add attr done, time:", time.time() - start)
         # generate attribute indexes
         self.index.generateAttrIndexes() # B+ tree (numerical) and inverted list (categorical)
         print("generate attr index done, time:", time.time() - start)
 
 
         # generate Counting hash table
-        self.index.addEpIds(closest_ids.tolist())
-        # print("bucket[0:10]:", bucket_data[0:10])
-        # self.index.addBuckets(bucket_data, offsets)
-        # self.index.generateIdToBucket()
-        self.index.initAttrMapping()
+        # self.index.addEpIds(closest_ids.astype(np.uint32).tolist()) # add entry point ids to list, used for partitioning, not used. 
+        self.index.initAttrMapping(attr)                                # generate counting_hash_table_mapping (codebook)
         print("generate attr mapping done, time:", time.time() - start)
 
         # add data points into index
-        self.index.add_items(base_scalars, levels=layers)
+        self.index.add_items(base_scalars, attr, levels=layers)           # add items
         print("add items done, time:", time.time() - start)
-        self.index.addIdToBucket(id2bucket)
-        print("add id to bucket done, time:", time.time() - start)
-        self.index.graphPartition()
-        print("graph partition done, time:", time.time() - start)
-        self.index.initCountingHashTable()
-        print("init counting hash table done, time:", time.time() - start)
-        self.index.generateFT()
+        # self.index.addIdToBucket(id2bucket)                         # ivf for clustered scan. Currently not used
+        # print("add id to bucket done, time:", time.time() - start)
+        # self.index.graphPartition()                                 # generate partition based on graph clustering. Currently not used
+        # print("graph partition done, time:", time.time() - start)
+        # self.index.initCountingHashTable()                          # static attribute for partitioned dataset, currently not used
+        # print("init counting hash table done, time:", time.time() - start)
+        # self.index.generateFT()                                     # generate ft for node. new version ft is in edge, not sued.
         end = time.time()
         print(f"Index built: {name}, duration: {end-start}.")
         self.index.save_index(index_save_path)
@@ -122,10 +122,11 @@ class HashANN:
         print("name:", name)
 
         print(f"Loading index: {name}...")
-        self.index = hashannlib.Index(space=params["metric"], dim=params["dim"])
+        self.index = hashannlib.Index(space=self.metric, dim=params["dim"])
         self.index.set_num_threads(threads)
         start = time.time()
         assert(attr_type_list is not None)
+        print("index path:", index_save_path)
         self.index.load_index(index_save_path)
         print("index loaded")
         self.index.generateAttrIndexes() # B+ tree (numerical) and inverted list (categorical)
@@ -188,7 +189,7 @@ class HashANN:
 
     def clustering(self, base_scalars):
 
-        save_file = "clustering.npz"
+        save_file = self.save_root+"_clustering.npz"
         if os.path.exists(save_file):
             print("loading clustering from file:", save_file)
             data = np.load(save_file)
@@ -205,13 +206,33 @@ class HashANN:
         print("d:", self.d, "N:", self.N, "centroid_size:", centroid_size)
         clustering = faiss.Clustering(self.d, centroid_size)
         clustering.seed = seed
-        clustering.niter = max(20, int(np.log2(self.N)) * 2)
+        # clustering.niter = max(20, int(np.log2(self.N)) * 2)
+        clustering.niter = 25
         # clustering.max_points_per_centroid = int(np.sqrt(self.N))
 
         print(f"Clustering parameters: niter={clustering.niter}, max_points_per_centroid={clustering.max_points_per_centroid}")
 
-        index = faiss.IndexFlatL2(self.d)  # For assignment
-        clustering.train(base_scalars, index)
+        if self.metric == "l2":
+            print("Using L2 metric for clustering")
+            index = faiss.IndexFlatL2(self.d)  # For assignment
+        elif self.metric == "ip":
+            print("Using IP metric for clustering")
+            index = faiss.IndexFlatIP(self.d)  # For assignment
+        else:
+            raise ValueError(f"Unsupported metric: {self.metric}")
+
+        faiss.omp_set_num_threads(self.threads)
+
+        max_train_size = 2_560_000
+        if self.N > max_train_size:
+            random_indices = np.random.choice(self.N, size=max_train_size, replace=False)
+            training_data = base_scalars[random_indices]
+            print(f"Training clustering on a subset of size {max_train_size}")
+        else:
+            training_data = base_scalars
+            print(f"Training clustering on the full dataset of size {self.N}")
+
+        clustering.train(training_data, index)
 
         centroids = faiss.vector_to_array(clustering.centroids).reshape(centroid_size, self.d)
         print(f"Clustering done, centroids shape: {centroids.shape}")
@@ -220,7 +241,12 @@ class HashANN:
         # -----------------------------
         # Step 3: Assign all points to clusters
         # -----------------------------
-        index = faiss.IndexFlatL2(self.d)
+        if self.metric == "l2":
+            index = faiss.IndexFlatL2(self.d)
+        elif self.metric == "ip":
+            index = faiss.IndexFlatIP(self.d)
+        else:
+            raise ValueError(f"Unsupported metric: {self.metric}")
         index.add(centroids)
 
         # Find nearest centroid for each point

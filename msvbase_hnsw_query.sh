@@ -1,10 +1,10 @@
 source ./conf.sh
 source ./msvbase_conf.sh
 
-echo "dataset: $dataset" >> logs.txt
-echo "attr: $attr_type" >> logs.txt
-echo "sel: $query_sel" >> logs.txt
-echo "algo: msvbase" >> logs.txt
+# echo "dataset: $dataset" >> logs.txt
+# echo "attr: $attr_type" >> logs.txt
+# echo "sel: $query_sel" >> logs.txt
+# echo "algo: msvbase" >> logs.txt
 
 python -u tests/msvbase.py --dataset_file ${dataset_file} \
                              --d ${dim} \
@@ -25,4 +25,4 @@ python -u tests/msvbase.py --dataset_file ${dataset_file} \
                             2>&1 | tee logs/msvbase.log
 
 
-python tests/extract_results.py "logs/msvbase.log"
+python tests/extract_results.py "logs/msvbase.log" $dataset $attr_type $query_sel $M "msvbase"

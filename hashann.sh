@@ -33,11 +33,9 @@ echo "ef_search: $ef_search_list"
 
 
 
-if [ "$mode" == "construction" ] || [ "$mode" == "all" ]; then
-    if [ -e $index_file ]; then
-        echo "index file already exist"
-        exit 0
-    fi
+if [ -f $hashann_index_file ]; then
+    echo "index file already exist"
+    exit 0
 fi
 
 
@@ -59,6 +57,11 @@ fi
 #                                                --n_query_to_use $query_size \
 #                                                --threads $threads \
 #                                                &>> $log_file
+echo "====================================================" >> logs/bfann_construction.log
+echo "dataset: $dataset" >> logs/bfann_construction.log
+echo "attr: $attr_type" >> logs/bfann_construction.log
+echo "algo: bfann" >> logs/bfann_construction.log
+
 
 python -u tests/hashann_build.py --data_path $dataset_file \
                                                --index_cache_path $hashann_index_file \
@@ -78,12 +81,10 @@ python -u tests/hashann_build.py --data_path $dataset_file \
                                                --attr_type_list $attr_type \
                                                --ft_bits ${ft_bits} \
                                                --threads $threads \
+                                                2>&1 | tee -a logs/bfann_construction.log
+echo "${hashann_index_file} construction done" >> logs/bfann_construction.log
+echo "\n" >> logs/bfann_construction.log
 
-if [ $? -ne 0 ]; then
-    echo "HashANN failed to run."
-else
-    echo "HashANN succeed."
-fi
 
 # status=$?
 # if [ $status -eq 0 ]; then

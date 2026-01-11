@@ -12,6 +12,7 @@
 #include <memory>
 #include <bitset>
 #include <unordered_map>
+#include <cmath>
 
 namespace hnswlib {
 typedef unsigned int tableint;
@@ -71,6 +72,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     double mult_{0.0}, revSize_{0.0};
     double threshold_1_{0.01}, threshold_2_{0.01}, threshold_3_{0.1}; // threshold to decide whether scan the bucket or not
     int maxlevel_{0};
+
+    double two_hop_threshold{0.2}; // threshold for two hop expansion
 
     std::unique_ptr<VisitedListPool> visited_list_pool_{nullptr};
 
@@ -135,8 +138,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     bool use_ft_{true}; 
 
+    bool use_two_hop_{true};
+
     void set_ft_flag(bool flag){
         use_ft_ = flag;
+    }
+
+    void set_two_hop_flag(bool flag){
+        use_two_hop_ = flag;
+        std::cout << "set two hop flag to " << use_two_hop_ << std::endl;
     }
 
     void add_ep_ids(const std::vector<tableint>& ep_ids){
@@ -147,6 +157,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         threshold_1_ = threshold_1;
         threshold_2_ = threshold_2;
         threshold_3_ = threshold_3;
+    }
+
+    void set_two_hop_threshold(double threshold){
+        two_hop_threshold = threshold;
+        std::cout << "set two hop threshold to " << two_hop_threshold << std::endl;
     }
 
     void add_buckets(const int *bucket_data, const int * bucket_offsets, size_t offset_size){
@@ -1323,77 +1338,48 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     inline bool nbr_ft_check(tableint id, int nbr_idx, char* mapped_predicate) const {
         for(int i = 0; i < attr_type_.size(); ++i){
             unsigned char* ft = nbr_ft_at(id, nbr_idx, i);
-            
-            // test
-            // nbr id:
-            // unsigned int* data = get_linklist0(id);
-            // int size = getListCount(data);
-            // tableint *datal = (tableint *) (data + 1);
-            // if (id == 9701 && datal[nbr_idx] == 9885){ 
-            //     std::cout << "ft " << i << ":             ";
-            //     for (int j = 0; j < ft_bytes_; ++j){
-            //         std::bitset<8> b((unsigned char)ft[j]);
-            //         for (size_t i = 0; i < b.size(); i++) {
-            //             std::cout << b[i];  // 注意 bitset[i] 访问的是低位 -> 高位
-            //         }
-            //         std::cout << " ";
-            //     }
-            //     std::cout << std::endl;
-
-                
-            //     std::cout << "mapped predicate: ";
-            //     for (int j = 0; j < ft_bytes_; ++j){
-            //         std::bitset<8> b((unsigned char)mapped_predicate[i * ft_bytes_ + j]);
-            //         for (size_t i = 0; i < b.size(); i++) {
-            //             std::cout << b[i];  // 注意 bitset[i] 访问的是低位 -> 高位
-            //         }
-            //         std::cout << " ";
-            //     }
-            //     std::cout << std::endl;
-            // }
-            // ------------------
             #ifdef USE_SSE
             size_t offset = 0;
-            for (; offset < ft_bytes_; offset += 16) {
-                __m128i v_ft  = _mm_loadu_si128((const __m128i*)(ft + offset));
-                __m128i v_mp  = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
-                if (attr_type_[i] == 0)  // numerical: any bit exists → (ft & mp) > 0 ？
-                {
-                    __m128i r = _mm_and_si128(v_ft, v_mp);
+            if (attr_type_[i] == 0) {  // numerical: exists-anywhere
+                bool matched = false;
 
-                    // _mm_testz_si128 = check if r == 0 for all bits
-                    // testz == 1 → all bits zero → no match
-                    if (_mm_testz_si128(r, r))
-                        return false;   // no bit matched
-                }
-                else // attr_type == 1, categorical: (ft & mp) == mp ?
-                {
-                    // categorical: all bits required → (ft & mp) == mp
-                    __m128i r = _mm_and_si128(v_ft, v_mp);
+                for (; offset + 16 <= ft_bytes_; offset += 16) {
+                    __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
+                    __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+                    __m128i r    = _mm_and_si128(v_ft, v_mp);
 
-                    // Now compare r == mp ?
-                    __m128i cmp = _mm_cmpeq_epi8(r, v_mp);
-
-                    // If all 16 bytes equal, cmp will be all 0xFF → testz on NOT(cmp) == 0
-                    // So check if ANY mismatch exists:
-                    __m128i not_cmp = _mm_xor_si128(cmp, _mm_set1_epi8((char)0xFF));
-
-                    if (!_mm_testz_si128(not_cmp, not_cmp))
-                        return false;   // mismatch
-                }
-            }
-            for (; offset < ft_bytes_; ++offset) {
-                if (attr_type_[i] == 0) { // numerical
-                    if ((ft[offset] & mapped_predicate[i * ft_bytes_ + offset]) > 0) { // any attr exist for range search
-                        // matched = true;
+                    if (!_mm_testz_si128(r, r)) {  // r != 0
+                        matched = true;
                         break;
                     }
                 }
-                else if (attr_type_[i] == 1) { // categorical
-                    if ((ft[offset] & mapped_predicate[i * ft_bytes_ + offset]) != mapped_predicate[i * ft_bytes_ + offset]) { // all attr exist for label search
-                        // std::cout << "cate attr not match" << std::endl;
-                        return false;
+
+                // tail
+                if (!matched) {
+                    for (; offset < ft_bytes_; ++offset) {
+                        if ((ft[offset] & mapped_predicate[i * ft_bytes_ + offset]) > 0) {
+                            matched = true;
+                            break;
+                        }
                     }
+                }
+
+                if (!matched) return false;
+            }
+            else { // categorical: must-satisfy-everywhere
+                for (; offset + 16 <= ft_bytes_; offset += 16) {
+                    __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
+                    __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+                    __m128i r    = _mm_and_si128(v_ft, v_mp);
+
+                    __m128i cmp = _mm_cmpeq_epi8(r, v_mp);
+                    __m128i not_cmp = _mm_xor_si128(cmp, _mm_set1_epi8((char)0xFF));
+                    if (!_mm_testz_si128(not_cmp, not_cmp)) return false;
+                }
+
+                for (; offset < ft_bytes_; ++offset) {
+                    if ((ft[offset] & mapped_predicate[i * ft_bytes_ + offset]) != mapped_predicate[i * ft_bytes_ + offset])
+                        return false;
                 }
             }
             #else
@@ -1424,7 +1410,247 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return true;
     }
 
+    
+    inline void batched_nbr_ft_check_sse(const tableint& id, const int& size, char* mapped_predicate, std::vector<uint8_t>& res) const {
+        
+        #ifdef USE_SSE
+        assert(ft_bytes_ % 16 == 0); // ensure ft_bytes_ is multiple of 16 for SSE processing
+        std::fill(res.begin(), res.end(), 1);
+        for(int i = 0; i < attr_type_.size(); ++i){
+            if (attr_type_[i] == 0) {  // numerical: exists-anywhere
+                int batch_start = 0;
+                for (; batch_start < size; batch_start += 4){
+                    bool matched1 = false;
+                    bool matched2 = false;
+                    bool matched3 = false;
+                    bool matched4 = false;
+                    unsigned char* ft1 = nbr_ft_at(id, batch_start, i);
+                    unsigned char* ft2 = nbr_ft_at(id, batch_start + 1, i);
+                    unsigned char* ft3 = nbr_ft_at(id, batch_start + 2, i);
+                    unsigned char* ft4 = nbr_ft_at(id, batch_start + 3, i);
+                    size_t offset = 0;
+                    for (; offset + 16 < ft_bytes_; offset += 16) {
+                        __m128i v_ft1 = _mm_loadu_si128((const __m128i*)(ft1 + offset));
+                        __m128i v_ft2 = _mm_loadu_si128((const __m128i*)(ft2 + offset));
+                        __m128i v_ft3 = _mm_loadu_si128((const __m128i*)(ft3 + offset));
+                        __m128i v_ft4 = _mm_loadu_si128((const __m128i*)(ft4 + offset));
+                        
+                        __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
 
+                        __m128i r1    = _mm_and_si128(v_ft1, v_mp);
+                        __m128i r2    = _mm_and_si128(v_ft2, v_mp);
+                        __m128i r3    = _mm_and_si128(v_ft3, v_mp);
+                        __m128i r4    = _mm_and_si128(v_ft4, v_mp);  
+                        
+                        matched1 = matched1 || !_mm_testz_si128(r1, r1);
+                        matched2 = matched2 || !_mm_testz_si128(r2, r2);
+                        matched3 = matched3 || !_mm_testz_si128(r3, r3);
+                        matched4 = matched4 || !_mm_testz_si128(r4, r4);
+
+                        if (matched1 && matched2 && matched3 && matched4) break; // all matched, can stop early
+                    }
+                    res[batch_start] &= matched1;
+                    res[batch_start + 1] &= matched2;
+                    res[batch_start + 2] &= matched3;
+                    res[batch_start + 3] &= matched4;
+                    if (!res[batch_start] && !res[batch_start + 1] && !res[batch_start + 2] && !res[batch_start + 3]) {
+                        continue; // all failed, skip to next batch
+                    }
+                }
+
+                // tail
+                for( int j = batch_start; j < size; ++j) {
+                    bool matched = false;
+                    unsigned char* ft = nbr_ft_at(id, j, i);
+                    size_t offset = 0;
+                    for (; offset + 16 < ft_bytes_; offset += 16) {
+                        __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
+                        __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+                        __m128i r    = _mm_and_si128(v_ft, v_mp);
+
+                        if (!_mm_testz_si128(r, r)) {  // r != 0
+                            matched = true;
+                            break;
+                        }
+                    }
+                    res[j] = matched;
+                    if (res[j]) continue;
+                }
+            }
+            else { // attr type = 1
+                int batch_start = 0;
+                for (; batch_start < size; batch_start += 4){
+                    bool matched1 = false;
+                    bool matched2 = false;
+                    bool matched3 = false;
+                    bool matched4 = false;
+                    unsigned char* ft1 = nbr_ft_at(id, batch_start, i);
+                    unsigned char* ft2 = nbr_ft_at(id, batch_start + 1, i);
+                    unsigned char* ft3 = nbr_ft_at(id, batch_start + 2, i);
+                    unsigned char* ft4 = nbr_ft_at(id, batch_start + 3, i);
+                    size_t offset = 0;
+                    for (; offset + 16 < ft_bytes_; offset += 16) {
+                        __m128i v_ft1 = _mm_loadu_si128((const __m128i*)(ft1 + offset));
+                        __m128i v_ft2 = _mm_loadu_si128((const __m128i*)(ft2 + offset));
+                        __m128i v_ft3 = _mm_loadu_si128((const __m128i*)(ft3 + offset));
+                        __m128i v_ft4 = _mm_loadu_si128((const __m128i*)(ft4 + offset));
+                        
+                        __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+
+                        __m128i r1    = _mm_and_si128(v_ft1, v_mp);
+                        __m128i r2    = _mm_and_si128(v_ft2, v_mp);
+                        __m128i r3    = _mm_and_si128(v_ft3, v_mp);
+                        __m128i r4    = _mm_and_si128(v_ft4, v_mp);  
+
+                        __m128i cmp1 = _mm_cmpeq_epi8(r1, v_mp);
+                        __m128i cmp2 = _mm_cmpeq_epi8(r2, v_mp);
+                        __m128i cmp3 = _mm_cmpeq_epi8(r3, v_mp);
+                        __m128i cmp4 = _mm_cmpeq_epi8(r4, v_mp);
+                        
+                        __m128i not_cmp1 = _mm_xor_si128(cmp1, _mm_set1_epi8((char)0xFF));
+                        __m128i not_cmp2 = _mm_xor_si128(cmp2, _mm_set1_epi8((char)0xFF));
+                        __m128i not_cmp3 = _mm_xor_si128(cmp3, _mm_set1_epi8((char)0xFF));
+                        __m128i not_cmp4 = _mm_xor_si128(cmp4, _mm_set1_epi8((char)0xFF));
+
+                        matched1 = matched1 && _mm_testz_si128(not_cmp1, not_cmp1);
+                        matched2 = matched2 && _mm_testz_si128(not_cmp2, not_cmp2);
+                        matched3 = matched3 && _mm_testz_si128(not_cmp3, not_cmp3);
+                        matched4 = matched4 && _mm_testz_si128(not_cmp4, not_cmp4);
+
+                        if (matched1 && matched2 && matched3 && matched4) break; // all matched, can stop early
+                    }
+                    res[batch_start] &= matched1;
+                    res[batch_start + 1] &= matched2;
+                    res[batch_start + 2] &= matched3;
+                    res[batch_start + 3] &= matched4;
+                    if (!res[batch_start] && !res[batch_start + 1] && !res[batch_start + 2] && !res[batch_start + 3]) {
+                        continue; // all failed, skip to next batch
+                    }
+                }
+
+                // tail
+                for( int j = batch_start; j < size; ++j) {
+                    bool matched = true;
+                    unsigned char* ft = nbr_ft_at(id, j, i);
+                    size_t offset = 0;
+                    for (; offset + 16 < ft_bytes_; offset += 16) {
+                        __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
+                        __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+                        __m128i r    = _mm_and_si128(v_ft, v_mp);
+
+                        __m128i cmp = _mm_cmpeq_epi8(r, v_mp);
+                        __m128i not_cmp = _mm_xor_si128(cmp, _mm_set1_epi8((char)0xFF));
+                        if (!_mm_testz_si128(not_cmp, not_cmp)) {
+                            matched = false;
+                            break;
+                        }
+                    }
+                    res[j] = matched;
+                    if (!res[j]) break;
+                }
+            }
+        }
+        #else
+            std::cerr << "Batched nbr_ft_check_sse called without USE_SSE defined." << std::endl;
+            exit(1);
+        #endif
+        
+        return;
+    }
+
+    inline bool nbr_ft_check_multi_or(tableint id, int nbr_idx, char* mapped_predicate) const {
+        assert(attr_type_.size() > 1); // only one attribute is supported in multi-or query
+        for(int i = 0; i < attr_type_.size(); ++i){
+            unsigned char* ft = nbr_ft_at(id, nbr_idx, i);
+            #ifdef USE_SSE
+            size_t offset = 0;
+            if (attr_type_[i] == 0) {  // numerical: exists-anywhere
+                bool matched = false;
+
+                for (; offset + 16 <= ft_bytes_; offset += 16) {
+                    __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
+                    __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+                    __m128i r    = _mm_and_si128(v_ft, v_mp);
+
+                    if (!_mm_testz_si128(r, r)) {  // r != 0
+                        matched = true;
+                        return true;
+                    }
+                }
+
+                // tail
+                if (!matched) {
+                    for (; offset < ft_bytes_; ++offset) {
+                        if ((ft[offset] & mapped_predicate[i * ft_bytes_ + offset]) > 0) {
+                            matched = true;
+                            return true;
+                        }
+                    }
+                }
+
+                // if (!matched) return false;
+                // if (matched) {
+                //     any_predicate_matched = true;
+                //     break;   // OR：已有一个 predicate 成功
+                // }
+            }
+            else { // categorical: must-satisfy-everywhere
+                bool matched = true;
+                for (; offset + 16 <= ft_bytes_; offset += 16) {
+                    __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
+                    __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+                    __m128i r    = _mm_and_si128(v_ft, v_mp);
+
+                    __m128i cmp = _mm_cmpeq_epi8(r, v_mp);
+                    __m128i not_cmp = _mm_xor_si128(cmp, _mm_set1_epi8((char)0xFF));
+                    if (!_mm_testz_si128(not_cmp, not_cmp)) {
+                        matched = false;
+                        break;
+                    }
+                }
+
+                for (; offset < ft_bytes_; ++offset) {
+                    if ((ft[offset] & mapped_predicate[i * ft_bytes_ + offset]) != mapped_predicate[i * ft_bytes_ + offset])
+                        matched = false;
+                        break;
+                }
+                if (matched) {
+                    // any_predicate_matched = true;
+                    return true;
+                }
+            }
+            #else
+            bool matched = false;
+            if (attr_type_[i] == 0) { // numerical
+                for (int j = 0; j < ft_bytes_; ++j) {
+                    if ((ft[j] & mapped_predicate[i * ft_bytes_ + j]) > 0) { // any attr exist for range search
+                        matched = true;
+                        return true;
+                    }
+                }
+                // if (!matched) {
+                //     // if (id == 9701 && datal[nbr_idx] == 9885)
+                //     //     std::cout << "num attr not match" << std::endl;
+                //     return false;
+                // }
+            }
+            else if (attr_type_[i] == 1) { // categorical
+                for (int j = 0; j < ft_bytes_; ++j) {
+                    if ((ft[j] & mapped_predicate[i * ft_bytes_ + j]) != mapped_predicate[i * ft_bytes_ + j]) { // all attr exist for label search
+                        // std::cout << "cate attr not match" << std::endl;
+                        // return false;
+                        continue;
+                    }
+                    else {
+                        // any_predicate_matched = true;
+                        return true;
+                    }
+                }
+            }
+            #endif
+        }
+        return true;
+    }
 
     void attr_check() const {
         // test
@@ -1579,8 +1805,327 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
+//     // bare_bone_search means there is no check for deletions and stop condition is ignored in return of extra performance
+//     template <bool bare_bone_search = true, bool collect_metrics = false>
+//     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
+//     hybridSearchBaseLayerST(
+//         // tableint ep_id,
+//         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates_,
+//         const void *data_point,
+//         std::vector<int> predicate,
+//         std::vector<char> ft_predicate,
+//         size_t ef,
+//         size_t search_k,
+//         VisitedList *vl,
+//         BaseFilterFunctor* isIdAllowed = nullptr,
+//         BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
+//         vl_type *visited_array = vl->mass;
+//         vl_type visited_array_tag = vl->curV;
+
+//         int backbone_edge_size = 10;
+
+//         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+//         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
+
+//         dist_t lowerBound;
+//         // mark top candidates as visited, and push to candidate set, and initialize lowerBound
+//         int visited = 0;
+
+//         // test
+//         // std::cout << "entry points:" << std::endl;
+
+//         while(!top_candidates_.empty()) {
+//             tableint id = top_candidates_.top().second;
+
+//             //test 
+//             // print_raw_attr(id);
+
+//             visited_array[id] = visited_array_tag;
+//             visited++;
+//             candidate_set.emplace(-top_candidates_.top().first, id);
+//             if (predicate_check(id, predicate)) {
+//                 top_candidates.emplace(top_candidates_.top());
+//                 // std::cout << " in top candidates" << std::endl;
+//             }
+//             if (candidate_set.size() >= ef_top_) {
+//                 // prevent candidate set from being too large
+//                 break;
+//             }
+//             top_candidates_.pop();
+//         }
+
+
+//         // if (!top_candidates.empty())
+//         //     lowerBound = top_candidates.top().first;
+//         // else
+//         lowerBound = std::numeric_limits<dist_t>::max();
+//         int round = 0;
+//         int passed = 0;
+//         int ft_passed = 0;
+//         int deg = 0;
+//         int max_deg = 0;
+//         int ft_deg = 0;
+//         int use_two_hop_freq = 0;
+//         std::vector<int> nbrs;
+//         std::vector<int> not_nbrs;
+//         std::vector<int> not_nbrs_idx;
+//         nbrs.reserve(maxM0_);
+//         not_nbrs.reserve(maxM0_);
+//         not_nbrs_idx.reserve(maxM0_);
+//         while (!candidate_set.empty()) {
+//             round++;
+//             std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+//             dist_t candidate_dist = -current_node_pair.first;
+
+//             bool flag_stop_search;
+//             if (bare_bone_search) {
+//                 flag_stop_search = candidate_dist > lowerBound;
+//             } else {
+//                 if (stop_condition) {
+//                     flag_stop_search = stop_condition->should_stop_search(candidate_dist, lowerBound);
+//                 } else {
+//                     flag_stop_search = candidate_dist > lowerBound && top_candidates.size() == ef;
+//                 }
+//             }
+//             if (flag_stop_search) {
+//                 break;
+//             }
+//             candidate_set.pop();
+
+//             tableint current_node_id = current_node_pair.second;
+//             #ifdef DEBUG_SEARCH
+//             std::cout << "round " << round << " checking node " << current_node_id << " candidate dist " << candidate_dist << " lower bound " << lowerBound << std::endl;
+//             #endif
+
+//             int *data = (int *) get_linklist0(current_node_id);
+//             size_t size = getListCount((linklistsizeint*)data);
+// //                bool cur_node_deleted = isMarkedDeleted(current_node_id);
+//             if (collect_metrics) {
+//                 metric_hops++;
+//                 metric_distance_computations+=size;
+//             }
+
+
+//             // test
+//             deg += size;
+//             // std::cout << " node " << current_node_id << " deg " << size << std::endl;
+//             if (size > max_deg) {
+//                 max_deg = size;
+//             }
+//             nbrs.clear();
+//             not_nbrs.clear();
+//             not_nbrs_idx.clear();
+//             if (use_ft_) {
+//                 for (size_t j = 1; j <= size; j++) {
+//                     if (nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
+//                         nbrs.push_back(*(data + j)); // indicate filtered nbr
+//                     }
+//                     else {
+//                         not_nbrs.push_back(*(data + j));
+//                         not_nbrs_idx.push_back(j);
+//                     }
+//                 }
+//             }
+//             else {
+//                 for (size_t j = 1; j <= size; j++) {
+//                     nbrs.push_back(*(data + j));
+//                 }
+//             }
+//             ft_deg += nbrs.size();
+//             ft_passed += (size - nbrs.size());
+
+//             // double passed_ratio = double(size - nbrs.size()) / size;
+//             int min_nbrs = two_hop_threshold * size;
+//             // std::cout << "size:" << size << " ft nbrs size:" << nbrs.size() << " expected min nbrs:" << min_nbrs << std::endl;
+            
+//             if (use_two_hop_ && nbrs.size() < min_nbrs) {
+//                 use_two_hop_freq++;
+//                 // blind two hop expansion
+//                 int two_hop_loop = 0;
+//                 for (int not_nbr_j = 0; not_nbr_j < not_nbrs.size(); not_nbr_j++) {
+//                     tableint candidate_nbr_id = not_nbrs[not_nbr_j];
+//                     if (attr_type_.size() > 1) {
+//                         if (!nbr_ft_check_multi_or(current_node_id, not_nbrs_idx[not_nbr_j]-1, ft_predicate.data())) {
+//                             continue;
+//                         }
+//                     }
+
+//                     // get second hop nbrs
+//                     int *data2 = (int *) get_linklist0(candidate_nbr_id);
+//                     size_t size2 = getListCount((linklistsizeint*)data2);
+//                     for (size_t j2 = 1; j2 <= size2; j2++) { 
+//                         if (nbr_ft_check(candidate_nbr_id, j2-1, ft_predicate.data())) {
+//                             nbrs.push_back(*(data2 + j2)); // indicate filtered nbr
+//                         }
+//                     }
+//                     if (nbrs.size() >= min_nbrs || ++two_hop_loop > 3) {
+//                         break;
+//                     }
+//                 }
+//             }
+// #ifdef USE_SSE
+//             if (nbrs.size() == 0) continue;
+//             _mm_prefetch((char *) (visited_array + nbrs[0]), _MM_HINT_T0);
+//             _mm_prefetch((char *) (visited_array + nbrs[0] + 64), _MM_HINT_T0);
+//             _mm_prefetch(data_level0_memory_ + (nbrs[0]) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+//             // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+// #endif
+
+//             for (int nbr_idx = 0; nbr_idx < nbrs.size(); ++nbr_idx) {
+//                 // size_t j = nbrs[nbr_idx];
+//                 // size_t j_next = nbr_idx + 1 < nbrs.size() ? nbrs[nbr_idx + 1] : size + 1;
+//                 // int candidate_id = *(data + j);
+//                 int candidate_id = nbrs[nbr_idx];
+//                 size_t j_next = nbr_idx + 1 < nbrs.size() ? nbrs[nbr_idx + 1] : size + 1;
+                
+// //                    if (candidate_id == 0) continue;
+// #ifdef USE_SSE
+//                 _mm_prefetch((char *) (visited_array + j_next), _MM_HINT_T0);
+//                 _mm_prefetch(data_level0_memory_ + (j_next) * size_data_per_element_ + offsetData_,
+//                                 _MM_HINT_T0);  ////////////
+// #endif
+//                 if (!(visited_array[candidate_id] == visited_array_tag)) {
+//                     visited_array[candidate_id] = visited_array_tag;
+//                     visited++;
+
+//                     #ifdef DEBUG_SEARCH
+//                     std::cout << "   visiting nbr " << candidate_id << " ";
+//                     print_raw_attr(candidate_id);
+//                     #endif
+
+//                     //test
+//                     // print_raw_attr(candidate_id);
+
+//                     // check filter table predicate
+//                     // if (!filter_table_check(candidate_id, ft_predicate.data())) {
+//                     //     ft_passed++;
+//                     //     // std::cout << " ft passed" << std::endl;
+//                     //     // std::cout << " checking 2 hop nbr " << std::endl;
+//                     //     int *data2 = (int *) get_linklist0(candidate_id);
+//                     //     size_t size2 = getListCount((linklistsizeint*)data2);
+//                     //     for (size_t j2 = 1; j2 <= size2; j2++) {
+//                     //         int candidate_id2 = *(data2 + j2);
+//                     //         // print_raw_attr(candidate_id2);
+//                     //     }
+//                     //     // std::cout << std::endl;
+//                     //     continue;
+//                     // }
+
+//                     // check nbr filter table predicate
+//                     // if (j > backbone_edge_size && use_ft_ && !nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
+//                     //     ft_passed++;
+//                     //     // std::cout << " ft passed" << std::endl;
+//                     //     // std::cout << " checking 2 hop nbr " << std::endl;
+//                     //     // int *data2 = (int *) get_linklist0(candidate_id);
+//                     //     // size_t size2 = getListCount((linklistsizeint*)data2);
+//                     //     // for (size_t j2 = 1; j2 <= size2; j2++) {
+//                     //     //     int candidate_id2 = *(data2 + j2);
+//                     //     //     print_raw_attr(candidate_id2);
+//                     //     // }
+//                     //     // std::cout << std::endl;
+//                     //     #ifdef DEBUG_SEARCH
+//                     //     std::cout << " ft passed " << std::endl;
+//                     //     #endif
+//                     //     continue;
+//                     // }
+                        
+//                     char *currObj1 = (getDataByInternalId(candidate_id));
+//                     dist_t dist = fstdistfunc_(data_point, currObj1, dist_func_param_);
+
+//                     #ifdef DEBUG_SEARCH
+//                     std::cout << " dist " << dist;
+//                     #endif
+
+//                     bool flag_consider_candidate;
+//                     if (!bare_bone_search && stop_condition) {
+//                         flag_consider_candidate = stop_condition->should_consider_candidate(dist, lowerBound);
+//                     } else {
+//                         flag_consider_candidate = top_candidates.size() < ef || lowerBound > dist;
+//                     }
+
+//                     #ifdef DEBUG_SEARCH
+//                     if (!flag_consider_candidate) {
+//                         std::cout << ", farther than lowerbound" << std::endl;
+//                     }
+//                     #endif
+
+//                     if (flag_consider_candidate) {
+//                         candidate_set.emplace(-dist, candidate_id);
+// #ifdef USE_SSE
+//                         _mm_prefetch(data_level0_memory_ + candidate_set.top().second * size_data_per_element_ +
+//                                         offsetLevel0_,  ///////////
+//                                         _MM_HINT_T0);  ////////////////////////
+// #endif
+
+//                         if (!predicate_check(candidate_id, predicate)) {
+//                             passed++;
+//                             #ifdef DEBUG_SEARCH
+//                             std::cout << " predicate passed" << std::endl;
+//                             #endif
+//                             continue;
+//                         }
+                        
+
+//                         if (bare_bone_search || 
+//                             (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id))))) {
+//                             // std::cout << "pushed to top candidates" << std::endl;
+//                             top_candidates.emplace(dist, candidate_id);
+//                             #ifdef DEBUG_SEARCH
+//                             std::cout << ", pushed to top candidates" << std::endl;
+//                             #endif
+//                             if (!bare_bone_search && stop_condition) {
+//                                 stop_condition->add_point_to_result(getExternalLabel(candidate_id), currObj1, dist);
+//                             }
+//                         }
+//                         #ifdef DEBUG_SEARCH
+//                         else{
+//                             std::cout << ", id not allowed" << std::endl;
+//                         }
+//                         #endif
+
+//                         bool flag_remove_extra = false;
+//                         if (!bare_bone_search && stop_condition) {
+//                             flag_remove_extra = stop_condition->should_remove_extra();
+//                         } else {
+//                             flag_remove_extra = top_candidates.size() > ef;
+//                         }
+//                         while (flag_remove_extra) {
+//                             tableint id = top_candidates.top().second;
+//                             top_candidates.pop();
+//                             if (!bare_bone_search && stop_condition) {
+//                                 stop_condition->remove_point_from_result(getExternalLabel(id), getDataByInternalId(id), dist);
+//                                 flag_remove_extra = stop_condition->should_remove_extra();
+//                             } else {
+//                                 flag_remove_extra = top_candidates.size() > ef;
+//                             }
+//                         }
+
+//                         // if (!top_candidates.empty()) 
+//                         //     lowerBound = top_candidates.top().first;
+
+
+//                         if (top_candidates.size() >= search_k) {
+//                             lowerBound = top_candidates.top().first;
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//         // std::cout << "hybrid search round: " << round
+//         //              << ", visited " << visited 
+//         //              << ", ft passed " << ft_passed 
+//         //              << ", passed " << passed 
+//         //              << ", avg degree " << deg * 1.0 / round 
+//         //              << ", ft avg degree "<< ft_deg * 1.0 / round 
+//         //              << ", max degree " << max_deg
+//         //              << ", use two hop freq " << use_two_hop_freq
+//         //              << std::endl;
+
+//         return top_candidates;
+//     }
+
     // bare_bone_search means there is no check for deletions and stop condition is ignored in return of extra performance
-    template <bool bare_bone_search = true, bool collect_metrics = false>
+    template <bool bare_bone_search = true, bool collect_metrics = false, bool use_two_hop = true, bool use_ft=true>
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
     hybridSearchBaseLayerST(
         // tableint ep_id,
@@ -1589,6 +2134,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::vector<int> predicate,
         std::vector<char> ft_predicate,
         size_t ef,
+        size_t search_k,
         VisitedList *vl,
         BaseFilterFunctor* isIdAllowed = nullptr,
         BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
@@ -1606,6 +2152,24 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         // test
         // std::cout << "entry points:" << std::endl;
+        
+        // start time
+        // auto start_time = std::chrono::high_resolution_clock::now();
+        // double two_hop_collection_time = 0.0;
+        // double two_hop_scan_time = 0.0;
+        // double visited_array_time = 0.0;
+        // double linklist_fetch_time = 0.0;
+        // double nbr_ft_time = 0.0;
+        // auto two_hop_coll_start = std::chrono::high_resolution_clock::now();
+        // auto two_hop_coll_end = std::chrono::high_resolution_clock::now();
+        // auto two_hop_scan_start = std::chrono::high_resolution_clock::now();
+        // auto two_hop_scan_end = std::chrono::high_resolution_clock::now();
+        // auto visited_array_start = std::chrono::high_resolution_clock::now();
+        // auto visited_array_end = std::chrono::high_resolution_clock::now();
+        // auto linklist_fetch_start = std::chrono::high_resolution_clock::now();
+        // auto linklist_fetch_end = std::chrono::high_resolution_clock::now();
+        // auto nbr_ft_start = std::chrono::high_resolution_clock::now();
+        // auto nbr_ft_end = std::chrono::high_resolution_clock::now();
 
         while(!top_candidates_.empty()) {
             tableint id = top_candidates_.top().second;
@@ -1631,13 +2195,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // if (!top_candidates.empty())
         //     lowerBound = top_candidates.top().first;
         // else
-        lowerBound = std::numeric_limits<dist_t>::max();
+            lowerBound = std::numeric_limits<dist_t>::max();
         int round = 0;
         int passed = 0;
         int ft_passed = 0;
         int deg = 0;
         int max_deg = 0;
         int ft_deg = 0;
+        int use_two_hop_freq = 0;
+        std::vector<int> nbrs;
+        std::vector<int> not_nbrs;
+        std::vector<int> not_nbrs_idx;
+        nbrs.reserve(maxM0_);
+        not_nbrs.reserve(maxM0_);
+        not_nbrs_idx.reserve(maxM0_);
         while (!candidate_set.empty()) {
             round++;
             std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
@@ -1659,6 +2230,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             candidate_set.pop();
 
             tableint current_node_id = current_node_pair.second;
+
+            #ifdef USE_SSE
+            char* ft0 =
+                data_level0_memory_
+                + current_node_id * size_data_per_element_
+                + offsetNbrFt_;
+            _mm_prefetch((char*)ft0, _MM_HINT_T0);
+            #endif
             #ifdef DEBUG_SEARCH
             std::cout << "round " << round << " checking node " << current_node_id << " candidate dist " << candidate_dist << " lower bound " << lowerBound << std::endl;
             #endif
@@ -1674,43 +2253,221 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
             // test
             deg += size;
+            // std::cout << " node " << current_node_id << " deg " << size << std::endl;
             if (size > max_deg) {
                 max_deg = size;
             }
-            std::vector<size_t> nbrs;
-            nbrs.reserve(size);
-            if (use_ft_) {
+            nbrs.clear();
+            not_nbrs.clear();
+            not_nbrs_idx.clear();
+            
+            if (use_ft) {
+                std::vector<uint8_t> ft_predicate_result(size, 1);
+                // batched_nbr_ft_check_sse(current_node_id, size, ft_predicate.data(), ft_predicate_result);
                 for (size_t j = 1; j <= size; j++) {
-                    if (nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
-                        nbrs.push_back(j); // indicate filtered nbr
+                    ft_predicate_result[j-1] = nbr_ft_check(current_node_id, j-1, ft_predicate.data());
+                }
+                for (size_t j = 1; j <= size; j++) {
+                    if (ft_predicate_result[j-1]) {
+                        nbrs.push_back(*(data + j)); // indicate filtered nbr
+                        // prefetch
+                        #ifdef USE_SSE
+                            _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);  // L1 prefetch
+                            // _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_ + offsetData_, _MM_HINT_T1); // L2 prefetch
+                            _mm_prefetch((char *) (visited_array + (*(data + j))), _MM_HINT_T0);  // L1 prefetch
+                            // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+                        #endif
+                    }
+                    else {
+                        not_nbrs.push_back(*(data + j));
+                        not_nbrs_idx.push_back(j);
+                        // #ifdef USE_SSE
+                        //     // if (not_nbrs.size() > 5 ) continue;
+                        //     _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_, _MM_HINT_T0); // L1 prefetch
+                        //     // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+                        //     char* ft0 =
+                        //         data_level0_memory_
+                        //         + *(data + j) * size_data_per_element_
+                        //         + offsetNbrFt_;
+                        //     _mm_prefetch((char*)ft0, _MM_HINT_T0);
+                        // #endif
                     }
                 }
             }
             else {
                 for (size_t j = 1; j <= size; j++) {
-                    nbrs.push_back(j);
+                    nbrs.push_back(*(data + j));
+                    #ifdef USE_SSE
+                        _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                        _mm_prefetch((char *) (visited_array + (*(data + j))), _MM_HINT_T0);
+                        // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+                    #endif
                 }
             }
             ft_deg += nbrs.size();
             ft_passed += (size - nbrs.size());
+
+            // double passed_ratio = double(size - nbrs.size()) / size;
+            int min_nbrs = two_hop_threshold * size;
+            // std::cout << "size:" << size << " ft nbrs size:" << nbrs.size() << " expected min nbrs:" << min_nbrs << std::endl;
+            // std::vector<tableint> two_hop_candidates(256);
+            if (use_two_hop) {
+                if (nbrs.size() < min_nbrs) {
+                    size_t extra_nbrs_needed = 10;
+                    for(int j = 0; j < std::min(not_nbrs.size(), extra_nbrs_needed); ++j){
+                        nbrs.push_back(not_nbrs[j]);
+                        _mm_prefetch(data_level0_memory_ + (not_nbrs[j]) * size_data_per_element_ + offsetData_, _MM_HINT_T0);  // L1 prefetch
+                        // _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_ + offsetData_, _MM_HINT_T0); // L2 prefetch
+                        _mm_prefetch((char *) (visited_array + (not_nbrs[j])), _MM_HINT_T0);  // L1 prefetch
+                        // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+                    }
+                }
+                // for(int j = 0; j < std::min(two_hop_candidates.size(), (size_t)2); ++j){
+                //     _mm_prefetch(data_level0_memory_ + (not_nbrs[j]) * size_data_per_element_, _MM_HINT_T0);  // L1 prefetch
+                //     // _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_ + offsetData_, _MM_HINT_T1); // L2 prefetch
+                //     _mm_prefetch((char *) (visited_array + (not_nbrs[j])), _MM_HINT_T0);  // L1 prefetch
+                //     // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+                // }
+                // // prefetch visited array and link lists
+                // #ifdef USE_SSE
+                //     for (int prefetch_idx = 0; prefetch_idx < nbrs.size(); ++prefetch_idx) {
+                //         // prefecth visited array
+                //         _mm_prefetch((char *) (visited_array + nbrs[prefetch_idx]), _MM_HINT_T0);
+                //     }
+                //     for (int prefetch_idx = 1; prefetch_idx <= size; ++prefetch_idx) { 
+                //         // prefetch all nbrs' link lists to l1 cache
+                //         _mm_prefetch(data_level0_memory_ + (*(data + prefetch_idx)) * size_data_per_element_, _MM_HINT_T0);
+                //         _mm_prefetch(data_level0_memory_ + (*(data + prefetch_idx)) * size_data_per_element_+64, _MM_HINT_T0);
+                //         // prefetch visited array
+                //         _mm_prefetch((char *) (visited_array + (*(data + prefetch_idx))), _MM_HINT_T0);
+                //     }
+                // #endif
+
+
+                // if (nbrs.size() < min_nbrs) {
+                //     two_hop_coll_start = std::chrono::high_resolution_clock::now();
+                //     for (auto& nbr: nbrs) {
+                //         visited_array_start = std::chrono::high_resolution_clock::now();
+                //         if (!(visited_array[nbr] == visited_array_tag)) {
+                //             // visited_array[nbr] = visited_array_tag;
+                //             // visited++;
+                //             two_hop_candidates.push_back(nbr);
+                //         }
+                //         visited_array_end = std::chrono::high_resolution_clock::now();
+                //         visited_array_time += std::chrono::duration<double, std::milli>(visited_array_end - visited_array_start).count();
+
+                //     }
+
+                //     for (size_t j = 1; j <= size; j++) {
+                //         tableint candidate_nbr_id = *(data + j);
+                //         // if (attr_type_.size() > 1) {
+                //         //     if (!nbr_ft_check_multi_or(current_node_id, not_nbrs_idx[not_nbr_j]-1, ft_predicate.data())) {
+                //         //         continue;
+                //         //     }
+                //         // }
+
+                //         // get second hop nbrs
+                //         linklist_fetch_start = std::chrono::high_resolution_clock::now();
+                //         int *data2 = (int *) get_linklist0(candidate_nbr_id);
+                //         linklist_fetch_end = std::chrono::high_resolution_clock::now();
+                //         linklist_fetch_time += std::chrono::duration<double, std::milli>(linklist_fetch_end - linklist_fetch_start).count();
+                //         size_t size2 = getListCount((linklistsizeint*)data2);
+                        
+                //         std::vector<uint8_t> ft_predicate_result_2nd_hop(size2, 1);
+                //         nbr_ft_start = std::chrono::high_resolution_clock::now();
+                //         // batched_nbr_ft_check_sse(candidate_nbr_id, size2, ft_predicate.data(), ft_predicate_result_2nd_hop);
+                //         for (size_t j2 = 1; j2 <= size2; j2++) {
+                //             ft_predicate_result_2nd_hop[j2-1] = nbr_ft_check(candidate_nbr_id, j2-1, ft_predicate.data());
+                //         }
+                //         nbr_ft_end = std::chrono::high_resolution_clock::now();
+                //         nbr_ft_time += std::chrono::duration<double, std::milli>(nbr_ft_end - nbr_ft_start).count();
+                //         for (size_t j2 = 1; j2 <= size2; j2++) {
+                //             linklist_fetch_start = std::chrono::high_resolution_clock::now();
+                //             int candidate_two_hop_id = *(data2 + j2);
+                //             linklist_fetch_end = std::chrono::high_resolution_clock::now();
+                //             linklist_fetch_time += std::chrono::duration<double, std::milli>(linklist_fetch_end - linklist_fetch_start).count();
+                        
+                //             if (ft_predicate_result_2nd_hop[j2-1]) {
+                //                 visited_array_start = std::chrono::high_resolution_clock::now();
+                //                 if (!(visited_array[candidate_two_hop_id] == visited_array_tag)){
+                //                     // visited_array[candidate_two_hop_id] = visited_array_tag;
+                //                     // visited++;
+                //                     nbrs.push_back(*(data2 + j2));
+                //                     two_hop_candidates.push_back(*(data2 + j2)); // indicate filtered nbr
+                //                     #ifdef USE_SSE
+                //                         _mm_prefetch(data_level0_memory_ + (*(data2 + j2)) * size_data_per_element_ + offsetData_, _MM_HINT_T1);
+                //                         _mm_prefetch(data_level0_memory_ + (*(data2 + j2)) * size_data_per_element_ + offsetData_ + 64, _MM_HINT_T1);
+                //                         // _mm_prefetch((char *) (visited_array + (*(data2 + j2))), _MM_HINT_T0);
+                //                         // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+                //                     #endif
+                //                 }
+                //                 visited_array_end = std::chrono::high_resolution_clock::now();
+                //                 visited_array_time += std::chrono::duration<double, std::milli>(visited_array_end - visited_array_start).count();
+                //             }
+                //         }
+                //     }
+                    // two_hop_coll_end = std::chrono::high_resolution_clock::now();
+                    // two_hop_collection_time += std::chrono::duration<double, std::milli>(two_hop_coll_end - two_hop_coll_start).count();
+                    // use_two_hop_freq++;
+                    // two_hop_scan_start = std::chrono::high_resolution_clock::now();
+                    // linear_two_hop_scan(two_hop_candidates, 
+                    //          data_point, 
+                    //          predicate, 
+                    //          candidate_set,
+                    //          top_candidates,
+                    //          ef,
+                    //          lowerBound,
+                    //          passed,
+                    //          search_k);
+                    // two_hop_scan_end = std::chrono::high_resolution_clock::now();
+                    // two_hop_scan_time += std::chrono::duration<double, std::milli>(two_hop_scan_end - two_hop_scan_start).count();
+                    // continue;
+                // }
+            }
+
+
+//             l2 prefetch
+// #ifdef USE_SSE
+//             for (int prefetch_idx = 0; prefetch_idx < nbrs.size(); ++prefetch_idx) {
+//                 // prefetch all nbrs to l2 cache
+//                 _mm_prefetch(data_level0_memory_ + (nbrs[prefetch_idx]) * size_data_per_element_ + offsetData_, _MM_HINT_T1);
+//                 // prefecth visited array
+//                 _mm_prefetch((char *) (visited_array + nbrs[prefetch_idx]), _MM_HINT_T1);
+//             }
+// #endif
+
+// l1 prefetch
 #ifdef USE_SSE
-            if (nbrs.size() == 0) continue;
-            _mm_prefetch((char *) (visited_array + *(data + nbrs[0])), _MM_HINT_T0);
-            _mm_prefetch((char *) (visited_array + *(data + nbrs[0]) + 64), _MM_HINT_T0);
-            _mm_prefetch(data_level0_memory_ + (*(data + nbrs[0])) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
-            _mm_prefetch((char *) (data + nbrs[1]), _MM_HINT_T0);
+            // if (nbrs.size() == 0) continue;
+            // _mm_prefetch((char *) (visited_array + nbrs[0]), _MM_HINT_T0);
+            // _mm_prefetch((char *) (visited_array + nbrs[0] + 64), _MM_HINT_T0);
+            // _mm_prefetch(data_level0_memory_ + (nbrs[0]) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+            // // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+            int prefetch_n = std::min<int>(nbrs.size(), 8);
+            for (int i = 0; i < prefetch_n; i++) {
+                char* p = (char*)(data_level0_memory_ + nbrs[i] * size_data_per_element_ + offsetData_);
+                _mm_prefetch(p + 0,   _MM_HINT_T0);
+                _mm_prefetch(p + 64,  _MM_HINT_T0);
+            }
 #endif
 
+
+
             for (int nbr_idx = 0; nbr_idx < nbrs.size(); ++nbr_idx) {
-                size_t j = nbrs[nbr_idx];
-                size_t j_next = nbr_idx + 1 < nbrs.size() ? nbrs[nbr_idx + 1] : size + 1;
-                int candidate_id = *(data + j);
+                int candidate_id = nbrs[nbr_idx];
+                // size_t j_next = nbr_idx + 1 < nbrs.size() ? nbrs[nbr_idx + 1] : size + 1;
                 
 //                    if (candidate_id == 0) continue;
 #ifdef USE_SSE
-                _mm_prefetch((char *) (visited_array + *(data + j_next)), _MM_HINT_T0);
-                _mm_prefetch(data_level0_memory_ + (*(data + j_next)) * size_data_per_element_ + offsetData_,
-                                _MM_HINT_T0);  ////////////
+//                 _mm_prefetch((char *) (visited_array + j_next), _MM_HINT_T0);
+//                 _mm_prefetch(data_level0_memory_ + (j_next) * size_data_per_element_ + offsetData_,
+//                                 _MM_HINT_T0);  ////////////
+                if (nbr_idx + 8 < nbrs.size()) {
+                    int next_candidate_id = nbrs[nbr_idx + 8];
+                    char* p = (char*)(data_level0_memory_ + next_candidate_id * size_data_per_element_ + offsetData_);
+                    _mm_prefetch(p + 0,   _MM_HINT_T0);
+                    _mm_prefetch(p + 64,  _MM_HINT_T0);
+                }
 #endif
                 if (!(visited_array[candidate_id] == visited_array_tag)) {
                     visited_array[candidate_id] = visited_array_tag;
@@ -1720,43 +2477,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     std::cout << "   visiting nbr " << candidate_id << " ";
                     print_raw_attr(candidate_id);
                     #endif
-
-                    //test
-                    // print_raw_attr(candidate_id);
-
-                    // check filter table predicate
-                    // if (!filter_table_check(candidate_id, ft_predicate.data())) {
-                    //     ft_passed++;
-                    //     // std::cout << " ft passed" << std::endl;
-                    //     // std::cout << " checking 2 hop nbr " << std::endl;
-                    //     int *data2 = (int *) get_linklist0(candidate_id);
-                    //     size_t size2 = getListCount((linklistsizeint*)data2);
-                    //     for (size_t j2 = 1; j2 <= size2; j2++) {
-                    //         int candidate_id2 = *(data2 + j2);
-                    //         // print_raw_attr(candidate_id2);
-                    //     }
-                    //     // std::cout << std::endl;
-                    //     continue;
-                    // }
-
-                    // check nbr filter table predicate
-                    // if (j > backbone_edge_size && use_ft_ && !nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
-                    //     ft_passed++;
-                    //     // std::cout << " ft passed" << std::endl;
-                    //     // std::cout << " checking 2 hop nbr " << std::endl;
-                    //     // int *data2 = (int *) get_linklist0(candidate_id);
-                    //     // size_t size2 = getListCount((linklistsizeint*)data2);
-                    //     // for (size_t j2 = 1; j2 <= size2; j2++) {
-                    //     //     int candidate_id2 = *(data2 + j2);
-                    //     //     print_raw_attr(candidate_id2);
-                    //     // }
-                    //     // std::cout << std::endl;
-                    //     #ifdef DEBUG_SEARCH
-                    //     std::cout << " ft passed " << std::endl;
-                    //     #endif
-                    //     continue;
-                    // }
-
+                        
                     char *currObj1 = (getDataByInternalId(candidate_id));
                     dist_t dist = fstdistfunc_(data_point, currObj1, dist_func_param_);
 
@@ -1784,7 +2505,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                                         offsetLevel0_,  ///////////
                                         _MM_HINT_T0);  ////////////////////////
 #endif
-                        
+
                         if (!predicate_check(candidate_id, predicate)) {
                             passed++;
                             #ifdef DEBUG_SEARCH
@@ -1828,12 +2549,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             }
                         }
 
-                        if (!top_candidates.empty())
+                        // if (!top_candidates.empty()) 
+                        //     lowerBound = top_candidates.top().first;
+
+
+                        if (top_candidates.size() >= search_k) 
                             lowerBound = top_candidates.top().first;
                     }
                 }
             }
         }
+        // auto end_time = std::chrono::high_resolution_clock::now();
+        // double total_time = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+        // double coll_pct = two_hop_collection_time / total_time * 100.0;
+        // double scan_pct = two_hop_scan_time / total_time * 100.0;
+        // double visit_pct = visited_array_time / total_time * 100.0;
+        // double linklist_pct = linklist_fetch_time / total_time * 100.0;
+        // double nbr_ft_pct = nbr_ft_time / total_time * 100.0;
         // std::cout << "hybrid search round: " << round
         //              << ", visited " << visited 
         //              << ", ft passed " << ft_passed 
@@ -1841,9 +2573,54 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         //              << ", avg degree " << deg * 1.0 / round 
         //              << ", ft avg degree "<< ft_deg * 1.0 / round 
         //              << ", max degree " << max_deg
+        //              << ", use two hop freq " << use_two_hop_freq
         //              << std::endl;
-
+        // std::cout << " two hop collection time (ms): " << two_hop_collection_time << " (" << coll_pct << "%)" << std::endl;
+        // std::cout << " two hop scan time (ms): " << two_hop_scan_time << " (" << scan_pct << "%)" << std::endl;
+        // std::cout << " visited array time (ms): " << visited_array_time << " (" << visit_pct << "%)" << std::endl;
+        // std::cout << " linklist fetch time (ms): " << linklist_fetch_time << " (" << linklist_pct << "%)" << std::endl;
+        // std::cout << " nbr ft check time (ms): " << nbr_ft_time << " (" << nbr_ft_pct << "%)" << std::endl;
         return top_candidates;
+    }
+
+    void linear_two_hop_scan(std::vector<tableint>& two_hop_candidates, 
+                             const void *data_point, 
+                             const std::vector<int>& predicate, 
+                             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>& candidate_set,
+                             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>& top_candidates,
+                             size_t& ef,
+                             dist_t& lowerBound,
+                             int& passed,
+                             size_t& search_k) const {
+        for (size_t idx = 0; idx < two_hop_candidates.size(); idx++) {
+            tableint candidate_id = two_hop_candidates[idx];
+            char *currObj1 = (getDataByInternalId(candidate_id));
+            dist_t dist = fstdistfunc_(data_point, currObj1, dist_func_param_);
+            bool flag_consider_candidate;
+            flag_consider_candidate = top_candidates.size() < ef || lowerBound > dist;
+            if (flag_consider_candidate) {
+                candidate_set.emplace(-dist, candidate_id);
+                if (!predicate_check(candidate_id, predicate)) {
+                    passed++;
+                    continue;
+                }
+
+                top_candidates.emplace(dist, candidate_id);
+                bool flag_remove_extra = false;
+                flag_remove_extra = top_candidates.size() > ef;
+                while (flag_remove_extra) {
+                    tableint id = top_candidates.top().second;
+                    top_candidates.pop();
+                    flag_remove_extra = top_candidates.size() > ef;
+                }
+
+                if (top_candidates.size() >= search_k) 
+                    lowerBound = top_candidates.top().first;
+                // if (!top_candidates.empty())
+                //             lowerBound = top_candidates.top().first;
+            }
+        }
+        
     }
 
 
@@ -2706,6 +3483,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         readBinaryPOD(input, ft_bits_);
         ft_bytes_ = (ft_bits_ + 7) / 8;
+        // std::cout << "ft_bits_:" << ft_bits_ << ", ft_bytes_:" << ft_bytes_ << std::endl;
         readBinaryPOD(input, cate_int_byte_);
         readBinaryPOD(input, max_cate_size_);
 
@@ -3092,6 +3870,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     inline void set_ft_at_pos(unsigned char* ft, int pos) {
         int byte_pos = pos >> 3;   // 等价于 pos / 8
         int bit_pos  = pos & 7;    // 等价于 pos % 8
+        assert(byte_pos >= 0 && byte_pos < (int)ft_bytes_);
+        // if (byte_pos < 0 || byte_pos >= (int)ft_bytes_) return;
         ft[byte_pos] |= (1 << bit_pos);
     }
 
@@ -3601,42 +4381,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
 
-    // hybrid searchKnn with two layers
-    // predicate format:
-    //    predicate[i]: filtering restriction for attribute i
-    //      numerical:
-    //        predicate[i][0] <= value <= predicate[i][1]
-    //      categorical:
-    //        attr[item] contains all the predicate[i][:]
-    //    
-    // workflow:
-    //                                                 -----------
-    //                                                 |  query  |
-    //                                                 -----------
-    //                                                      |
-    //                              ---------------------------------------------------------------
-    //                              |      estimate selectivity for all attributes                |
-    //                              ---------------------------------------------------------------
-    //                                   |                                                      |
-    //            --------------------------------------------------------                 ---------------------------------
-    //            |               one attribute                          |<---             |      multiple attributes      |
-    //            --------------------------------------------------------   |             ---------------------------------
-    //             |                               |                         |                 |                         |
-    //   -----------------                  -----------------                |      ----------------------------       -----------------------------
-    //   |  <threshold1  |                  | >=threshold1  |                |      | hybrid sel < threshold3  |       | hybrid sel >= threshold3  |
-    //   -----------------                  -----------------                |      ----------------------------       -----------------------------
-    //             |                               |                         |                 |                                                 |
-    //   ---------------------        -----------------------                |     -----------------------------------------------------------   |
-    //   | scan on btree/ivf |        | search on top layer |<---------      ------|   scan btree/ivf on one attr with smallest sel, get sel |   |
-    //   ---------------------        -----------------------         |            -----------------------------------------------------------   |       
-    //                                   |               |            ----------------------------------------------------------------------------                                                                                 |
-    //                  ----------------------------  -----------------------------                                                              
-    //                  | buecet sel < threshould2 |  | buecet sel >= threshould2 |                                                              
-    //                  ----------------------------  -----------------------------                                                              
-    //                                   |                     |
-    //                      -----------------------       --------------      
-    //                      | scan on this bucket |       | ann search |     (for single attribute, bucket sel is estimated by counting hash table(CHT))
-    //                      -----------------------       --------------     (for multi-attributes, bucket sel is counted by scaning on btree with smallest sel)
     std::priority_queue<std::pair<dist_t, labeltype >>
     hybridSearch(const void *query_data, std::vector<std::vector<int>> raw_predicate, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const {
         
@@ -3847,26 +4591,55 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         tableint currObj = enterpoint_node_;
         dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
 
+
         assert(maxlevel_ == 1); // for two layers only
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
         top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top_ * 2, isIdAllowed);
+        
+        // use ep as bottom layer ep
+        // top_layer_candidates.emplace(curdist, currObj);
+        // for (int i = 0; i < ef_top_; i++) {
+        //     dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
+        //     top_layer_candidates.emplace(curdist, i);
+        // }
 
-        std::vector<tableint> top_vector = copy_to_vector(top_layer_candidates);
+        // std::vector<tableint> top_vector = copy_to_vector(top_layer_candidates);
 
         // search on base layer
-        bool bare_bone_search = !num_deleted_ && !isIdAllowed;
+        // bool bare_bone_search = !num_deleted_ && !isIdAllowed;
+        bool bare_bone_search = true;
         
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
         vl_type *visited_array = vl->mass;
         vl_type visited_array_tag = vl->curV;
         if (bare_bone_search) {
-            top_candidates = hybridSearchBaseLayerST<true>(
-                    top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), vl, isIdAllowed);
+            if (use_two_hop_ && use_ft_)
+                top_candidates = hybridSearchBaseLayerST<true, false, true, true>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            else if (use_two_hop_ && !use_ft_)
+                top_candidates = hybridSearchBaseLayerST<true, false, true, false>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            else if (!use_two_hop_ && use_ft_)
+                top_candidates = hybridSearchBaseLayerST<true, false, false, true>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            else
+                top_candidates = hybridSearchBaseLayerST<true, false, false, false>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
         } else {
-            top_candidates = hybridSearchBaseLayerST<false>(
-                    top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), vl, isIdAllowed);
+            if (use_two_hop_ && use_ft_)
+                top_candidates = hybridSearchBaseLayerST<false, false, true, true>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            else if (use_two_hop_ && !use_ft_)
+                top_candidates = hybridSearchBaseLayerST<false, false, true, false>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            else if (!use_two_hop_ && use_ft_)
+                top_candidates = hybridSearchBaseLayerST<false, false, false, true>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            else
+                top_candidates = hybridSearchBaseLayerST<false, false, false, false>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
         }
 
         // for each bucket, scan if CHT selectivity is smaller than threshold 2

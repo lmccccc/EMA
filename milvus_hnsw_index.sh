@@ -1,8 +1,13 @@
 source ./conf.sh
 source ./milvus_conf.sh
 
+echo "====================================================" >> logs/bfann_construction.log
+echo "dataset: $dataset" >> logs/milvus_construction.log
+echo "attr: $attr_type" >> logs/milvus_construction.log
+echo "algo: milvus" >> logs/milvus_construction.log
 
-python tests/milvus_hnsw_index.py --dataset_file ${dataset_file} \
+
+python -u tests/milvus_hnsw_index.py --dataset_file ${dataset_file} \
                              --d ${dim} \
                              --attr_file ${dataset_attr_file} \
                              --query_file ${query_file} \
@@ -18,4 +23,8 @@ python tests/milvus_hnsw_index.py --dataset_file ${dataset_file} \
                              --metric ${metric} \
                              --M ${M} \
                              --ef_construction ${ef_construction} \
-                             --ef_search ${ef_search_list}
+                             --ef_search ${ef_search_list} \
+                            2>&1 | tee -a logs/milvus_construction.log
+
+echo "${milvus_collection_name} construction done" >> logs/milvus_construction.log
+echo "\n" >> logs/milvus_construction.log

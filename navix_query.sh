@@ -30,10 +30,10 @@ echo "dim: ${dim}"
 echo "attr type: ${attr_type}"
 echo "test query size: ${test_query_size}"
 
-echo "dataset: $dataset" >> logs.txt
-echo "attr: $attr_type" >> logs.txt
-echo "sel: $query_sel" >> logs.txt
-echo "algo: navix" >> logs.txt
+# echo "dataset: $dataset" >> logs.txt
+# echo "attr: $attr_type" >> logs.txt
+# echo "sel: $query_sel" >> logs.txt
+# echo "algo: navix" >> logs.txt
 
 ../code/faiss-navix/build/demos/navix_query_arbi $dataset \
                                 $N \
@@ -53,4 +53,4 @@ echo "algo: navix" >> logs.txt
                                 2>&1 | tee logs/navix.log
 
 
-python tests/extract_results.py "logs/navix.log"
+python tests/extract_results.py "logs/navix.log" $dataset $attr_type $query_sel $M "navix"

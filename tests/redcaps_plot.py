@@ -64,4 +64,33 @@ milvus = {
 }
 
 
+methods = [bfann, navix, acorn, milvus]
 
+
+def to_list(method: dict, target_sel = 0.95):
+    xs = []
+    ys = []
+
+    for k in sel:
+        if target_sel in method[k].keys():
+            xs.append(k)
+            ys.append(method[k][target_sel])
+
+    print(f"  x = c({', '.join(map(str, xs))}),")
+    print(f"  y = c({', '.join(map(str, ys))})")
+
+print("bfann_redcaps_df <- data.frame(")
+to_list(bfann, 0.95)
+print(")")
+
+print("navix_redcaps_df <- data.frame(")
+to_list(navix, 0.95)
+print(")")
+
+print("acorn_redcaps_df <- data.frame(")
+to_list(acorn, 0.95)
+print(")")
+
+print("milvus_redcaps_df <- data.frame(")
+to_list(milvus, 0.95)
+print(")")

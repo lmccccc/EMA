@@ -58,15 +58,22 @@ if __name__ == "__main__":
 
     attr_type_list = ast.literal_eval(args.attr_type_list)
 
-    client = MilvusClient(
-        uri="http://localhost:19530"
-    )
+    client = MilvusClient(uri="http://localhost:19530")
     fields = ["id", "vector"] + [f"attr_{i}" for i in range(len(attr_type_list))]
     print("mode:", args.mode, " collection name:", args.c_name)
     # create collection
     if client.has_collection(args.c_name):
         try:
             print("collection ", args.c_name, " exists")
+            # client.drop_collection(args.c_name)
+            # print("drop existing collection ", args.c_name)
+            # exit()
+            # client.release_collection(args.c_name)
+            # print("release collection ", args.c_name)
+            # exit()
+            # client.drop_index(args.c_name, "FLAT")
+            # print("drop existing index FLAT")
+            # exit()
             client.load_collection(collection_name=args.c_name, 
                                 replica_number=1,
                                 load_fields=fields)
@@ -77,18 +84,27 @@ if __name__ == "__main__":
             )
 
             print("collection size:", res)
+            if args.mode == "construction":
+                print("collection already exists, exit")
+
+                # # drop 
+                # client.drop_collection(args.c_name)
+                # print("drop existing collection ", args.c_name)
+                # exit()
         except Exception as e:
             print("error loading collection:", e)
             # client.drop_collection(args.c_name)
             # print("drop existing collection ", args.c_name)
+            client.close()
             exit()
 
 
     elif ((not client.has_collection(args.c_name)) or args.mode == "construction"):
         # if client.has_collection(args.c_name):
         #     client.drop_collection(args.c_name)
-
-        dataset, attr, query, predicate = read_data(args.dataset_file, args.attr_file, args.N, args.d, args.query_file, args.predicate_file, args.query_size)
+        json_data_file = args.predicate_file.replace(".json", "json_data.json")
+        if not os.path.isfile(json_data_file):
+            dataset, attr, query, predicate = read_data(args.dataset_file, args.attr_file, args.N, args.d, args.query_file, args.predicate_file, args.query_size)
 
 
         # create collection
@@ -110,12 +126,23 @@ if __name__ == "__main__":
                                     schema=schema)
         
 
-        data = [
-            {"id": i, 
-             "vector": dataset[i].tolist(), 
-             **{f"attr_{j}": attr[i][j][0] if attr_type_list[j] == 0 else attr[i][j] for j in range(len(attr[i]))}}
-            for i in range(args.N)
-        ]
+        if not os.path.isfile(json_data_file):
+            data = [
+                {"id": i, 
+                "vector": dataset[i].tolist(), 
+                **{f"attr_{j}": attr[i][j][0] if attr_type_list[j] == 0 else attr[i][j] for j in range(len(attr[i]))}}
+                for i in range(args.N)
+            ]
+            # write json data
+            with open(json_data_file, 'w') as file:
+                json.dump(data, file)
+            print("json data file saved to ", json_data_file)
+        else:
+            # load json data file
+            with open(json_data_file, 'r') as file:
+                data = json.load(file)
+            print("json data file loaded from ", json_data_file)
+
 
         # insert data
         print("start insertion")
@@ -166,6 +193,7 @@ if __name__ == "__main__":
         print("insert suc, time cost:", t2-t1)
         if args.mode == "construction":
             print("construction done")
+            client.close()
             exit()
 
     dataset, attr, query, predicate = read_data(args.dataset_file, args.attr_file, args.N, args.d, args.query_file, args.predicate_file, args.query_size)
@@ -212,6 +240,7 @@ if __name__ == "__main__":
     with open(args.gt_file, 'w') as file:
         json.dump(ids, file)
     print("groundtruth file saved to ", args.gt_file)
+    client.close()
 
 
         

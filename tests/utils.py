@@ -2,6 +2,7 @@ import numpy as np
 import sys
 import json
 import argparse
+import os
 
 def ivecs_read(fname):
     a = np.fromfile(fname, dtype='int32')
@@ -72,6 +73,16 @@ def load_data(dataset_file, query_file, attr_file, qrange_file, gt_file, N, Nq, 
 
     return data, queries, attr, query_filter_ranges, query_gt
 
+def check_dir(file_dir):
+    directory = os.path.dirname(file_dir)
+    if(not os.path.isdir(directory)):
+        print("error no such directionary: ", directory)
+        exit()
+
+def check_file(f):
+    if(not os.path.isfile(f)):
+        print("error no such directionary: ", f)
+        exit()
 
 def arg_init():
     parser = argparse.ArgumentParser(description="Index parameters")

@@ -25,4 +25,4 @@ python -u tests/milvus_hnsw_index.py --dataset_file ${dataset_file} \
                              --ef_search ${ef_search_list} \
                              2>&1 | tee logs/milvus.log
 
-python tests/extract_results.py "logs/milvus.log"
+python tests/extract_results.py "logs/milvus.log" $dataset $attr_type $query_sel $M "milvus"

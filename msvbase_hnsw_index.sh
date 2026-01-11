@@ -2,7 +2,12 @@ source ./conf.sh
 source ./msvbase_conf.sh
 
 
-python tests/msvbase.py --dataset_file ${dataset_file} \
+echo "====================================================" >> logs/msvbase_construction.log
+echo "dataset: $dataset" >> logs/msvbase_construction.log
+echo "attr: $attr_type" >> logs/msvbase_construction.log
+echo "algo: msvbase" >> logs/msvbase_construction.log
+
+python -u tests/msvbase.py --dataset_file ${dataset_file} \
                              --d ${dim} \
                              --attr_file ${dataset_attr_file} \
                              --query_file ${query_file} \
@@ -17,4 +22,7 @@ python tests/msvbase.py --dataset_file ${dataset_file} \
                              --max_cate_val ${categorical_attr_max_cardinality} \
                              --K ${K} \
                              --gt_file ${ground_truth_file} \
-                             --metric ${metric}
+                             --metric ${metric} \
+                            2>&1 | tee -a logs/msvbase_construction.log
+
+echo "\n" >> logs/msvbase_construction.log

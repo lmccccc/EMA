@@ -99,7 +99,7 @@ def create_schema_if_not_exists(cur, conn, schema_name):
 
 def create_table_file(vector_data, attr_list, attr_type_list, table_file):
     start_id = 0
-    float_fmt = ".17f"
+    float_fmt = ".7f"
     with open(table_file, "w", encoding="utf-8") as f:
         for idx, (vec, attr) in enumerate(zip(vector_data, attr_list)):
             row_id = start_id + idx
@@ -124,6 +124,9 @@ def create_table_file(vector_data, attr_list, attr_type_list, table_file):
                     exit()
             line = line + f"{vec_str}\n"
             f.write(line)
+            # progress print
+            if (idx + 1) % 100000 == 0:
+                print(f"Written {idx + 1} / {len(vector_data)} rows", end="\r")
 
 def table_exists(cur, schema_name: str, table_name: str) -> bool:
     """
@@ -217,11 +220,11 @@ def construct_index(cur, conn, schema_name, table_name, metric, d):
         exit()
     if metric == "IP":
         print("creating ip hnsw index...")
-        raw_sql = f"CREATE INDEX index_{table_name} ON {table_name} USING hnsw (vector_0 hnsw_vector_inner_product_ops) WITH (dimension={d},distmethod={distmethod})"
+        raw_sql = f"CREATE INDEX IF NOT EXISTS index_{table_name} ON {table_name} USING hnsw (vector_0 hnsw_vector_inner_product_ops) WITH (dimension={d},distmethod={distmethod})"
         # raw_sql = f"CREATE INDEX index_{table_name} ON {table_name} USING sptag (vector_0 vector_inner_product_ops) WITH (distmethod={distmethod})"
     else:
         print("creating l2 hnsw index...")
-        raw_sql = f"CREATE INDEX index_{table_name} ON {table_name} USING hnsw (vector_0) WITH (dimension={d},distmethod={distmethod})"
+        raw_sql = f"CREATE INDEX IF NOT EXISTS index_{table_name} ON {table_name} USING hnsw (vector_0) WITH (dimension={d},distmethod={distmethod})"
     create_index_sql = sql.SQL(raw_sql)
     cur.execute(create_index_sql)
     conn.commit()
@@ -258,11 +261,11 @@ def generate_sql(schema_name, table_name, query_vector, raw_predicate, K, attr_t
                 continue
             for j, val in enumerate(raw_predicate[idx]):
                 raw_sql += f"attr_{idx} @> "
-                raw_sql += "{" + ",".join(map(str, raw_predicate[idx])) + "} "
+                raw_sql += "'{" + ",".join(map(str, raw_predicate[idx])) + "}' "
                 if idx < len(attr_type_list) - 1 or j < len(raw_predicate[idx]) - 1:
                     raw_sql += " AND "
     raw_sql += f"ORDER BY vector_0{'<->' if metric == 'L2' else '<*>'}"
-    raw_sql += "'{" + ",".join(format(x, ".17f") for x in query_vector) + "}' "
+    raw_sql += "'{" + ",".join(format(x, ".7f") for x in query_vector) + "}' "
     raw_sql += f"LIMIT {K};"
     return raw_sql
 
@@ -313,6 +316,15 @@ if __name__ == "__main__":
     cur.execute(sql.SQL("show shared_buffers;"))
     res = cur.fetchone()
     print("shared_buffers:", res)
+    # exit()
+
+    # index_name = f"index_{args.table_name}"
+    # # get statistics
+    # sql_str = f"SELECT pg_relation_size('{args.table_name}');"
+    # cur.execute(sql.SQL(sql_str))
+    # res = cur.fetchone()
+    # print("res:", res)
+    # conn.close()
     # exit()
 
     

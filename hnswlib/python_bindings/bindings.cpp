@@ -223,6 +223,16 @@ class Index {
             appr_alg->set_thresholds(threshold_1, threshold_2, threshold_3);
     }
 
+    void set_two_hop_flag(bool flag){
+        if(appr_alg)
+            appr_alg->set_two_hop_flag(flag);
+    }
+
+    void set_two_hop_threshold(double threshold){
+        if(appr_alg)
+            appr_alg->set_two_hop_threshold(threshold);
+    }
+
 
     void set_ef(size_t ef) {
       default_ef = ef;
@@ -1760,6 +1770,8 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
         .def("set_ft_flag", &Index<float>::set_ft_flag, py::arg("ft_flag"))
         .def("set_thresholds", &Index<float>::set_thresholds, py::arg("threshold_1"), py::arg("threshold_2"), py::arg("threshold_3"))
+        .def("set_two_hop_flag", &Index<float>::set_two_hop_flag, py::arg("two_hop"))
+        .def("set_two_hop_threshold", &Index<float>::set_two_hop_threshold, py::arg("two_hop_threshold"))
         .def("set_ef_top", &Index<float>::set_ef_top, py::arg("ef_top"))
         .def("addEpIds", &Index<float>::addEpIds, py::arg("ep_ids"))
         .def("predicateTranslate", &Index<float>::predicateTranslate, py::arg("predicate"))

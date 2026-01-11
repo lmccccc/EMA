@@ -75,10 +75,14 @@ if __name__ == "__main__":
     index.set_num_threads(1)
 
     result = []
+    # efs_list = [efs_list[-1]]
     for efs in efs_list:
         index.set_ef(efs)   # Set the first ef for the query
         index.set_ef_top(args.ef_top)
         index.set_ft_flag(args.use_ft.lower() == 'true')
+        print("set marker flag:", args.use_ft.lower() == 'true')
+        index.set_two_hop_flag(False)
+        index.set_two_hop_threshold(0.5)
         print("index ef_search:", efs, " ef_top:", args.ef_top)
         # flatten_predicate = index.predicateTranslate(raw_predicate)
         # print("predicate translated")
@@ -109,7 +113,7 @@ if __name__ == "__main__":
         end = time.time()
         qps = len(target_id)/(end-start)
         print(f"Query time: {end - start} seconds, QPS:{qps}")
-
+        
         # recall
         correct_sum = 0
         recall_list = []
@@ -161,6 +165,8 @@ if __name__ == "__main__":
         recall = correct_sum / (len(target_id) * args.K)
         print(f"ef search: {efs}, recall: {recall:.4f}")
         result.append([efs, recall, qps])
+        # if recall >= 0.97:
+        #     break
     
     print("Final results (ef_search, recall, QPS):")
     for res in result:

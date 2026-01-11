@@ -1,6 +1,6 @@
 
 import sys
-from pymilvus import DataType, MilvusClient
+from pymilvus import DataType, MilvusClient, connections, utility
 import sys
 import numpy as np
 import math
@@ -91,6 +91,27 @@ def arg_init():
     return args
 
 
+def drop_index(client, col_name, index_name="HNSW"):
+    client.release_collection(
+        collection_name=col_name
+    )
+    client.drop_index(
+        collection_name=col_name,   # Name of the collection
+        index_name=index_name  # Name of the index to drop
+    )
+
+def check_size(client, col_name, expected_size):
+    res = client.query(
+        collection_name=col_name,
+        output_fields=["count(*)"]
+    )
+    actual_size = res[0]['count(*)']
+    if actual_size != expected_size:
+        print(f"Error: collection size mismatch, expected {expected_size}, got {actual_size}")
+    else:
+        print(f"Collection size check passed: {actual_size} entries")
+    return actual_size == expected_size
+
 # read args
 if __name__ == "__main__":
     args = arg_init()
@@ -102,16 +123,39 @@ if __name__ == "__main__":
     )
     fields = ["id", "vector"] + [f"attr_{i}" for i in range(len(attr_type_list))]
     print("mode:", args.mode, " collection name:", args.c_name)
+
+    # list collection
+    # collections = client.list_collections()
+    # print("collections: ", collections)
+    # exit()
+
     # create collection
     if args.mode == "query" and not client.has_collection(args.c_name):
         print("error: collection ", args.c_name, " does not exist")
         exit()
     if client.has_collection(args.c_name):
         try:
-            print("collection ", args.c_name, " exists")
+            print("collection ", args.c_name, " exists. Loading collection...")
+
+            # exit()
+
+            # client.drop_collection(args.c_name) 
+            # print("dropped existing collection ", args.c_name)
+            # exit()
+
+
+            # res = client.get_collection_stats(collection_name=args.c_name)
+            # print("collection stats:", res)
+            # client.release_collection(collection_name=args.c_name)
+            # print("collection released")
+            # describe index
             client.load_collection(collection_name=args.c_name, 
                                 replica_number=1,
                                 load_fields=fields)
+            print("collection loaded for querying")
+
+            collection_info = client.get_collection_stats(collection_name=args.c_name)
+            print("collection stats:", collection_info)
 
             res = client.query(
                 collection_name=args.c_name,
@@ -119,114 +163,220 @@ if __name__ == "__main__":
             )
 
             print("collection size:", res)
+        
+            res = client.describe_index(
+                collection_name=args.c_name,
+                index_name="HNSW"
+            )
+            time1 = time.time()
+            print("index info:", res)
+            # indexed_rows1 = res['indexed_rows']
 
-            if args.mode == "construction":
-                print("collection exists, skip construction")
-                exit()
+            # time.sleep(100)
+            # res = client.describe_index(
+            #     collection_name=args.c_name,
+            #     index_name="HNSW"
+            # )
+
+            # time2 = time.time()
+            # print("index info:", res)
+            # indexed_rows2 = res['indexed_rows']
+
+            # all_row_cnt = 15435516
+            # #compute expected index time
+            # expected_index_time = (time2 - time1) * all_row_cnt / (indexed_rows2 - indexed_rows1)
+            # print(f"Expected index time for full dataset ({all_row_cnt} rows): {expected_index_time:.2f} seconds")
+
+            # if args.mode == "construction":
+            #     print("collection exists, skip construction")
+            #     exit()
         except Exception as e:
             print("error loading collection:", e)
+            # client.drop_collection(args.c_name)
+            # print("drop existing collection ", args.c_name)
+            client.close()
+            exit()
+
+
+    if (args.mode == "construction"):
+        # if client.has_collection(args.c_name):
+        #     client.drop_collection(args.c_name)
+        print("start construction")
+
+        # if has collection check it
+        if (client.has_collection(args.c_name)):
+            if(check_size(client, args.c_name, args.N)):
+                print("collection exists, skip add items")
+        
+        else:
+            # create collection
+            # json_data_file = args.predicate_file.replace(".json", "json_data.json")
+            # if not os.path.isfile(json_data_file):
+            print("reading data from files")
+            dataset, attr, query, predicate = read_data(args.dataset_file, args.attr_file, args.N, args.d, args.query_file, args.predicate_file, args.query_size)
+
+            # label_set = set(attr)
+            # label_cnt = len(label_set)
+            # partition_size = min(64, label_cnt)
+
+            # partition_attr_type = attr_type_list[-1]
+            # if partition_attr_type == 0:
+            #     partition_size = 64
+            # elif partition_attr_type == 1:
+            #     partition_size = min(64, args.max_cate_val+1)
+            # else:
+            #     print("error: unsupported partition attribute type ", partition_attr_type)
+            #     exit()
+            partition_size = -1
+            partition_idx = -1
+            for i in range(len(attr_type_list)):
+                partition_attr_type = attr_type_list[i]
+                if partition_attr_type == 0:
+                    partition_size = min(64, args.max_cate_val+1)
+                    partition_idx = i
+                    break
+                elif partition_attr_type == 1:
+                    continue
+                else:
+                    print("error: unsupported partition attribute type ", partition_attr_type)
+                    exit()
+            print("partition size:", partition_size)
+            if (partition_size == -1):
+                print("categorical multi-attribute, do not support partitioning")
+            # create collection
+            if (partition_size > 0):
+                partition_attr = f"attr_{partition_idx}"
+                schema = MilvusClient.create_schema(
+                    auto_id=False,
+                    partition_key_field=partition_attr,      # default partition=64
+                    num_partitions=partition_size
+                )
+            else:
+                schema = MilvusClient.create_schema(
+                    auto_id=False
+                )
+            schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+            schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=args.d)
+            # add multi_attr
+            for i, attr_type in enumerate(attr_type_list):
+                if attr_type == 0:
+                    schema.add_field(field_name=f"attr_{i}", datatype=DataType.INT64)
+                else:
+                    schema.add_field(field_name=f"attr_{i}",
+                                    datatype=DataType.ARRAY,
+                                    element_type=DataType.INT64,  # array data type
+                                    max_capacity=args.max_cate_val+1)  # array max length [0, max_cate_val]
+            client.create_collection(collection_name=args.c_name, 
+                                        schema=schema)
+            print("converting data to json format for insertion")
+            data = [
+                {"id": i, 
+                "vector": dataset[i].tolist(), 
+                **{f"attr_{j}": attr[i][j][0] if attr_type_list[j] == 0 else attr[i][j] for j in range(len(attr[i]))}}
+                for i in range(args.N)
+            ]
+
+            # if not os.path.isfile(json_data_file):
+            #     data = [
+            #         {"id": i, 
+            #         "vector": dataset[i].tolist(), 
+            #         **{f"attr_{j}": attr[i][j][0] if attr_type_list[j] == 0 else attr[i][j] for j in range(len(attr[i]))}}
+            #         for i in range(args.N)
+            #     ]
+            #     # write json data
+            #     with open(json_data_file, 'w') as file:
+            #         json.dump(data, file)
+            #     print("json data file saved to ", json_data_file)
+            # else:
+            #     # load json data file
+            #     with open(json_data_file, 'r') as file:
+            #         data = json.load(file)
+            #     print("json data file loaded from ", json_data_file)
+
+        # check index information
+        collection_info = client.get_collection_stats(collection_name=args.c_name)
+        print("collection stats:", collection_info)
+        if (collection_info["row_count"] == args.N):
+            print("collection size matches expected ", args.N)
+            print("skip insertion")
+        if (collection_info["row_count"] == 0):
+            print("collection is empty, proceed to insertion")
+            # insert data
+            print("start insertion")
+            # set start time
+            t0 = time.time()
+            max_message_size = 67108864
+            max_batch_size = max_message_size // (args.d * 4)
+            batch_size = max_batch_size // 2  # Divide by 2 to be safe
+            print("batch size:", batch_size, " total batch:", round(args.N/batch_size))
+            for i in range(0, args.N, batch_size):
+                client.insert(collection_name=args.c_name, data=data[i:min(i+batch_size, args.N)])
+                print("insert batch:", i/batch_size, " of ", round(args.N/batch_size), " from ", i, " to ", min(i+batch_size, args.N))
+            # client.insert(collection_name=c_name, data=data)
+            # print("insert res:", res)
+            
+            client.flush(collection_name=args.c_name)
+            t1 = time.time()
+            print("insertion time:", t1-t0)
+            
+        else:
+            print("collection size:", collection_info["row_count"], " expected:", args.N)
             # client.drop_collection(args.c_name)
             # print("drop existing collection ", args.c_name)
             exit()
 
 
-    elif ((not client.has_collection(args.c_name)) or args.mode == "construction"):
-        # if client.has_collection(args.c_name):
-        #     client.drop_collection(args.c_name)
-        print("start construction")
-        dataset, attr, query, predicate = read_data(args.dataset_file, args.attr_file, args.N, args.d, args.query_file, args.predicate_file, args.query_size)
-
-
-        # label_set = set(attr)
-        # label_cnt = len(label_set)
-        # partition_size = min(64, label_cnt)
-        partition_attr_type = attr_type_list[-1]
-        if partition_attr_type == 0:
-            partition_size = 64
-        elif partition_attr_type == 1:
-            partition_size = min(64, args.max_cate_val+1)
+        if ("index_type" in collection_info):
+            if (collection_info["row_count"] != args.N):
+                print("collection size mismatch, expected ", args.N, " got ", collection_info["row_count"])
+                # client.drop_collection(args.c_name)
+                client.close()
+                exit()
+            if (collection_info["pending_index_rows"] != 0 or collection_info["indexed_rows"] != args.N):
+                print("index not ready, pending_index_rows:", collection_info["pending_index_rows"], " indexed_rows:", collection_info["indexed_rows"])
+                # drop_index(client, args.c_name)
+                client.close()
+                exit()
+            if (collection_info["state"] != "Finished"):
+                print("index state not finished, state:", collection_info["state"])
+                # drop_index(client, args.c_name)
+                client.close()
+                exit()
         else:
-            print("error: unsupported partition attribute type ", partition_attr_type)
+            print("no index info found, proceed to construction")
+            t1 = time.time()
+            index_params = client.prepare_index_params()
+            index_params.add_index(
+                field_name="vector", 
+                index_type="HNSW",# IVF_FLAT IVF_PQ IVF_SQ8 HNSW SCANN
+                metric_type=args.metric,
+                index_name="HNSW",
+                params={ "M": args.M, "efConstruction": args.ef_construction }, # see https://milvus.io/docs/configure_querynode.md#queryNodesegcoreinterimIndexnlist
+                sync=True
+            )
+            # print("creating index")
+            client.create_index(
+                collection_name=args.c_name,
+                index_params=index_params,
+                sync=True # Whether to wait for index creation to complete before returning. Defaults to True.
+            )
+            t2 = time.time()
+
+
+            client.load_collection(collection_name=args.c_name, 
+                                replica_number=1,
+                                load_fields=fields)
+            res = client.query(
+                collection_name=args.c_name,
+                output_fields=["count(*)"]
+            )
+
+            print("collection size:", res)
+            # print("create index suc, time cost:", t2-t1)
+            print("construction suc, time cost:", t2-t1)
+            print("construction done")
+            client.close()
             exit()
-        print("partition size:", partition_size)
-        # create collection
-        partition_attr = f"attr_{len(attr_type_list)-1}"
-        schema = MilvusClient.create_schema(
-            auto_id=False,
-            partition_key_field=partition_attr,      # default partition=64
-            num_partitions=partition_size
-        )
-        schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
-        schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=args.d)
-        # add multi_attr
-        for i, attr_type in enumerate(attr_type_list):
-            if attr_type == 0:
-                schema.add_field(field_name=f"attr_{i}", datatype=DataType.INT64)
-            else:
-                schema.add_field(field_name=f"attr_{i}",
-                                datatype=DataType.ARRAY,
-                                element_type=DataType.INT64,  # array data type
-                                max_capacity=args.max_cate_val+1)  # array max length [0, max_cate_val]
-        client.create_collection(collection_name=args.c_name, 
-                                    schema=schema)
-        
-
-        data = [
-            {"id": i, 
-             "vector": dataset[i].tolist(), 
-             **{f"attr_{j}": attr[i][j][0] if attr_type_list[j] == 0 else attr[i][j] for j in range(len(attr[i]))}}
-            for i in range(args.N)
-        ]
-
-        # insert data
-        print("start insertion")
-        # set start time
-        t0 = time.time()
-        max_message_size = 67108864
-        max_batch_size = max_message_size // (args.d * 4)
-        batch_size = max_batch_size // 2  # Divide by 2 to be safe
-        print("batch size:", batch_size, " total batch:", round(args.N/batch_size))
-        for i in range(0, args.N, batch_size):
-            client.insert(collection_name=args.c_name, data=data[i:min(i+batch_size, args.N)])
-            print("insert batch:", i/batch_size, " of ", round(args.N/batch_size), " from ", i, " to ", min(i+batch_size, args.N))
-        # client.insert(collection_name=c_name, data=data)
-        # print("insert res:", res)
-        
-        client.flush(collection_name=args.c_name)
-
-        t1 = time.time()
-        print("insertion time:", t1-t0)
-        index_params = client.prepare_index_params()
-        index_params.add_index(
-            field_name="vector", 
-            index_type="HNSW",# IVF_FLAT IVF_PQ IVF_SQ8 HNSW SCANN
-            metric_type=args.metric,
-            index_name="HNSW",
-            params={ "M": args.M, "efConstruction": args.ef_construction }, # see https://milvus.io/docs/configure_querynode.md#queryNodesegcoreinterimIndexnlist
-            sync=True
-        )
-        # print("creating index")
-        client.create_index(
-            collection_name=args.c_name,
-            index_params=index_params,
-            sync=True # Whether to wait for index creation to complete before returning. Defaults to True.
-        )
-        t2 = time.time()
-
-
-        client.load_collection(collection_name=args.c_name, 
-                               replica_number=1,
-                               load_fields=fields)
-        res = client.query(
-            collection_name=args.c_name,
-            output_fields=["count(*)"]
-        )
-
-        print("collection size:", res)
-        # print("create index suc, time cost:", t2-t1)
-        print("construction suc, time cost:", t2-t1)
-        print("construction done")
-        exit()
 
     # query -------------------------
     queries, raw_predicate, query_gt = load_query_data(args.query_file, args.predicate_file, args.gt_file, args.N, args.query_size, args.K)
@@ -293,11 +443,14 @@ if __name__ == "__main__":
         recall = correct_sum / (args.query_size * args.K)
         print(f"ef search: {efs}, recall: {recall:.4f}")
         result.append([efs, recall, qps])
+        if recall >= 0.99:
+            break
 
     # total_size = args.query_size * args.K
     print("Final results (ef_search, recall, QPS):")
     for res in result:
         print(res)
+    client.close()
     exit()
 
 

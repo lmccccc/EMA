@@ -30,17 +30,15 @@ echo "n_query_to_use: $query_size"
 echo "attr_type_list: $attr_type"
 echo "threads: $threads"
 
-if [ "$mode" == "construction" ] || [ "$mode" == "all" ]; then
-    if [ -e $hashann_index_file ]; then
-        echo "index file already exist"
-        exit 0
-    fi
+if [ ! -f $hashann_index_file ]; then
+    echo "index file does not exist $hashann_index_file"
+    exit 0
 fi
 
-echo "dataset: $dataset" >> logs.txt
-echo "attr: $attr_type" >> logs.txt
-echo "sel: $query_sel" >> logs.txt
-echo "algo: bfann" >> logs.txt
+# echo "dataset: $dataset" >> logs.txt
+# echo "attr: $attr_type" >> logs.txt
+# echo "sel: $query_sel" >> logs.txt
+# echo "algo: bfann" >> logs.txt
 
 python -u tests/hashann_query.py --data_path $dataset_file \
                                                --index_cache_path $hashann_index_file \
@@ -69,7 +67,7 @@ else
     echo "HashANN succeed."
 fi
 
-python tests/extract_results.py "logs/bfann.log"
+python tests/extract_results.py "logs/bfann.log" $dataset $attr_type $query_sel $M "bfann"
 
 # status=$?
 # if [ $status -eq 0 ]; then

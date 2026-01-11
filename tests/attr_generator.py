@@ -55,7 +55,7 @@ def assign_labels(probs, num_items):
         labels = []
         # while labels == []:
         #     labels = [i for i, p in enumerate(probs, start=1) if np.random.rand() < p]
-        labels = [i for i, p in enumerate(probs, start=1) if np.random.rand() < p]
+        labels = [i for i, p in enumerate(probs) if np.random.rand() < p]
         all_labels.append(labels)  # 可能为空
     return all_labels
 

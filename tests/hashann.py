@@ -90,15 +90,16 @@ class HashANN:
         # self.add_attr(attr, attr_type_list)
         # print("add attr done, time:", time.time() - start)
         # generate attribute indexes
-        self.index.generateAttrIndexes() # B+ tree (numerical) and inverted list (categorical)
-        print("generate attr index done, time:", time.time() - start)
+        # self.index.generateAttrIndexes() # B+ tree (numerical) and inverted list (categorical)
+        # print("generate attr index done, time:", time.time() - start)
 
+        print("attr type list:", attr_type_list)
+        print("attr size:", len(attr), " attr example:", attr[0:5])
 
         # generate Counting hash table
         # self.index.addEpIds(closest_ids.astype(np.uint32).tolist()) # add entry point ids to list, used for partitioning, not used. 
         self.index.initAttrMapping(attr)                                # generate counting_hash_table_mapping (codebook)
         print("generate attr mapping done, time:", time.time() - start)
-
         # add data points into index
         self.index.add_items(base_scalars, attr, levels=layers)           # add items
         print("add items done, time:", time.time() - start)

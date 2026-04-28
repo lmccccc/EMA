@@ -3425,6 +3425,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         updateft(ft, node_id);
     }
 
+    // Merge dominated nodes' attributes into a surviving neighbor's node FT.
+    // Called during pruning: surviving_nbr won over dominated nodes,
+    // so its FT should reflect that matching nodes are reachable through it.
+    void merge_dominated_to_node_ft(tableint surviving_nbr, const std::vector<tableint>& dominated_nodes) {
+        unsigned char* ft = node_ft_at(surviving_nbr);
+        for (tableint dom_id : dominated_nodes) {
+            updateft(ft, dom_id);  // OR dominated node's attr hashes into surviving neighbor's FT
+        }
+    }
+
     
     double update_ft_time{0.0};
 
@@ -3501,10 +3511,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             node_dominate_count_[selectedNeighbors[i]] += (int)dominated_list[i].size();
         }
 
-        // Node-level FT: no edge-level FT update needed (node FT set in addPoint)
-        // if (level == 0) {
-        //     update_nbr_ft(cur_c, selectedNeighbors, dominated_list);
-        // }
+        // Node-level FT: merge dominated nodes' attrs into surviving neighbors' FTs
+        if (level == 0) {
+            for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors.size(); i++) {
+                if (!dominated_list[i].empty()) {
+                    merge_dominated_to_node_ft(selectedNeighbors[i], dominated_list[i]);
+                }
+            }
+        }
 
         tableint next_closest_entry_point = selectedNeighbors.back();
 
@@ -3618,10 +3632,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         node_dominate_count_[selectedNeighbors_other[i]] += (int)dominated_list[i].size();
                     }
 
-                    // Node-level FT: no edge-level FT update needed
-                    // if (level == 0) {
-                    //     update_nbr_ft(selectedNeighbors[idx], selectedNeighbors_other, dominated_list);
-                    // }
+                    // Node-level FT: merge dominated nodes' attrs into surviving neighbors' FTs
+                    if (level == 0) {
+                        for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors_other.size(); i++) {
+                            if (!dominated_list[i].empty()) {
+                                merge_dominated_to_node_ft(selectedNeighbors_other[i], dominated_list[i]);
+                            }
+                        }
+                    }
 
                     for (int i = 0; i < selectedNeighbors_other.size(); i++) {
                         data[i] = selectedNeighbors_other[i];

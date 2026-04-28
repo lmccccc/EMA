@@ -35,6 +35,7 @@ echo "ef_search: $ef_search_list"
 
 if [ -f $hashann_index_file ]; then
     echo "index file already exist"
+    ls -lh $hashann_index_file
     exit 0
 fi
 
@@ -58,9 +59,9 @@ fi
 #                                                --threads $threads \
 #                                                &>> $log_file
 echo "====================================================" >> logs/bfann_construction.log
-# echo "dataset: $dataset" >> logs/bfann_construction.log
-# echo "attr: $attr_type" >> logs/bfann_construction.log
-# echo "algo: bfann" >> logs/bfann_construction.log
+echo "dataset: $dataset" >> logs/bfann_construction.log
+echo "attr: $attr_type" >> logs/bfann_construction.log
+echo "algo: bfann" >> logs/bfann_construction.log
 
 
 python -u ../tests/hashann_build.py --data_path $dataset_file \
@@ -83,6 +84,7 @@ python -u ../tests/hashann_build.py --data_path $dataset_file \
                                                --threads $threads \
                                                 2>&1 | tee -a logs/bfann_construction.log
 
+echo "${hashann_index_file} construction done" >> logs/bfann_construction.log
 echo "\n" >> logs/bfann_construction.log
 
 

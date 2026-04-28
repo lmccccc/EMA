@@ -6,42 +6,63 @@ now=$(date +"%m-%d-%Y")
 algo=HNSW
 
  # youtube_rgb wiki_negcorr_1_01 wiki_15_4M sift10m Redcaps_4M
-dataset="wiki_negcorr_1_01"
+dataset="sift"
 wiki_neg_query="wiki_negcorr_9_96"
 # wiki_neg_query="wiki_negcorr_5_10" 
 # wiki_neg_query="wiki_negcorr_9_96"
 # wiki_neg_query="wiki_negcorr_15_02" 
 # wiki_neg_query="wiki_negcorr_22_93" 
 
-attr_type="[0]"
+attr_type="[0,1]"
 distribution_type="random"  # random, normal, zipf
 
 # 0.5 for numerical, [1,2] for categorical label(s)
-query_sel="[0.1]"
+query_sel="[0.333,7]"
+
+# sel conf:   
+# attr_type    10%         20%        40%        60%       80%      100%
+# [0,1]     [0.333,7]    [0.4,5]   [0.667,4]  [0.75,2]  [0.9,1]  [1.0,0]
+
+#             1%               2%              3%             5%              7%             10%
+# [0,1]     [0.1,9]          [0.1,8]         [0.15,8]     [0.177,7]       [0.233,7]        [0.333,7]
+# [0,0]     [0.1,0.1]      [0.141,0.141]  [0.173,0.173]  [0.2236,0.2236] [0.2646,0.2646] [0.316,0.316]
+# [0,0]v2   [0.55,0.01818] [0.60,0.03333] [0.65,0.04615] [0.70,0.07143]  [0.75,0.09333]  [0.80,0.125]
+# [0]       [0.01]          [0.02]          [0.03]         [0.05]          [0.07]          [0.1]
+# [1]       [18]            [17]            [16]           [14]            [12]            [9]
+
+
+# ef_search_list=[70]
+# ef_search_list=[150,180,200,250,300]
+# ef_search_list="[80,100,120,150,180,200,300,400,600,800,1000,1200,1500,2000,2500,3000,4000]"
+# ef_search_list=[10,12,15,18,20,30,40,50,80,100,120,150,180,200]
+# ef_search_list=[5,8,10,15,20,25,30,35,40,45]
+# ef_search_list=[100,150,200,250,300,400,500]
+ef_search_list="[10,20,30,50,80,100,120,150,200]"
+# ef_search_list="[80,100,120,150,180,200]"
+# ef_search_list="[80,100,120,150,180,200,300]"
+L_list="600 800 1000 1200 1500 2000 2500 3000 4000"
+# L_list="100 150 200 250 300 400 500 600 800 1000 1200 1500 2000 2500 3000 4000"
+# L_list="5000 6000 7000 8000 9000 10000"
+# num_query_sel="1"
+# cate_query_sel="[2,3]"
+categorical_attr_max_cardinality=21
+numerical_max_attr=100000
+K=10
 
 
 M=40
 threads=32 # 1
 ef_construction=300
-ef_top=100
-K=10
-ft_bits=256
+ef_top=1
+ft_bits=128
 use_ft=true
 
-# ef_search_list=[70]
-# ef_search_list=[150,180,200,250,300]
-# ef_search_list="[80,100,120,150,180,200,300,400,600,800,1000,1200,1500,2000,2500,3000,4000]"
-ef_search_list="[10,15,20,30,40,50,80,100,150,200,250,300]"
-# ef_search_list="[80,100,120,150,180,200]"
-# ef_search_list="[80,100,120,150,180,200,300]"
-# ef_search_list="[300,400,600,800,1000,1200,1500,2000,2500,3000,4000]"
-# L_list="600 800 1000 1200 1500 2000 2500 3000 4000"
-L_list="300 350"
-# num_query_sel="1"
-# cate_query_sel="[2,3]"
-categorical_attr_max_cardinality=21
-numerical_max_attr=100000
-
+# DNF predicate support (OR of ANDs)
+# dnf_spec: JSON string, e.g. '[{"0":0.5,"1":[1]},{"1":[2,3]}]'
+# dnf_name: short name for file naming, e.g. "or_0_0.5_1_[1]__1_[2,3]"
+# Leave empty to use legacy AND-only mode
+dnf_spec='[{"0":0.05,"1":[1]},{"1":[4]}]'
+dnf_name="or_0_0.05_1_[1]__1_[4]"
 
 attr_index_type="arbi_0_1_random"
 if [ "$attr_type" = "[0]" ]; then
@@ -79,6 +100,7 @@ if [ "$dataset" = "sift" ]; then
     query_predicate_file=${label_root}"predicate_"${query_file_prefix}".json"
     ground_truth_file=${label_root}"gt_"${query_file_prefix}".json"
     ground_truth_collection_name=${dataset}_${attr_index_type}
+    ground_truth_index_file=${index_root}/gt_index.index
     metric="L2"
     test_query_size=100
 
@@ -95,6 +117,7 @@ elif [ "$dataset" = "sift10m" ]; then
     query_predicate_file=${label_root}"predicate_"${query_file_prefix}".json"
     ground_truth_file=${label_root}"gt_"${query_file_prefix}".json"
     ground_truth_collection_name=${dataset}_${attr_index_type}
+    ground_truth_index_file=${index_root}/gt_index.index
     metric="L2"
     test_query_size=1000
 
@@ -111,6 +134,7 @@ elif [ "$dataset" = "siftsmall" ]; then
     ground_truth_file=${label_root}"gt_"${query_file_prefix}".json"
     ground_truth_collection_name=${dataset}_${attr_index_type}
     dataset_attr_file=${label_root}"attr_"${attr_index_type}".json"
+    ground_truth_index_file=${index_root}/gt_index.index
     metric="L2"
     test_query_size=100
 
@@ -119,7 +143,7 @@ elif [ "$dataset" = "youtube_rgb" ]; then
     # dataset="youtube_rgb"
     dim=1024
     N=1000000
-    query_size=1000
+    query_size=100
     index_root="/mnt/data/mocheng/dataset/youtube1m"
     dataset_file="/mnt/data/mocheng/dataset/youtube1m/rgb.fvecs"
     query_file="/mnt/data/mocheng/dataset/youtube1m/rgb_query.fvecs"
@@ -132,8 +156,9 @@ elif [ "$dataset" = "youtube_rgb" ]; then
     query_predicate_file=${label_root}"predicate_"${query_file_prefix}".json"
     ground_truth_file=${label_root}"gt_"${query_file_prefix}".json"
     ground_truth_collection_name=${dataset}_${attr_index_type}
+    ground_truth_index_file=${index_root}/gt_index.index
     metric="IP"
-    test_query_size=1000
+    test_query_size=100
 
 # ---------------- Redcaps 4M -----------------
 elif [ "$dataset" = "Redcaps_4M" ]; then
@@ -149,6 +174,7 @@ elif [ "$dataset" = "Redcaps_4M" ]; then
     query_predicate_file=${label_root}"predicate_"${query_file_prefix}".json"
     ground_truth_file=${label_root}"gt_"${query_file_prefix}".json"
     ground_truth_collection_name=${dataset}_${attr_index_type}
+    ground_truth_index_file=${index_root}/gt_index.index
     metric="IP"
     test_query_size=1000
 
@@ -167,6 +193,7 @@ elif [ "$dataset" = "wiki_15_4M" ]; then
     query_predicate_file=${label_root}"predicate_"${query_file_prefix}".json"
     ground_truth_file=${label_root}"gt_"${query_file_prefix}".json"
     ground_truth_collection_name=${dataset}_${attr_index_type}
+    ground_truth_index_file=${index_root}/gt_index.index
     query_size=1000
     metric="IP"
     test_query_size=1000
@@ -194,6 +221,10 @@ else
     exit 1
 fi
 # -----------------------------------------------
+
+if [ "$K" -ne 10 ]; then
+    ground_truth_file="${ground_truth_file%.json}_k${K}.json"
+fi
 
 hashann_root="${index_root}/hashann/"
 hashann_index_root=${hashann_root}index/
@@ -227,6 +258,17 @@ fi
 
 if [ ! -d "$label_root" ]; then
     mkdir -p ${label_root}
+fi
+
+# DNF mode: override predicate and gt file paths
+if [ -n "$dnf_spec" ] && [ -n "$dnf_name" ]; then
+    query_predicate_file=${label_root}"predicate_dnf_"${dnf_name}".json"
+    ground_truth_file=${label_root}"gt_dnf_"${dnf_name}".json"
+    if [ "$K" -ne 10 ]; then
+        ground_truth_file="${ground_truth_file%.json}_k${K}.json"
+    fi
+    echo "[DNF mode] predicate: ${query_predicate_file}"
+    echo "[DNF mode] gt: ${ground_truth_file}"
 fi
 
 # log_file=${dir}/summary_${algo}_${dataset}_${ef_search}.txt

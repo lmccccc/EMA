@@ -306,7 +306,6 @@ class NSW : public AlgorithmInterface<dist_t> {
         std::vector<tableint> ep_ids,
         const void *data_point,
         size_t ef,
-        BaseFilterFunctor* isIdAllowed = nullptr,
         BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
         vl_type *visited_array = vl->mass;
@@ -318,7 +317,7 @@ class NSW : public AlgorithmInterface<dist_t> {
         dist_t lowerBound;
         for (tableint ep_id : ep_ids){
             if (bare_bone_search || 
-                (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(ep_id))))) {
+                !isMarkedDeleted(ep_id)) {
                 char* ep_data = getDataByInternalId(ep_id);
                 dist_t dist = fstdistfunc_(data_point, ep_data, dist_func_param_);
                 lowerBound = dist;
@@ -400,7 +399,7 @@ class NSW : public AlgorithmInterface<dist_t> {
 #endif
 
                         if (bare_bone_search || 
-                            (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id))))) {
+                            !isMarkedDeleted(candidate_id)) {
                             top_candidates.emplace(dist, candidate_id);
                             if (!bare_bone_search && stop_condition) {
                                 stop_condition->add_point_to_result(getExternalLabel(candidate_id), currObj1, dist);
@@ -1271,7 +1270,7 @@ class NSW : public AlgorithmInterface<dist_t> {
 
 
     std::priority_queue<std::pair<dist_t, labeltype >>
-    searchKnn(const void *query_data, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const {
+    searchKnn(const void *query_data, size_t k) const {
         std::priority_queue<std::pair<dist_t, labeltype >> result;
         if (cur_element_count == 0) return result;
 
@@ -1279,13 +1278,13 @@ class NSW : public AlgorithmInterface<dist_t> {
         // dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
 
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
-        bool bare_bone_search = !num_deleted_ && !isIdAllowed;
+        bool bare_bone_search = !num_deleted_;
         if (bare_bone_search) {
             top_candidates = searchBaseLayerST<true>(
-                    currObj, query_data, std::max(ef_, k), isIdAllowed);
+                    currObj, query_data, std::max(ef_, k));
         } else {
             top_candidates = searchBaseLayerST<false>(
-                    currObj, query_data, std::max(ef_, k), isIdAllowed);
+                    currObj, query_data, std::max(ef_, k));
         }
 
         while (top_candidates.size() > k) {
@@ -1303,8 +1302,7 @@ class NSW : public AlgorithmInterface<dist_t> {
     std::vector<std::pair<dist_t, labeltype >>
     searchStopConditionClosest(
         const void *query_data,
-        BaseSearchStopCondition<dist_t>& stop_condition,
-        BaseFilterFunctor* isIdAllowed = nullptr) const {
+        BaseSearchStopCondition<dist_t>& stop_condition) const {
         std::vector<std::pair<dist_t, labeltype >> result;
         if (cur_element_count == 0) return result;
 
@@ -1339,7 +1337,7 @@ class NSW : public AlgorithmInterface<dist_t> {
         // }
 
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
-        top_candidates = searchBaseLayerST<false>(currObj, query_data, 0, isIdAllowed, &stop_condition);
+        top_candidates = searchBaseLayerST<false>(currObj, query_data, 0, &stop_condition);
 
         size_t sz = top_candidates.size();
         result.resize(sz);

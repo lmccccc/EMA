@@ -60,9 +60,14 @@ python -u ../tests/hashann_query.py --data_path $dataset_file \
                                                --threads $threads \
                                                --use_ft $use_ft \
                                                 2>&1 | tee logs/bfann.log
+if [ $? -ne 0 ]; then
+    echo "HashANN failed to run."
+else
+    echo "HashANN succeed."
+fi
 
 
-python ../tests/extract_results.py "logs/bfann.log" $dataset $attr_type $query_sel $M "bfann"
+python ../tests/extract_results.py "logs/bfann.log" $dataset $attr_type $query_sel $M "bfann" $K
 
 # status=$?
 # if [ $status -eq 0 ]; then

@@ -53,4 +53,4 @@ echo "test query size: ${test_query_size}"
                                 2>&1 | tee logs/navix.log
 
 
-python ../tests/extract_results.py "logs/navix.log" $dataset $attr_type $query_sel $M "navix"
+python ../tests/extract_results.py "logs/navix.log" $dataset $attr_type $query_sel $M "navix" $K

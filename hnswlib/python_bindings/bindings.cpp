@@ -1,5 +1,4 @@
 #include <iostream>
-#include <pybind11/functional.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
@@ -80,18 +79,6 @@ inline void assert_true(bool expr, const std::string & msg) {
 }
 
 
-class CustomFilterFunctor: public hnswlib::BaseFilterFunctor {
-    std::function<bool(hnswlib::labeltype)> filter;
-
- public:
-    explicit CustomFilterFunctor(const std::function<bool(hnswlib::labeltype)>& f) {
-        filter = f;
-    }
-
-    bool operator()(hnswlib::labeltype id) {
-        return filter(id);
-    }
-};
 
 
 inline void get_input_array_shapes(const py::buffer_info& buffer, size_t* rows, size_t* features) {
@@ -274,12 +261,12 @@ class Index {
     // }
 
 
-    void loadIndex(const std::string &path_to_index, size_t max_elements, size_t top_elements, bool allow_replace_deleted) {
+    void loadIndex(const std::string &path_to_index, size_t max_elements, size_t top_elements, bool allow_replace_deleted, bool dynamic = false) {
       if (appr_alg) {
           std::cerr << "Warning: Calling load_index for an already inited index. Old index is being deallocated." << std::endl;
           delete appr_alg;
       }
-      appr_alg = new hnswlib::HierarchicalNSW<dist_t>(l2space, path_to_index, false, max_elements, top_elements, allow_replace_deleted);
+      appr_alg = new hnswlib::HierarchicalNSW<dist_t>(l2space, path_to_index, false, max_elements, top_elements, allow_replace_deleted, dynamic);
       cur_l = appr_alg->cur_element_count;
       index_inited = true;
     }
@@ -756,8 +743,7 @@ class Index {
     py::object knnQuery_return_numpy(
         py::object input,
         size_t k = 1,
-        int num_threads = -1,
-        const std::function<bool(hnswlib::labeltype)>& filter = nullptr) {
+        int num_threads = -1) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
         hnswlib::labeltype* data_numpy_l;
@@ -779,14 +765,11 @@ class Index {
             data_numpy_l = new hnswlib::labeltype[rows * k];
             data_numpy_d = new dist_t[rows * k];
 
-            // Warning: search with a filter works slow in python in multithreaded mode. For best performance set num_threads=1
-            CustomFilterFunctor idFilter(filter);
-            CustomFilterFunctor* p_idFilter = filter ? &idFilter : nullptr;
 
             if (normalize == false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
-                        (void*)items.data(row), k, p_idFilter);
+                        (void*)items.data(row), k);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -806,7 +789,7 @@ class Index {
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
 
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
-                        (void*)(norm_array.data() + start_idx), k, p_idFilter);
+                        (void*)(norm_array.data() + start_idx), k);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -840,12 +823,103 @@ class Index {
                 free_when_done_d));
     }
 
+    py::object knnQuery_return_numpy_with_stats(
+        py::object input,
+        size_t k = 1) {
+        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
+        auto buffer = items.request();
+        hnswlib::labeltype* data_numpy_l;
+        dist_t* data_numpy_d;
+        int64_t* data_numpy_dc;
+        int64_t* data_numpy_hops;
+        size_t rows, features;
+
+        {
+            py::gil_scoped_release l;
+            get_input_array_shapes(buffer, &rows, &features);
+
+            data_numpy_l = new hnswlib::labeltype[rows * k];
+            data_numpy_d = new dist_t[rows * k];
+            data_numpy_dc = new int64_t[rows];
+            data_numpy_hops = new int64_t[rows];
+
+
+            if (normalize == false) {
+                for (size_t row = 0; row < rows; row++) {
+                    appr_alg->metric_distance_computations = 0;
+                    appr_alg->metric_hops = 0;
+
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result = appr_alg->searchKnn(
+                        (void*)items.data(row), k);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                    data_numpy_dc[row] = appr_alg->metric_distance_computations.load();
+                    data_numpy_hops[row] = appr_alg->metric_hops.load();
+                }
+            } else {
+                std::vector<float> norm_array(dim);
+                for (size_t row = 0; row < rows; row++) {
+                    appr_alg->metric_distance_computations = 0;
+                    appr_alg->metric_hops = 0;
+
+                    normalize_vector((float*)items.data(row), norm_array.data());
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result = appr_alg->searchKnn(
+                        (void*)norm_array.data(), k);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                    data_numpy_dc[row] = appr_alg->metric_distance_computations.load();
+                    data_numpy_hops[row] = appr_alg->metric_hops.load();
+                }
+            }
+        }
+
+        py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
+        py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
+        py::capsule free_when_done_dc(data_numpy_dc, [](void* f) { delete[] f; });
+        py::capsule free_when_done_hops(data_numpy_hops, [](void* f) { delete[] f; });
+
+        return py::make_tuple(
+            py::array_t<hnswlib::labeltype>(
+                {rows, k},
+                {k * sizeof(hnswlib::labeltype), sizeof(hnswlib::labeltype)},
+                data_numpy_l,
+                free_when_done_l),
+            py::array_t<dist_t>(
+                {rows, k},
+                {k * sizeof(dist_t), sizeof(dist_t)},
+                data_numpy_d,
+                free_when_done_d),
+            py::array_t<int64_t>(
+                {rows},
+                {sizeof(int64_t)},
+                data_numpy_dc,
+                free_when_done_dc),
+            py::array_t<int64_t>(
+                {rows},
+                {sizeof(int64_t)},
+                data_numpy_hops,
+                free_when_done_hops));
+    }
+
     py::object hybridKnnQuery_return_numpy(
         py::object input,
         std::vector<std::vector<std::vector<int>>> raw_predicate, 
         size_t k = 1,
-        int num_threads = -1,
-        const std::function<bool(hnswlib::labeltype)>& filter = nullptr) {
+        int num_threads = -1) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
         hnswlib::labeltype* data_numpy_l;
@@ -867,14 +941,11 @@ class Index {
             data_numpy_l = new hnswlib::labeltype[rows * k];
             data_numpy_d = new dist_t[rows * k];
 
-            // Warning: search with a filter works slow in python in multithreaded mode. For best performance set num_threads=1
-            CustomFilterFunctor idFilter(filter);
-            CustomFilterFunctor* p_idFilter = filter ? &idFilter : nullptr;
 
             if (normalize == false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->hybridSearch(
-                        (void*)items.data(row), raw_predicate[row], k, p_idFilter);
+                        (void*)items.data(row), raw_predicate[row], k);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -894,7 +965,7 @@ class Index {
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
 
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->hybridSearch(
-                        (void*)items.data(row), raw_predicate[row], k, p_idFilter);
+                        (void*)items.data(row), raw_predicate[row], k);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -926,6 +997,187 @@ class Index {
                 { k * sizeof(dist_t), sizeof(dist_t) },  // C-style contiguous strides for each index
                 data_numpy_d,  // the data pointer
                 free_when_done_d));
+    }
+
+    // DNF predicate query: supports arbitrary AND/OR combinations
+    py::object hybridKnnQueryDNF_return_numpy(
+        py::object input,
+        std::vector<std::vector<std::vector<std::vector<int>>>> dnf_predicates,  // [query][term][attr] = values
+        std::vector<std::vector<std::vector<int8_t>>> check_modes,               // [query][term][attr] = mode
+        size_t k = 1,
+        int num_threads = -1) {
+        py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
+        auto buffer = items.request();
+        hnswlib::labeltype* data_numpy_l;
+        dist_t* data_numpy_d;
+        size_t rows, features;
+
+        if (num_threads <= 0)
+            num_threads = num_threads_default;
+
+        {
+            py::gil_scoped_release l;
+            get_input_array_shapes(buffer, &rows, &features);
+
+            if (rows <= num_threads * 4) {
+                num_threads = 1;
+            }
+
+            data_numpy_l = new hnswlib::labeltype[rows * k];
+            data_numpy_d = new dist_t[rows * k];
+
+
+            if (normalize == false) {
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    const auto& modes = check_modes.empty()
+                        ? std::vector<std::vector<int8_t>>()
+                        : check_modes[row];
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->hybridSearchDNF(
+                        (void*)items.data(row), dnf_predicates[row], modes, k);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                });
+            } else {
+                std::vector<float> norm_array(num_threads * features);
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                    size_t start_idx = threadId * dim;
+                    normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
+
+                    const auto& modes = check_modes.empty()
+                        ? std::vector<std::vector<int8_t>>()
+                        : check_modes[row];
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->hybridSearchDNF(
+                        (void*)(norm_array.data() + start_idx), dnf_predicates[row], modes, k);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                });
+            }
+        }
+        py::capsule free_when_done_l(data_numpy_l, [](void* f) {
+            delete[] f;
+            });
+        py::capsule free_when_done_d(data_numpy_d, [](void* f) {
+            delete[] f;
+            });
+
+        return py::make_tuple(
+            py::array_t<hnswlib::labeltype>(
+                { rows, k },
+                { k * sizeof(hnswlib::labeltype), sizeof(hnswlib::labeltype) },
+                data_numpy_l,
+                free_when_done_l),
+            py::array_t<dist_t>(
+                { rows, k },
+                { k * sizeof(dist_t), sizeof(dist_t) },
+                data_numpy_d,
+                free_when_done_d));
+    }
+
+    py::object hybridKnnQuery_return_numpy_with_stats(
+        py::object input,
+        std::vector<std::vector<std::vector<int>>> raw_predicate,
+        size_t k = 1) {
+        py::array_t<dist_t, py::array::c_style | py::array::forcecast> items(input);
+        auto buffer = items.request();
+        hnswlib::labeltype* data_numpy_l;
+        dist_t* data_numpy_d;
+        int64_t* data_numpy_dc;
+        int64_t* data_numpy_hops;
+        size_t rows, features;
+
+        {
+            py::gil_scoped_release l;
+            get_input_array_shapes(buffer, &rows, &features);
+
+            data_numpy_l = new hnswlib::labeltype[rows * k];
+            data_numpy_d = new dist_t[rows * k];
+            data_numpy_dc = new int64_t[rows];
+            data_numpy_hops = new int64_t[rows];
+
+
+            if (normalize == false) {
+                for (size_t row = 0; row < rows; row++) {
+                    appr_alg->metric_distance_computations = 0;
+                    appr_alg->metric_hops = 0;
+
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result = appr_alg->hybridSearch(
+                        (void*)items.data(row), raw_predicate[row], k);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                    data_numpy_dc[row] = appr_alg->metric_distance_computations.load();
+                    data_numpy_hops[row] = appr_alg->metric_hops.load();
+                }
+            } else {
+                std::vector<float> norm_array(dim);
+                for (size_t row = 0; row < rows; row++) {
+                    appr_alg->metric_distance_computations = 0;
+                    appr_alg->metric_hops = 0;
+
+                    normalize_vector((float*)items.data(row), norm_array.data());
+                    std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result = appr_alg->hybridSearch(
+                        (void*)norm_array.data(), raw_predicate[row], k);
+                    if (result.size() != k)
+                        throw std::runtime_error(
+                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
+                    for (int i = k - 1; i >= 0; i--) {
+                        auto& result_tuple = result.top();
+                        data_numpy_d[row * k + i] = result_tuple.first;
+                        data_numpy_l[row * k + i] = result_tuple.second;
+                        result.pop();
+                    }
+                    data_numpy_dc[row] = appr_alg->metric_distance_computations.load();
+                    data_numpy_hops[row] = appr_alg->metric_hops.load();
+                }
+            }
+        }
+
+        py::capsule free_when_done_l(data_numpy_l, [](void* f) { delete[] f; });
+        py::capsule free_when_done_d(data_numpy_d, [](void* f) { delete[] f; });
+        py::capsule free_when_done_dc(data_numpy_dc, [](void* f) { delete[] f; });
+        py::capsule free_when_done_hops(data_numpy_hops, [](void* f) { delete[] f; });
+
+        return py::make_tuple(
+            py::array_t<hnswlib::labeltype>(
+                {rows, k},
+                {k * sizeof(hnswlib::labeltype), sizeof(hnswlib::labeltype)},
+                data_numpy_l,
+                free_when_done_l),
+            py::array_t<dist_t>(
+                {rows, k},
+                {k * sizeof(dist_t), sizeof(dist_t)},
+                data_numpy_d,
+                free_when_done_d),
+            py::array_t<int64_t>(
+                {rows},
+                {sizeof(int64_t)},
+                data_numpy_dc,
+                free_when_done_dc),
+            py::array_t<int64_t>(
+                {rows},
+                {sizeof(int64_t)},
+                data_numpy_hops,
+                free_when_done_hops));
     }
 
 
@@ -1425,8 +1677,7 @@ class NSWIndex {
     py::object knnQuery_return_numpy(
         py::object input,
         size_t k = 1,
-        int num_threads = -1,
-        const std::function<bool(hnswlib::labeltype)>& filter = nullptr) {
+        int num_threads = -1) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
         hnswlib::labeltype* data_numpy_l;
@@ -1448,14 +1699,11 @@ class NSWIndex {
             data_numpy_l = new hnswlib::labeltype[rows * k];
             data_numpy_d = new dist_t[rows * k];
 
-            // Warning: search with a filter works slow in python in multithreaded mode. For best performance set num_threads=1
-            CustomFilterFunctor idFilter(filter);
-            CustomFilterFunctor* p_idFilter = filter ? &idFilter : nullptr;
 
             if (normalize == false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
-                        (void*)items.data(row), k, p_idFilter);
+                        (void*)items.data(row), k);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -1475,7 +1723,7 @@ class NSWIndex {
                     normalize_vector((float*)items.data(row), (norm_array.data() + start_idx));
 
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnn(
-                        (void*)(norm_array.data() + start_idx), k, p_idFilter);
+                        (void*)(norm_array.data() + start_idx), k);
                     if (result.size() != k)
                         throw std::runtime_error(
                             "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
@@ -1663,8 +1911,7 @@ class BFIndex {
     py::object knnQuery_return_numpy(
         py::object input,
         size_t k = 1,
-        int num_threads = -1,
-        const std::function<bool(hnswlib::labeltype)>& filter = nullptr) {
+        int num_threads = -1) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
         auto buffer = items.request();
         hnswlib::labeltype *data_numpy_l;
@@ -1681,12 +1928,10 @@ class BFIndex {
             data_numpy_l = new hnswlib::labeltype[rows * k];
             data_numpy_d = new dist_t[rows * k];
 
-            CustomFilterFunctor idFilter(filter);
-            CustomFilterFunctor* p_idFilter = filter ? &idFilter : nullptr;
 
             ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                 std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = alg->searchKnn(
-                    (void*)items.data(row), k, p_idFilter);
+                    (void*)items.data(row), k);
                 for (int i = k - 1; i >= 0; i--) {
                     auto& result_tuple = result.top();
                     data_numpy_d[row * k + i] = result_tuple.first;
@@ -1743,15 +1988,29 @@ PYBIND11_PLUGIN(hashannlib) {
             &Index<float>::knnQuery_return_numpy,
             py::arg("data"),
             py::arg("k") = 1,
-            py::arg("num_threads") = -1,
-            py::arg("filter") = py::none())
+            py::arg("num_threads") = -1)
+        .def("knn_query_with_stats",
+            &Index<float>::knnQuery_return_numpy_with_stats,
+            py::arg("data"),
+            py::arg("k") = 1)
         .def("hybrid_knn_query",
             &Index<float>::hybridKnnQuery_return_numpy,
             py::arg("data"),
             py::arg("predicate"),
             py::arg("k") = 1,
-            py::arg("num_threads") = -1,
-            py::arg("filter") = py::none())
+            py::arg("num_threads") = -1)
+        .def("hybrid_knn_query_with_stats",
+            &Index<float>::hybridKnnQuery_return_numpy_with_stats,
+            py::arg("data"),
+            py::arg("predicate"),
+            py::arg("k") = 1)
+        .def("hybrid_knn_query_dnf",
+            &Index<float>::hybridKnnQueryDNF_return_numpy,
+            py::arg("data"),
+            py::arg("dnf_predicate"),
+            py::arg("check_modes") = std::vector<std::vector<std::vector<int8_t>>>(),
+            py::arg("k") = 1,
+            py::arg("num_threads") = -1)
         .def("add_items",
             &Index<float>::addItems,
             py::arg("data"),
@@ -1789,7 +2048,8 @@ PYBIND11_PLUGIN(hashannlib) {
             py::arg("path_to_index"),
             py::arg("max_elements") = 0,
             py::arg("top_elements") = 0,
-            py::arg("allow_replace_deleted") = false)
+            py::arg("allow_replace_deleted") = false,
+            py::arg("dynamic") = false)
         .def("mark_deleted", &Index<float>::markDeleted, py::arg("label"))
         .def("unmark_deleted", &Index<float>::unmarkDeleted, py::arg("label"))
         .def("resize_index", &Index<float>::resizeIndex, py::arg("new_size"))
@@ -1850,8 +2110,7 @@ PYBIND11_PLUGIN(hashannlib) {
             &NSWIndex<float>::knnQuery_return_numpy,
             py::arg("data"),
             py::arg("k") = 1,
-            py::arg("num_threads") = -1,
-            py::arg("filter") = py::none())
+            py::arg("num_threads") = -1)
         .def("add_items",
             &NSWIndex<float>::addItems,
             py::arg("data"),
@@ -1920,8 +2179,7 @@ PYBIND11_PLUGIN(hashannlib) {
             &BFIndex<float>::knnQuery_return_numpy,
             py::arg("data"),
             py::arg("k") = 1,
-            py::arg("num_threads") = -1,
-            py::arg("filter") = py::none())
+            py::arg("num_threads") = -1)
         .def("add_items", &BFIndex<float>::addItems, py::arg("data"), py::arg("ids") = py::none())
         .def("delete_vector", &BFIndex<float>::deleteVector, py::arg("label"))
         .def("set_num_threads", &BFIndex<float>::set_num_threads, py::arg("num_threads"))

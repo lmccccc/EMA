@@ -25,4 +25,4 @@ python -u ../tests/msvbase.py --dataset_file ${dataset_file} \
                             2>&1 | tee logs/msvbase.log
 
 
-python ../tests/extract_results.py "logs/msvbase.log" $dataset $attr_type $query_sel $M "msvbase"
+python ../tests/extract_results.py "logs/msvbase.log" $dataset $attr_type $query_sel $M "msvbase" $K

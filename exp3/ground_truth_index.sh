@@ -18,7 +18,7 @@ source ./conf.sh
 #                              --metric ${metric}
 
 if [ -f $ground_truth_index_file ]; then
-    echo "ground truth index file already exist"
+    echo "ground truth index file already exist $ground_truth_index_file"
     exit 0
 fi
 

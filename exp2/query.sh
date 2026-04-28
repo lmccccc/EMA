@@ -67,7 +67,7 @@ else
     echo "HashANN succeed."
 fi
 
-python ../tests/extract_results.py "logs/bfann.log" $dataset $attr_type $query_sel $M "bfann"
+python ../tests/extract_results.py "logs/bfann.log" $dataset $attr_type $query_sel $M "bfann" $K
 
 # status=$?
 # if [ $status -eq 0 ]; then

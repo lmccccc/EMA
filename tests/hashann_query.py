@@ -9,11 +9,24 @@ import bisect
 import sys
 import json
 from utils import *
-import faiss
 import ast
 
 
 from hashann import HashANN
+
+def is_dnf_predicate(raw_predicate):
+    """Detect DNF format: predicate[query][term][attr] = values (3 levels of nesting)
+    vs legacy format: predicate[query][attr] = values (2 levels)."""
+    if not raw_predicate or not raw_predicate[0]:
+        return False
+    first_query = raw_predicate[0]
+    # DNF: first_query[0] is a term (list of per-attr values)
+    # Legacy: first_query[0] is attr values (list of ints)
+    # Distinguish: in DNF, first_query[0][0] is a list; in legacy, first_query[0][0] is an int
+    if isinstance(first_query[0], list) and len(first_query[0]) > 0 and isinstance(first_query[0][0], list):
+        return True
+    return False
+
 
 def load_query_data(query_file, qrange_file, gt_file, N, Nq, k):# fvecs, fvecs, json, json, json
 
@@ -52,14 +65,19 @@ def load_query_data(query_file, qrange_file, gt_file, N, Nq, k):# fvecs, fvecs, 
 
 if __name__ == "__main__":
     args = arg_init()
-
+    print("K:", args.K)
     hash_ann = HashANN()
 
     # data_path query_path attr_path qrange_path gt_path N n_query_to_use k
     nq = args.n_query_to_use
     attr_type_list = ast.literal_eval(args.attr_type_list)
     params = {"M": args.M, "ef_construction": args.efConstruction, "metric": args.metric.lower(), "dim": args.dim, "N": args.N, "ef_search": args.ef_search, "ef_top": args.ef_top}
-    queries, raw_predicate, query_gt = load_query_data(args.query_path, args.qrange_path, args.gt_path, args.N, nq, args.k)
+    queries, raw_predicate, query_gt = load_query_data(args.query_path, args.qrange_path, args.gt_path, args.N, nq, args.K)
+    dnf_mode = is_dnf_predicate(raw_predicate)
+    if dnf_mode:
+        print("DNF predicate detected (OR support enabled)")
+    else:
+        print("Legacy AND-only predicate detected")
     hash_ann.init_params(params)
 
     
@@ -73,6 +91,7 @@ if __name__ == "__main__":
     if not isinstance(efs_list, List):
         efs_list = [efs_list]
     index.set_num_threads(1)
+    has_stats_api = hasattr(index, "hybrid_knn_query_with_stats")
 
     result = []
     # efs_list = [efs_list[-1]]
@@ -81,8 +100,8 @@ if __name__ == "__main__":
         index.set_ef_top(args.ef_top)
         index.set_ft_flag(args.use_ft.lower() == 'true')
         print("set marker flag:", args.use_ft.lower() == 'true')
-        index.set_two_hop_flag(False)
-        index.set_two_hop_threshold(0.5)
+        index.set_two_hop_flag(True)
+        index.set_two_hop_threshold(16)
         print("index ef_search:", efs, " ef_top:", args.ef_top)
         # flatten_predicate = index.predicateTranslate(raw_predicate)
         # print("predicate translated")
@@ -106,13 +125,34 @@ if __name__ == "__main__":
         # print("query predicate:", raw_predicate[target_id])
 
         # warm up
-        _, _ = index.hybrid_knn_query(_queries[:min(3, len(_queries))], _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
+        if dnf_mode:
+            _, _ = index.hybrid_knn_query_dnf(
+                _queries[:min(3, len(_queries))],
+                _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
+        else:
+            _, _ = index.hybrid_knn_query(
+                _queries[:min(3, len(_queries))],
+                _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
 
         start = time.time()
-        ids, distances = index.hybrid_knn_query(_queries, _raw_predicate, k=args.K)
+        if dnf_mode:
+            ids, distances = index.hybrid_knn_query_dnf(
+                _queries, _raw_predicate, k=args.K)
+            cmps = -1.0
+        elif has_stats_api:
+            ids, distances, distance_counts, hops = index.hybrid_knn_query_with_stats(
+                _queries, _raw_predicate, k=args.K
+            )
+            cmps = float(np.mean(distance_counts))
+        else:
+            ids, distances = index.hybrid_knn_query(_queries, _raw_predicate, k=args.K)
+            cmps = -1.0
         end = time.time()
         qps = len(target_id)/(end-start)
-        print(f"Query time: {end - start} seconds, QPS:{qps}")
+        if cmps >= 0:
+            print(f"Query time: {end - start} seconds, QPS:{qps}, cmps:{cmps}")
+        else:
+            print(f"Query time: {end - start} seconds, QPS:{qps}, cmps:N/A")
         
         # recall
         correct_sum = 0
@@ -125,7 +165,7 @@ if __name__ == "__main__":
             res = ids[i]
             if len(gt) != len(res):
                 print(f"Error: ground truth and label length mismatch at query {i}, gt: {len(gt)}, label: {len(res)}")
-                continue
+                exit(1)
             correct = np.isin(gt, res)
             correct_sum += np.sum(correct)
             recall_list.append(np.sum(correct)/len(gt))
@@ -164,11 +204,11 @@ if __name__ == "__main__":
 
         recall = correct_sum / (len(target_id) * args.K)
         print(f"ef search: {efs}, recall: {recall:.4f}")
-        result.append([efs, recall, qps])
+        result.append([efs, recall, qps, cmps])
         # if recall >= 0.97:
         #     break
     
-    print("Final results (ef_search, recall, QPS):")
+    print("Final results (ef_search, recall, QPS, cmps):")
     for res in result:
         print(res)
     exit()
@@ -177,7 +217,7 @@ if __name__ == "__main__":
     #     index,
     #     args.plan,
     #     args.optimizer_conf_dir,
-    #     args.k,
+    #     args.K,
     #     args.ef_list,
     #     args.al_list,
     #     args.low_range,

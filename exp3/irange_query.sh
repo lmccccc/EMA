@@ -39,4 +39,4 @@ echo "metric: $metric"
                                 --metric $metric  \
                                 2>&1 | tee logs/irange.log
 
-python ../tests/extract_results.py "logs/irange.log" $dataset $attr_type $query_sel $M "irange"
+python ../tests/extract_results.py "logs/irange.log" $dataset $attr_type $query_sel $M "irange" $K $query_predicate_file

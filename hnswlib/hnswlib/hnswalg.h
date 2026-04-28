@@ -73,7 +73,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     double threshold_1_{0.01}, threshold_2_{0.01}, threshold_3_{0.1}; // threshold to decide whether scan the bucket or not
     int maxlevel_{0};
 
-    double two_hop_threshold{0.2}; // threshold for two hop expansion
+    double two_hop_threshold{10}; // threshold for two hop expansion
 
     std::unique_ptr<VisitedListPool> visited_list_pool_{nullptr};
 
@@ -139,6 +139,49 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     bool use_ft_{true}; 
 
     bool use_two_hop_{true};
+
+    // ====================================================================
+    // DNF Predicate: supports arbitrary AND/OR combinations via DNF
+    // (Disjunctive Normal Form = OR of AND-terms)
+    //
+    // Each term stores two FT bitmaps per attribute:
+    //   or_bitmap  → existence check: (ft & pred) != 0
+    //   and_bitmap → superset check:  (~ft & pred) == 0
+    // This eliminates the per-attribute type branch in the hot path.
+    //
+    // Per-attribute mapping within each term:
+    //   Numerical range   → or=range_bits, and=zeros
+    //   Categorical AND   → or=all_ones,   and=label_bits
+    //   Categorical OR    → or=label_bits, and=zeros
+    //   Skip (no filter)  → attr_active=0, bitmaps unused
+    // ====================================================================
+    static constexpr int DNF_MAX_TERMS = 16;
+
+    struct DNFPredicate {
+        int num_terms = 0;
+        int attr_count = 0;
+        int ft_bytes = 0;
+        int term_ft_size = 0;    // = attr_count * ft_bytes
+        int term_pred_size = 0;  // = predicate_size_
+
+        // FT check bitmaps — flat contiguous for cache locality
+        // Layout: [term0_attr0 | term0_attr1 | ... | term1_attr0 | ...]
+        std::vector<char> or_bitmaps;    // size = num_terms * term_ft_size
+        std::vector<char> and_bitmaps;   // size = num_terms * term_ft_size
+
+        // Per-term, per-attr: 1 if this attribute is constrained in this term
+        std::vector<int8_t> attr_active; // size = num_terms * attr_count
+
+        // Exact check: per-term predicate (same format as predicate_translate output)
+        std::vector<int> exact_preds;    // size = num_terms * term_pred_size
+
+        // Per-term, per-attr exact check mode: 0=existence, 1=superset, -1=skip
+        std::vector<int8_t> exact_modes; // size = num_terms * attr_count
+
+        // Raw numerical ranges for multi-range OR exact check
+        // raw_ranges[term * attr_count + attr] = {lo1,hi1,lo2,hi2,...}
+        std::vector<std::vector<int>> raw_ranges; // size = num_terms * attr_count
+    };
 
     void set_ft_flag(bool flag){
         use_ft_ = flag;
@@ -207,6 +250,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
             if (start + offset >= N) {
                 mapping[k] = indexed[N - 1] + 1;
+                for (int kk = k + 1; kk < M; ++kk)
+                    mapping[kk] = mapping[k];
+                break;
             } else {
                 mapping[k] = indexed[start + offset];
             }
@@ -238,7 +284,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             //         label_cnt[k]++;
             //     }
             // }
-            for (int j = 1; j <= _attr.size(); ++j){
+            for (size_t j = 0; j < _attr.size(); ++j){
                 label_cnt[_attr[j]]++;
             }
             // for(int j = 1; j <= _attr[0]; ++j){
@@ -270,7 +316,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         std::cout << "label distribution to " << M << " buckets: " << std::endl;
-        for (int i = 0; i < M; i++) {
+        for (int i = 0; i < M && i < (int)label_cnt.size(); i++) {
             if (bucket_count[i] == 0) continue;
             std::cout << "label=" << i << ", bucket=" << label_to_bucket[i] << ", count=" << label_cnt[i] << "; " << std::endl;
         }
@@ -436,9 +482,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         bool nmslib = false,
         size_t max_elements = 0,
         size_t top_elements = 0,
-        bool allow_replace_deleted = false)
+        bool allow_replace_deleted = false,
+        bool dynamic = false)
         : allow_replace_deleted_(allow_replace_deleted) {
-        loadIndex(location, s, max_elements);
+        loadIndex(location, s, max_elements, dynamic);
     }
 
 
@@ -527,6 +574,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_links_per_element_ = maxM_ * sizeof(tableint) + sizeof(linklistsizeint);
         mult_ = 1 / log(1.0 * M_);
         revSize_ = 1.0 / mult_;
+
+        node_dominate_count_.assign(max_elements_, 0);
 
     }
 
@@ -919,7 +968,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 //         dist_t lowerBound;
 //         if (bare_bone_search || 
-//             (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(ep_id))))) {
+//             !isMarkedDeleted(ep_id)) {
 //             char* ep_data = getDataByInternalId(ep_id);
 //             dist_t dist = fstdistfunc_(data_point, ep_data, dist_func_param_);
 //             lowerBound = dist;
@@ -1000,7 +1049,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 // #endif
 
 //                         if (bare_bone_search || 
-//                             (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id))))) {
+//                             !isMarkedDeleted(candidate_id)) {
 //                             top_candidates.emplace(dist, candidate_id);
 //                             if (!bare_bone_search && stop_condition) {
 //                                 stop_condition->add_point_to_result(getExternalLabel(candidate_id), currObj1, dist);
@@ -1043,7 +1092,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates_,
         const void *data_point,
         size_t ef,
-        BaseFilterFunctor* isIdAllowed = nullptr,
         BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
         vl_type *visited_array = vl->mass;
@@ -1054,7 +1102,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         dist_t lowerBound;
         // if (bare_bone_search || 
-        //     (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(ep_id))))) {
+        //     !isMarkedDeleted(ep_id)) {
         //     char* ep_data = getDataByInternalId(ep_id);
         //     dist_t dist = fstdistfunc_(data_point, ep_data, dist_func_param_);
         //     lowerBound = dist;
@@ -1145,7 +1193,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 #endif
 
                         if (bare_bone_search || 
-                            (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id))))) {
+                            !isMarkedDeleted(candidate_id)) {
                             top_candidates.emplace(dist, candidate_id);
                             if (!bare_bone_search && stop_condition) {
                                 stop_condition->add_point_to_result(getExternalLabel(candidate_id), currObj1, dist);
@@ -1234,7 +1282,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return res;
     }
 
-    inline bool predicate_check(tableint id, std::vector<int> predicate) const {
+    inline bool predicate_check(tableint id, const std::vector<int>& predicate) const {
         for(int i = 0; i < attr_type_.size(); ++i){
             const int* attr = attr_at(id, i);
             if (attr_type_[i] == 0) { // numerical, compare range
@@ -1255,14 +1303,62 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return true;
     }
 
+    // ====================================================================
+    // predicate_check_dnf: exact attribute check for DNF predicates
+    //
+    // OR over terms, AND within term.
+    // Categorical supports both AND (superset) and OR (existence) modes.
+    // Numerical supports OR of multiple ranges via num_range_pairs.
+    // ====================================================================
+    inline bool predicate_check_dnf(tableint id,
+                                     const DNFPredicate& pred) const {
+        for (int t = 0; t < pred.num_terms; ++t) {
+            const int*    ex_pred = pred.exact_preds.data()  + t * pred.term_pred_size;
+            const int8_t* ex_mode = pred.exact_modes.data()  + t * pred.attr_count;
+
+            bool term_pass = true;
+            for (int i = 0; i < pred.attr_count; ++i) {
+                if (ex_mode[i] == -1) continue;  // skip
+
+                const int* attr = attr_at(id, i);
+
+                if (attr_type_[i] == 0) { // numerical
+                    const auto& ranges = pred.raw_ranges[t * pred.attr_count + i];
+                    if (ranges.empty()) continue;
+                    int n_pairs = static_cast<int>(ranges.size()) / 2;
+                    bool any_range = false;
+                    for (int p = 0; p < n_pairs; ++p) {
+                        if (numerical_attr_check(attr[0], ranges[p*2], ranges[p*2+1])) {
+                            any_range = true;
+                            break;
+                        }
+                    }
+                    if (!any_range) { term_pass = false; break; }
+                } else { // categorical
+                    const int* pred_data = ex_pred + predicate_offset_[i];
+                    if (ex_mode[i] == 0) {
+                        // OR/existence: (attr & pred) != 0
+                        bool any = false;
+                        for (int k = 0; k < cate_int_byte_; ++k) {
+                            if (attr[k] & pred_data[k]) { any = true; break; }
+                        }
+                        if (!any) { term_pass = false; break; }
+                    } else {
+                        // AND/superset: (attr & pred) == pred
+                        if (!categorical_attr_check(attr, pred_data, cate_int_byte_)) {
+                            term_pass = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (term_pass) return true;  // OR: any term passes
+        }
+        return false;
+    }
+
 
 #ifdef USE_SSE
-//     inline bool filter_table_check(tableint id, char* mapped_predicate) const {
-//         for(int i = 0; i < attr_type_.size(); ++i) {
-//             char* ft = ft_at(id, i);
-
-//             if (attr_type_[i] == 0) { // numerical
-//                 bool matched = false;
 //                 if (ft_bytes_ == 16) {
 //                     __m128i ft_vec = _mm_loadu_si128((__m128i*)ft);
 //                     __m128i pred_vec = _mm_loadu_si128((__m128i*)(mapped_predicate + i * ft_bytes_));
@@ -1338,6 +1434,25 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     inline bool nbr_ft_check(tableint id, int nbr_idx, char* mapped_predicate) const {
         for(int i = 0; i < attr_type_.size(); ++i){
             unsigned char* ft = nbr_ft_at(id, nbr_idx, i);
+            const char* pred = mapped_predicate + i * ft_bytes_;
+
+            // Fast scalar path for small FT (16/32/64 bit)
+            if (ft_bytes_ <= 8) {
+                uint64_t ft_val = 0, pred_val = 0;
+                switch (ft_bytes_) {
+                    case 2: { uint16_t a, b; memcpy(&a, ft, 2); memcpy(&b, pred, 2); ft_val = a; pred_val = b; break; }
+                    case 4: { uint32_t a, b; memcpy(&a, ft, 4); memcpy(&b, pred, 4); ft_val = a; pred_val = b; break; }
+                    case 8: { memcpy(&ft_val, ft, 8); memcpy(&pred_val, pred, 8); break; }
+                    default: { memcpy(&ft_val, ft, ft_bytes_); memcpy(&pred_val, pred, ft_bytes_); break; }
+                }
+                if (attr_type_[i] == 0) { // numerical: any overlap
+                    if ((ft_val & pred_val) == 0) return false;
+                } else { // categorical: pred must be subset of ft
+                    if ((ft_val & pred_val) != pred_val) return false;
+                }
+                continue;
+            }
+
             #ifdef USE_SSE
             size_t offset = 0;
             if (attr_type_[i] == 0) {  // numerical: exists-anywhere
@@ -1345,7 +1460,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
                 for (; offset + 16 <= ft_bytes_; offset += 16) {
                     __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
-                    __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+                    __m128i v_mp = _mm_loadu_si128((const __m128i*)(pred + offset));
                     __m128i r    = _mm_and_si128(v_ft, v_mp);
 
                     if (!_mm_testz_si128(r, r)) {  // r != 0
@@ -1357,7 +1472,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 // tail
                 if (!matched) {
                     for (; offset < ft_bytes_; ++offset) {
-                        if ((ft[offset] & mapped_predicate[i * ft_bytes_ + offset]) > 0) {
+                        if ((ft[offset] & pred[offset]) > 0) {
                             matched = true;
                             break;
                         }
@@ -1369,7 +1484,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             else { // categorical: must-satisfy-everywhere
                 for (; offset + 16 <= ft_bytes_; offset += 16) {
                     __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
-                    __m128i v_mp = _mm_loadu_si128((const __m128i*)(mapped_predicate + i * ft_bytes_ + offset));
+                    __m128i v_mp = _mm_loadu_si128((const __m128i*)(pred + offset));
                     __m128i r    = _mm_and_si128(v_ft, v_mp);
 
                     __m128i cmp = _mm_cmpeq_epi8(r, v_mp);
@@ -1378,7 +1493,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
 
                 for (; offset < ft_bytes_; ++offset) {
-                    if ((ft[offset] & mapped_predicate[i * ft_bytes_ + offset]) != mapped_predicate[i * ft_bytes_ + offset])
+                    if ((ft[offset] & pred[offset]) != (unsigned char)pred[offset])
                         return false;
                 }
             }
@@ -1386,23 +1501,17 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             bool matched = false;
             if (attr_type_[i] == 0) { // numerical
                 for (int j = 0; j < ft_bytes_; ++j) {
-                    if ((ft[j] & mapped_predicate[i * ft_bytes_ + j]) > 0) { // any attr exist for range search
+                    if ((ft[j] & pred[j]) > 0) {
                         matched = true;
                         break;
                     }
                 }
-                if (!matched) {
-                    // if (id == 9701 && datal[nbr_idx] == 9885)
-                    //     std::cout << "num attr not match" << std::endl;
-                    return false;
-                }
+                if (!matched) return false;
             }
             else if (attr_type_[i] == 1) { // categorical
                 for (int j = 0; j < ft_bytes_; ++j) {
-                    if ((ft[j] & mapped_predicate[i * ft_bytes_ + j]) != mapped_predicate[i * ft_bytes_ + j]) { // all attr exist for label search
-                        // std::cout << "cate attr not match" << std::endl;
+                    if ((ft[j] & pred[j]) != (unsigned char)pred[j])
                         return false;
-                    }
                 }
             }
             #endif
@@ -1652,6 +1761,116 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return true;
     }
 
+    // ====================================================================
+    // nbr_ft_check_dnf: branchless two-bitmap FT check for DNF predicates
+    //
+    // Per attribute, two checks run unconditionally (no attr_type_ branch):
+    //   1. Existence: (ft & or_bitmap) != 0
+    //   2. Superset:  (~ft & and_bitmap) == 0
+    // Unconstrained attributes are skipped via attr_active flag.
+    //
+    // Outer loop: OR over DNF terms (short-circuit on first pass)
+    // Inner loop: AND over constrained attributes (short-circuit on fail)
+    // ====================================================================
+    inline bool nbr_ft_check_dnf(tableint id, int nbr_idx,
+                                  const DNFPredicate& pred) const {
+        for (int t = 0; t < pred.num_terms; ++t) {
+            const char*   or_pred = pred.or_bitmaps.data()  + t * pred.term_ft_size;
+            const char*   and_pred= pred.and_bitmaps.data() + t * pred.term_ft_size;
+            const int8_t* active  = pred.attr_active.data() + t * pred.attr_count;
+
+            bool term_pass = true;
+            for (int i = 0; i < pred.attr_count; ++i) {
+                if (!active[i]) continue;  // unconstrained — skip
+
+                unsigned char* ft   = nbr_ft_at(id, nbr_idx, i);
+                const char* or_p    = or_pred  + i * ft_bytes_;
+                const char* and_p   = and_pred + i * ft_bytes_;
+
+                bool or_pass  = false;
+                bool and_fail = false;
+
+                // Fast scalar path for small FT (16/32/64 bit)
+                if (ft_bytes_ <= 8) {
+                    uint64_t ft_val = 0, or_val = 0, and_val = 0;
+                    switch (ft_bytes_) {
+                        case 2: {
+                            uint16_t a, b, c;
+                            memcpy(&a, ft, 2); memcpy(&b, or_p, 2); memcpy(&c, and_p, 2);
+                            ft_val = a; or_val = b; and_val = c; break;
+                        }
+                        case 4: {
+                            uint32_t a, b, c;
+                            memcpy(&a, ft, 4); memcpy(&b, or_p, 4); memcpy(&c, and_p, 4);
+                            ft_val = a; or_val = b; and_val = c; break;
+                        }
+                        case 8: {
+                            memcpy(&ft_val, ft, 8); memcpy(&or_val, or_p, 8); memcpy(&and_val, and_p, 8);
+                            break;
+                        }
+                        default: {
+                            memcpy(&ft_val, ft, ft_bytes_); memcpy(&or_val, or_p, ft_bytes_); memcpy(&and_val, and_p, ft_bytes_);
+                            break;
+                        }
+                    }
+                    or_pass  = (ft_val & or_val) != 0;
+                    and_fail = (~ft_val & and_val) != 0;
+
+                    if (!or_pass || and_fail) {
+                        term_pass = false;
+                        break;
+                    }
+                    continue;
+                }
+
+                #ifdef USE_SSE
+                size_t offset = 0;
+                for (; offset + 16 <= ft_bytes_; offset += 16) {
+                    __m128i v_ft  = _mm_loadu_si128((const __m128i*)(ft    + offset));
+                    __m128i v_or  = _mm_loadu_si128((const __m128i*)(or_p  + offset));
+                    __m128i v_and = _mm_loadu_si128((const __m128i*)(and_p + offset));
+
+                    // Existence: any bit set in (ft & or_bitmap)
+                    __m128i or_r = _mm_and_si128(v_ft, v_or);
+                    or_pass |= !_mm_testz_si128(or_r, or_r);
+
+                    // Superset: any bit set in (~ft & and_bitmap) means fail
+                    __m128i and_missing = _mm_andnot_si128(v_ft, v_and);
+                    if (!_mm_testz_si128(and_missing, and_missing)) {
+                        and_fail = true;
+                        break;
+                    }
+                }
+                // Tail bytes
+                if (!and_fail) {
+                    for (; offset < ft_bytes_; ++offset) {
+                        or_pass  |= ((ft[offset] & (unsigned char)or_p[offset]) != 0);
+                        if ((~ft[offset] & (unsigned char)and_p[offset]) != 0) {
+                            and_fail = true;
+                            break;
+                        }
+                    }
+                }
+                #else
+                for (size_t j = 0; j < ft_bytes_; ++j) {
+                    or_pass |= ((ft[j] & (unsigned char)or_p[j]) != 0);
+                    if ((~ft[j] & (unsigned char)and_p[j]) != 0) {
+                        and_fail = true;
+                        break;
+                    }
+                }
+                #endif
+
+                if (!or_pass || and_fail) {
+                    term_pass = false;
+                    break;
+                }
+            }
+            if (term_pass) return true;  // OR: any term passes
+        }
+        return false;
+    }
+
     void attr_check() const {
         // test
         for (size_t i = 0; i < cur_element_count; i++) {
@@ -1750,6 +1969,147 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
         return predicate_ft;
+    }
+
+    // ====================================================================
+    // build_dnf_predicate: convert user-facing DNF to internal representation
+    //
+    // dnf_raw[term][attr] = values:
+    //   numerical : [lo, hi] or [lo1,hi1, lo2,hi2, ...] for OR-merged ranges
+    //   categorical: [label1, label2, ...]
+    //   empty     : no constraint (skip)
+    //
+    // modes[term][attr] (optional, default = auto):
+    //   -1 = auto (numerical → existence, categorical → superset)
+    //    0 = existence  (ft & pred != 0)   — use for categorical OR
+    //    1 = superset   ((ft & pred) == pred)
+    // ====================================================================
+    DNFPredicate build_dnf_predicate(
+        const std::vector<std::vector<std::vector<int>>>& dnf_raw,
+        const std::vector<std::vector<int8_t>>& modes = {}
+    ) const {
+        int n_terms = static_cast<int>(dnf_raw.size());
+        if (n_terms > DNF_MAX_TERMS) {
+            throw std::runtime_error("DNF predicate exceeds maximum term count ("
+                + std::to_string(DNF_MAX_TERMS) + ")");
+        }
+        int n_attr = static_cast<int>(attr_type_.size());
+
+        DNFPredicate pred;
+        pred.num_terms      = n_terms;
+        pred.attr_count     = n_attr;
+        pred.ft_bytes       = ft_bytes_;
+        pred.term_ft_size   = size_per_ft_;
+        pred.term_pred_size = predicate_size_;
+
+        pred.or_bitmaps.resize(n_terms * size_per_ft_, 0);
+        pred.and_bitmaps.resize(n_terms * size_per_ft_, 0);
+        pred.attr_active.resize(n_terms * n_attr, 0);
+        pred.exact_preds.resize(n_terms * predicate_size_, 0);
+        pred.exact_modes.resize(n_terms * n_attr, -1);
+        pred.raw_ranges.resize(n_terms * n_attr);
+
+        for (int t = 0; t < n_terms; ++t) {
+            const auto& term = dnf_raw[t];
+            assert(static_cast<int>(term.size()) == n_attr);
+
+            char*   or_base   = pred.or_bitmaps.data()  + t * size_per_ft_;
+            char*   and_base  = pred.and_bitmaps.data() + t * size_per_ft_;
+            int8_t* act_base  = pred.attr_active.data() + t * n_attr;
+            int*    ex_base   = pred.exact_preds.data()  + t * predicate_size_;
+            int8_t* mode_base = pred.exact_modes.data()  + t * n_attr;
+
+            for (int i = 0; i < n_attr; ++i) {
+                const auto& vals = term[i];
+
+                // ------ determine check mode ------
+                int8_t cm;
+                if (!modes.empty() && modes[t][i] != -1)
+                    cm = modes[t][i];
+                else if (vals.empty())
+                    cm = -1;  // skip
+                else
+                    cm = (attr_type_[i] == 0) ? 0 : 1; // num→existence, cat→superset
+
+                mode_base[i] = cm;
+
+                if (cm == -1 || vals.empty()) {
+                    // Skip — leave bitmaps zero, active=0
+                    // Fill exact predicate with "no constraint" markers
+                    if (attr_type_[i] == 0) {
+                        ex_base[predicate_offset_[i]]   = -1;
+                        ex_base[predicate_offset_[i]+1] = -1;
+                    } else {
+                        for (int k = 0; k < cate_int_byte_; ++k)
+                            ex_base[predicate_offset_[i]+k] = (int)0xFFFFFFFF;
+                    }
+                    continue;
+                }
+
+                act_base[i] = 1;  // mark constrained
+
+                // ------ build FT bitmap ------
+                char ft_buf[256] = {};  // max 2048 bits, stack-allocated
+                assert(ft_bytes_ <= 256);
+
+                if (attr_type_[i] == 0) { // numerical — possibly multi-range
+                    int n_pairs = static_cast<int>(vals.size()) / 2;
+                    pred.raw_ranges[t * n_attr + i] = vals;  // store all [lo,hi,...] pairs
+                    for (int p = 0; p < n_pairs; ++p) {
+                        int lo = vals[p*2], hi = vals[p*2+1];
+                        int lo_slot = lower_bound(
+                            &counting_hash_table_mapping[i][0],
+                            counting_hash_table_mapping[i].size(), lo);
+                        if (lo_slot < 0) lo_slot = 0;
+                        int hi_slot = lower_bound(
+                            &counting_hash_table_mapping[i][0],
+                            counting_hash_table_mapping[i].size(), hi);
+                        for (int v = lo_slot; v < hi_slot; ++v) {
+                            int pos = v >> 3, bit = v & 7;
+                            if (pos < ft_bytes_) ft_buf[pos] |= (1 << bit);
+                        }
+                    }
+                    // Exact predicate: store all ranges sequentially
+                    // (first pair goes into the standard [lo,hi] slot)
+                    ex_base[predicate_offset_[i]]   = vals[0];
+                    ex_base[predicate_offset_[i]+1] = vals[1];
+                } else { // categorical
+                    for (int j = 0; j < static_cast<int>(vals.size()); ++j) {
+                        int val = vals[j];
+                        int slot = counting_hash_table_mapping[i][val];
+                        int pos = slot >> 3, bit = slot & 7;
+                        ft_buf[pos] |= (1 << bit);
+                    }
+                    // Exact predicate: bitmap of required labels
+                    for (int j = 0; j < static_cast<int>(vals.size()); ++j) {
+                        int val = vals[j];
+                        int bp = val >> 5, bi = val & 31;
+                        assert(bp < cate_int_byte_);
+                        ex_base[predicate_offset_[i]+bp] |= (1 << bi);
+                    }
+                }
+
+                // ------ place into or/and bitmaps ------
+                if (cm == 0) {
+                    // Existence: or_bitmap = ft_bits, and_bitmap stays zero
+                    memcpy(or_base + i * ft_bytes_, ft_buf, ft_bytes_);
+                } else {
+                    // Superset: and_bitmap = ft_bits, or_bitmap = all-ones
+                    // (or=all-ones ensures existence part is trivially true
+                    //  for valid edges that have ≥1 bit set in FT)
+                    memcpy(and_base + i * ft_bytes_, ft_buf, ft_bytes_);
+                    memset(or_base  + i * ft_bytes_, 0xFF, ft_bytes_);
+                }
+            }
+        }
+        return pred;
+    }
+
+    // Convenience: build DNF from a single AND term (backward compatible)
+    DNFPredicate build_single_predicate(
+        const std::vector<std::vector<int>>& raw_predicate
+    ) const {
+        return build_dnf_predicate({raw_predicate});
     }
 
     std::vector<std::vector<int>> get_raw_attr(tableint id) const {
@@ -2067,7 +2427,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         
 
 //                         if (bare_bone_search || 
-//                             (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id))))) {
+//                             !isMarkedDeleted(candidate_id)) {
 //                             // std::cout << "pushed to top candidates" << std::endl;
 //                             top_candidates.emplace(dist, candidate_id);
 //                             #ifdef DEBUG_SEARCH
@@ -2136,8 +2496,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t ef,
         size_t search_k,
         VisitedList *vl,
-        BaseFilterFunctor* isIdAllowed = nullptr,
-        BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
+        BaseSearchStopCondition<dist_t>* stop_condition = nullptr,
+        const DNFPredicate* dnf_pred = nullptr) const {
         vl_type *visited_array = vl->mass;
         vl_type visited_array_tag = vl->curV;
 
@@ -2180,9 +2540,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             visited_array[id] = visited_array_tag;
             visited++;
             candidate_set.emplace(-top_candidates_.top().first, id);
-            if (predicate_check(id, predicate)) {
+            if (dnf_pred ? predicate_check_dnf(id, *dnf_pred) : predicate_check(id, predicate)) {
                 top_candidates.emplace(top_candidates_.top());
-                // std::cout << " in top candidates" << std::endl;
             }
             if (candidate_set.size() >= ef_top_) {
                 // prevent candidate set from being too large
@@ -2262,35 +2621,35 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             not_nbrs_idx.clear();
             
             if (use_ft) {
-                std::vector<uint8_t> ft_predicate_result(size, 1);
-                // batched_nbr_ft_check_sse(current_node_id, size, ft_predicate.data(), ft_predicate_result);
-                for (size_t j = 1; j <= size; j++) {
-                    ft_predicate_result[j-1] = nbr_ft_check(current_node_id, j-1, ft_predicate.data());
-                }
-                for (size_t j = 1; j <= size; j++) {
-                    if (ft_predicate_result[j-1]) {
-                        nbrs.push_back(*(data + j)); // indicate filtered nbr
-                        // prefetch
-                        #ifdef USE_SSE
-                            _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);  // L1 prefetch
-                            // _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_ + offsetData_, _MM_HINT_T1); // L2 prefetch
-                            _mm_prefetch((char *) (visited_array + (*(data + j))), _MM_HINT_T0);  // L1 prefetch
-                            // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
-                        #endif
+                // Merged single-pass: FT check + neighbor partition (no heap alloc)
+                // dnf_pred dispatch hoisted out of per-neighbor loop
+                if (dnf_pred) {
+                    for (size_t j = 1; j <= size; j++) {
+                        tableint nbr_id = *(data + j);
+                        if (nbr_ft_check_dnf(current_node_id, j-1, *dnf_pred)) {
+                            nbrs.push_back(nbr_id);
+                            #ifdef USE_SSE
+                            _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                            _mm_prefetch((char *) (visited_array + nbr_id), _MM_HINT_T0);
+                            #endif
+                        } else if constexpr (use_two_hop) {
+                            not_nbrs.push_back(nbr_id);
+                            not_nbrs_idx.push_back(j);
+                        }
                     }
-                    else {
-                        not_nbrs.push_back(*(data + j));
-                        not_nbrs_idx.push_back(j);
-                        // #ifdef USE_SSE
-                        //     // if (not_nbrs.size() > 5 ) continue;
-                        //     _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_, _MM_HINT_T0); // L1 prefetch
-                        //     // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
-                        //     char* ft0 =
-                        //         data_level0_memory_
-                        //         + *(data + j) * size_data_per_element_
-                        //         + offsetNbrFt_;
-                        //     _mm_prefetch((char*)ft0, _MM_HINT_T0);
-                        // #endif
+                } else {
+                    for (size_t j = 1; j <= size; j++) {
+                        tableint nbr_id = *(data + j);
+                        if (nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
+                            nbrs.push_back(nbr_id);
+                            #ifdef USE_SSE
+                            _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                            _mm_prefetch((char *) (visited_array + nbr_id), _MM_HINT_T0);
+                            #endif
+                        } else if constexpr (use_two_hop) {
+                            not_nbrs.push_back(nbr_id);
+                            not_nbrs_idx.push_back(j);
+                        }
                     }
                 }
             }
@@ -2308,12 +2667,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             ft_passed += (size - nbrs.size());
 
             // double passed_ratio = double(size - nbrs.size()) / size;
-            int min_nbrs = two_hop_threshold * size;
+            // int min_nbrs = 10;
             // std::cout << "size:" << size << " ft nbrs size:" << nbrs.size() << " expected min nbrs:" << min_nbrs << std::endl;
             // std::vector<tableint> two_hop_candidates(256);
             if (use_two_hop) {
-                if (nbrs.size() < min_nbrs) {
-                    size_t extra_nbrs_needed = 10;
+                if (nbrs.size() < two_hop_threshold) {
+                    size_t extra_nbrs_needed = two_hop_threshold - nbrs.size();
                     for(int j = 0; j < std::min(not_nbrs.size(), extra_nbrs_needed); ++j){
                         nbrs.push_back(not_nbrs[j]);
                         _mm_prefetch(data_level0_memory_ + (not_nbrs[j]) * size_data_per_element_ + offsetData_, _MM_HINT_T0);  // L1 prefetch
@@ -2506,17 +2865,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                                         _MM_HINT_T0);  ////////////////////////
 #endif
 
-                        if (!predicate_check(candidate_id, predicate)) {
+                        if (!(dnf_pred ? predicate_check_dnf(candidate_id, *dnf_pred) : predicate_check(candidate_id, predicate))) {
                             passed++;
                             #ifdef DEBUG_SEARCH
                             std::cout << " predicate passed" << std::endl;
                             #endif
                             continue;
                         }
-                        
 
                         if (bare_bone_search || 
-                            (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id))))) {
+                            !isMarkedDeleted(candidate_id)) {
                             // std::cout << "pushed to top candidates" << std::endl;
                             top_candidates.emplace(dist, candidate_id);
                             #ifdef DEBUG_SEARCH
@@ -2591,7 +2949,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                              size_t& ef,
                              dist_t& lowerBound,
                              int& passed,
-                             size_t& search_k) const {
+                             size_t& search_k,
+                             const DNFPredicate* dnf_pred = nullptr) const {
         for (size_t idx = 0; idx < two_hop_candidates.size(); idx++) {
             tableint candidate_id = two_hop_candidates[idx];
             char *currObj1 = (getDataByInternalId(candidate_id));
@@ -2600,7 +2959,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             flag_consider_candidate = top_candidates.size() < ef || lowerBound > dist;
             if (flag_consider_candidate) {
                 candidate_set.emplace(-dist, candidate_id);
-                if (!predicate_check(candidate_id, predicate)) {
+                if (!(dnf_pred ? predicate_check_dnf(candidate_id, *dnf_pred) : predicate_check(candidate_id, predicate))) {
                     passed++;
                     continue;
                 }
@@ -2631,7 +2990,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         tableint ep_id,
         const void *data_point,
         size_t ef,
-        BaseFilterFunctor* isIdAllowed = nullptr,
         BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
         vl_type *visited_array = vl->mass;
@@ -2642,7 +3000,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         dist_t lowerBound;
         if (bare_bone_search || 
-            (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(ep_id))))) {
+            !isMarkedDeleted(ep_id)) {
             char* ep_data = getDataByInternalId(ep_id);
             dist_t dist = fstdistfunc_(data_point, ep_data, dist_func_param_);
             lowerBound = dist;
@@ -2730,7 +3088,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 #endif
 
                         if (bare_bone_search || 
-                            (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id))))) {
+                            !isMarkedDeleted(candidate_id)) {
                             top_candidates.emplace(dist, candidate_id);
                             if (!bare_bone_search && stop_condition) {
                                 stop_condition->add_point_to_result(getExternalLabel(candidate_id), currObj1, dist);
@@ -2850,6 +3208,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     int pruned_count{0};
     int attr_pruned_count{0};
     double heuristic_time{0.0};
+    bool build_stats_printed_{false};
     // #define DEBUG_BUILD
 
     bool cht_low_degree(int* cht, tableint src_id, tableint nbr_id, int return_list_size) {
@@ -3107,7 +3466,30 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return;
     }
 
-    int dominate_count{0};
+    long long dominate_count{0};
+    std::vector<int> node_dominate_count_; // accumulated domination events per node during construction
+
+    void print_build_stats() const {
+        if (cur_element_count == 0) return;
+
+        double total_degree = 0.0;
+        for (size_t i = 0; i < cur_element_count; i++) {
+            total_degree += getListCount(get_linklist0(i));
+        }
+
+        std::cout << "build stats: avg degree=" << (total_degree / cur_element_count)
+              << ", avg dominate size=" << (static_cast<double>(dominate_count) / static_cast<double>(cur_element_count))
+                  << std::endl;
+    }
+
+    void maybe_print_build_stats() {
+        if (build_stats_printed_) return;
+        if (cur_element_count == 0) return;
+        if (node_dominate_count_.empty()) return;
+
+        print_build_stats();
+        build_stats_printed_ = true;
+    }
 
 
     tableint mutuallyConnectNewElement(
@@ -3129,7 +3511,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         getNeighborsByHeuristic2(top_candidates, level==0 ? Mcurmax : M_, level==0, cur_c, &dominated_list);
 
         for(int i = 0; i < dominated_list.size(); i++) {
-            dominate_count += dominated_list[i].size();
+            dominate_count += static_cast<long long>(dominated_list[i].size());
         }
 
         // std::cout << "connecting for id " << cur_c << " at level " << level << " with " << top_candidates.size() << " candidates, pruned count: " << pruned_count << std::endl;
@@ -3143,7 +3525,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             top_candidates.pop();
         }
         std::reverse(selectedNeighbors.begin(), selectedNeighbors.end());
-        
+
+        // accumulate per-node domination events (dominated_list[i] was dominated by selectedNeighbors[i])
+        for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors.size(); i++) {
+            node_dominate_count_[selectedNeighbors[i]] += (int)dominated_list[i].size();
+        }
+
         // merge attr of dominated points to filter table of neighbors who domianate them
         // std::vector<std::vector<char>> new_fts; // filter tables of selected neighbors
         if (level == 0) {
@@ -3243,7 +3630,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     getNeighborsByHeuristic2(candidates, Mcurmax, level==0, selectedNeighbors[idx], &dominated_list);
 
                     for(int i = 0; i < dominated_list.size(); i++) {
-                        dominate_count += dominated_list[i].size();
+                        dominate_count += static_cast<long long>(dominated_list[i].size());
                     }
 
                     int indx = 0;
@@ -3256,6 +3643,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         indx++;
                     }
                     std::reverse(selectedNeighbors_other.begin(), selectedNeighbors_other.end());
+
+                    // accumulate per-node domination events for reverse connection update
+                    for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors_other.size(); i++) {
+                        node_dominate_count_[selectedNeighbors_other[i]] += (int)dominated_list[i].size();
+                    }
+
                     if (level == 0) {
                         update_nbr_ft(selectedNeighbors[idx], selectedNeighbors_other, dominated_list);
                     }
@@ -3310,6 +3703,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         linkLists_ = linkLists_new;
 
         max_elements_ = new_max_elements;
+        node_dominate_count_.resize(new_max_elements, 0);
     }
 
     size_t indexFileSize() const {
@@ -3340,6 +3734,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     void saveIndex(const std::string &location) {
+        maybe_print_build_stats();
+
         std::ofstream output(location, std::ios::binary);
         std::streampos position;
 
@@ -3433,7 +3829,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
 
-    void loadIndex(const std::string &location, SpaceInterface<dist_t> *s, size_t max_elements_i = 0) {
+    void loadIndex(const std::string &location, SpaceInterface<dist_t> *s, size_t max_elements_i = 0, bool dynamic = false) {
         #ifdef USE_SSE
             std::cout << "SSE is supported." << std::endl;
         #endif
@@ -3663,7 +4059,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         char *cur_ptr = load_buffer;
         for (size_t i = 0; i < cur_element_count; i++) {
-            // label_lookup_[getExternalLabel(i)] = i; // removed, so no longer support index update
+            if (dynamic) {
+                label_lookup_[getExternalLabel(i)] = i;
+            }
             unsigned int linkListSize;
             memcpy(&linkListSize, cur_ptr, sizeof(unsigned int));
             cur_ptr += sizeof(unsigned int);
@@ -3685,8 +4083,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (cur_ptr != load_buffer + remain) {
             throw std::runtime_error("Index corrupted: size mismatch");
         }
+        free(load_buffer);
 
-
+        if (dynamic) {
+            for (size_t i = 0; i < cur_element_count; i++) {
+                if (isMarkedDeleted(i)) {
+                    num_deleted_ += 1;
+                    if (allow_replace_deleted_) deleted_elements.insert(i);
+                }
+            }
+        }
 
         input.close();
 
@@ -4206,6 +4612,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         // std::cout << "construct nbr ft time: " << update_ft_time << std::endl;
 
+        // if (cur_element_count == max_elements_) {
+        //     maybe_print_build_stats();
+        // }
+
         return cur_c;
     }
 
@@ -4269,7 +4679,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     // searchKnn with two layers
 
     std::priority_queue<std::pair<dist_t, labeltype >>
-    searchKnn(const void *query_data, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const {
+    searchKnn(const void *query_data, size_t k) const {
         std::priority_queue<std::pair<dist_t, labeltype >> result;
         if (cur_element_count == 0) return result;
 
@@ -4280,14 +4690,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
-        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top_, isIdAllowed);
-        bool bare_bone_search = !num_deleted_ && !isIdAllowed;
+        top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_);
+        bool bare_bone_search = !num_deleted_;
         if (bare_bone_search) {
-            top_candidates = searchBaseLayerST<true>(
-                    top_layer_candidates, query_data, std::max(ef_, k), isIdAllowed);
+                top_candidates = searchBaseLayerST<true, true>(
+                    top_layer_candidates, query_data, std::max(ef_, k));
         } else {
-            top_candidates = searchBaseLayerST<false>(
-                    top_layer_candidates, query_data, std::max(ef_, k), isIdAllowed);
+                top_candidates = searchBaseLayerST<false, true>(
+                    top_layer_candidates, query_data, std::max(ef_, k));
         }
 
         while (top_candidates.size() > k) {
@@ -4381,8 +4791,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
 
+    // hybrid searchKnn with two layers
+    // predicate format:
+    //    predicate[i]: filtering restriction for attribute i
+    //      numerical:
+    //        predicate[i][0] <= value <= predicate[i][1]
+    //      categorical:
+    //        attr[item] contains all the predicate[i][:]
+    //    
     std::priority_queue<std::pair<dist_t, labeltype >>
-    hybridSearch(const void *query_data, std::vector<std::vector<int>> raw_predicate, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const {
+    hybridSearch(const void *query_data, std::vector<std::vector<int>> raw_predicate, size_t k) const {
         
         std::vector<int> predicate = predicate_translate(raw_predicate);
         std::vector<char> ft_predicate = predicate_to_ft(raw_predicate);
@@ -4596,7 +5014,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
-        top_layer_candidates = searchTopLayerST<true>(currObj, query_data, ef_top_ * 2, isIdAllowed);
+        top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_ * 2);
         
         // use ep as bottom layer ep
         // top_layer_candidates.emplace(curdist, currObj);
@@ -4616,33 +5034,31 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         vl_type visited_array_tag = vl->curV;
         if (bare_bone_search) {
             if (use_two_hop_ && use_ft_)
-                top_candidates = hybridSearchBaseLayerST<true, false, true, true>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            top_candidates = hybridSearchBaseLayerST<true, true, true, true>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
             else if (use_two_hop_ && !use_ft_)
-                top_candidates = hybridSearchBaseLayerST<true, false, true, false>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            top_candidates = hybridSearchBaseLayerST<true, true, true, false>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
             else if (!use_two_hop_ && use_ft_)
-                top_candidates = hybridSearchBaseLayerST<true, false, false, true>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            top_candidates = hybridSearchBaseLayerST<true, true, false, true>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
             else
-                top_candidates = hybridSearchBaseLayerST<true, false, false, false>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            top_candidates = hybridSearchBaseLayerST<true, true, false, false>(
+                top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
         } else {
             if (use_two_hop_ && use_ft_)
-                top_candidates = hybridSearchBaseLayerST<false, false, true, true>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            top_candidates = hybridSearchBaseLayerST<false, true, true, true>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
             else if (use_two_hop_ && !use_ft_)
-                top_candidates = hybridSearchBaseLayerST<false, false, true, false>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            top_candidates = hybridSearchBaseLayerST<false, true, true, false>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
             else if (!use_two_hop_ && use_ft_)
-                top_candidates = hybridSearchBaseLayerST<false, false, false, true>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            top_candidates = hybridSearchBaseLayerST<false, true, false, true>(
+                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
             else
-                top_candidates = hybridSearchBaseLayerST<false, false, false, false>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl, isIdAllowed);
+            top_candidates = hybridSearchBaseLayerST<false, true, false, false>(
+                top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
         }
-
-        // for each bucket, scan if CHT selectivity is smaller than threshold 2
         // for multi-attribute, CHT is unnecessary since we have scanned on btree with smallest sel
 
         // top vector id to bucket id
@@ -4786,12 +5202,93 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
+    // ====================================================================
+    // hybridSearchDNF: entry point for DNF predicate queries
+    //
+    // dnf_raw[term][attr] = values (same format as build_dnf_predicate)
+    // modes[term][attr] = check mode override (optional)
+    // ====================================================================
+    std::priority_queue<std::pair<dist_t, labeltype >>
+    hybridSearchDNF(
+        const void *query_data,
+        const std::vector<std::vector<std::vector<int>>>& dnf_raw,
+        const std::vector<std::vector<int8_t>>& modes,
+        size_t k) const {
+
+        DNFPredicate dnf_pred = build_dnf_predicate(dnf_raw, modes);
+        // (they won't be used when dnf_pred is provided)
+        std::vector<int> predicate(predicate_size_, 0);
+        std::vector<char> ft_predicate(size_per_ft_, 0);
+
+        std::priority_queue<std::pair<dist_t, labeltype >> result;
+        if (cur_element_count == 0) return result;
+
+        tableint currObj = enterpoint_node_;
+        dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
+
+        assert(maxlevel_ == 1);
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+
+        top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_ * 2);
+
+        bool bare_bone_search = true;
+        VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+
+        if (bare_bone_search) {
+            if (use_two_hop_ && use_ft_)
+                top_candidates = hybridSearchBaseLayerST<true, true, true, true>(
+                    top_layer_candidates, query_data, predicate, ft_predicate,
+                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+            else if (use_two_hop_ && !use_ft_)
+                top_candidates = hybridSearchBaseLayerST<true, true, true, false>(
+                    top_layer_candidates, query_data, predicate, ft_predicate,
+                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+            else if (!use_two_hop_ && use_ft_)
+                top_candidates = hybridSearchBaseLayerST<true, true, false, true>(
+                    top_layer_candidates, query_data, predicate, ft_predicate,
+                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+            else
+                top_candidates = hybridSearchBaseLayerST<true, true, false, false>(
+                    top_layer_candidates, query_data, predicate, ft_predicate,
+                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+        } else {
+            if (use_two_hop_ && use_ft_)
+                top_candidates = hybridSearchBaseLayerST<false, true, true, true>(
+                    top_layer_candidates, query_data, predicate, ft_predicate,
+                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+            else if (use_two_hop_ && !use_ft_)
+                top_candidates = hybridSearchBaseLayerST<false, true, true, false>(
+                    top_layer_candidates, query_data, predicate, ft_predicate,
+                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+            else if (!use_two_hop_ && use_ft_)
+                top_candidates = hybridSearchBaseLayerST<false, true, false, true>(
+                    top_layer_candidates, query_data, predicate, ft_predicate,
+                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+            else
+                top_candidates = hybridSearchBaseLayerST<false, true, false, false>(
+                    top_layer_candidates, query_data, predicate, ft_predicate,
+                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+        }
+
+        visited_list_pool_->releaseVisitedList(vl);
+
+        while (top_candidates.size() > k) {
+            top_candidates.pop();
+        }
+        while (top_candidates.size() > 0) {
+            std::pair<dist_t, tableint> rez = top_candidates.top();
+            result.push(std::pair<dist_t, labeltype>(rez.first, getExternalLabel(rez.second)));
+            top_candidates.pop();
+        }
+        return result;
+    }
+
 
     std::vector<std::pair<dist_t, labeltype >>
     searchStopConditionClosest(
         const void *query_data,
-        BaseSearchStopCondition<dist_t>& stop_condition,
-        BaseFilterFunctor* isIdAllowed = nullptr) const {
+        BaseSearchStopCondition<dist_t>& stop_condition) const {
         std::vector<std::pair<dist_t, labeltype >> result;
         if (cur_element_count == 0) return result;
 
@@ -4826,7 +5323,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
-        top_candidates = searchBaseLayerST<false>(currObj, query_data, 0, isIdAllowed, &stop_condition);
+        top_candidates = searchBaseLayerST<false, true>(currObj, query_data, 0, &stop_condition);
 
         size_t sz = top_candidates.size();
         result.resize(sz);

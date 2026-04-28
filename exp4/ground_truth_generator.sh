@@ -36,7 +36,6 @@ fi
 source ./conf.sh
 source ./navix_conf.sh
 
-threads=1
 
 echo "dataset: ${dataset}"
 echo "N: ${N}"

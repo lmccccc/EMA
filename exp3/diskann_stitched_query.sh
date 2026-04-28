@@ -1,5 +1,5 @@
 source ./conf.sh
-source ./diskann_conf.sh
+source ./diskann_stitched_conf.sh
 
 threads=1
 # --universal_label $universal_label \
@@ -12,7 +12,6 @@ echo "K:" $K
 echo "L:" $L_list
 echo "result save path: $diskann_result_path"
 echo "threads: $threads"
-
 ../../code/DiskANN/build/apps/search_memory_index  --data_type float \
                                         --dist_fn $metric \
                                         --index_path_prefix $diskann_index_prefix \
@@ -22,9 +21,10 @@ echo "threads: $threads"
                                         -K $K \
                                         -L $L_list \
                                         --result_path $diskann_result_path \
-                                        -T $threads \
+                                        --num_threads $threads \
                                         --query_size $query_size \
-                                        2>&1 | tee logs/diskann.log
+                                        2>&1 | tee logs/diskann_stitched.log
 
 
-python ../tests/extract_results.py "logs/diskann.log" $dataset $attr_type $query_sel $M "diskann" $K $query_predicate_file
+
+python ../tests/extract_results.py "logs/diskann_stitched.log" $dataset $attr_type $query_sel $M "diskann_stitched" $K $query_predicate_file

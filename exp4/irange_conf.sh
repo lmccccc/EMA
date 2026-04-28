@@ -45,7 +45,7 @@ if [ -e $dataset_bin_file ]; then
 else
     echo "convert fvecs to bin"
     # same file format used with DiskANN, so use it
-    ./../code/DiskANN/build/apps/utils/fvecs_to_bin float $dataset_file $dataset_bin_file
+    ./../../code/DiskANN/build/apps/utils/fvecs_to_bin float $dataset_file $dataset_bin_file
 fi
 
 if [ -e $query_bin_file ]; then
@@ -53,7 +53,7 @@ if [ -e $query_bin_file ]; then
 else
     echo "convert query vecs to bin"
     # same file format used with DiskANN, so use it
-    ./../code/DiskANN/build/apps/utils/fvecs_to_bin float $query_file $query_bin_file
+    ./../../code/DiskANN/build/apps/utils/fvecs_to_bin float $query_file $query_bin_file
 fi
 
 if [ -e $attr_bin_file ]; then
@@ -74,7 +74,7 @@ if [ -e $predicate_bin_file ]; then
     echo "query range bin file already exist"
 else
     echo "convert json query range to bin, N*2 inetger formated as left, right, left, right..."
-    python tests/qrange_json2bin.py $query_predicate_file $predicate_bin_file
+    python ../tests/qrange_json2bin.py $query_predicate_file $predicate_bin_file
 
     status=$?
     if [ $status -ne 0 ]; then
@@ -88,7 +88,7 @@ if [ -e $ground_truth_bin_file ]; then
     echo "groundtruth bin file already exist"
 else
     echo "convert json range query label to keyword txt"
-    python tests/gt_json2bin.py $ground_truth_file $ground_truth_bin_file $K
+    python ../tests/gt_json2bin.py $ground_truth_file $ground_truth_bin_file $K
 
     status=$?
     if [ $status -ne 0 ]; then

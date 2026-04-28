@@ -23,7 +23,7 @@ echo "metric: $metric"
 # echo "sel: $query_sel" >> logs.txt
 # echo "algo: irange" >> logs.txt
 
-../code/iRangeGraph/build/tests/search --data_path $dataset_bin_file\
+../../code/iRangeGraph/build/tests/search --data_path $dataset_bin_file\
                                 --query_path $query_bin_file \
                                 --attr_file $attr_bin_file \
                                 --range_saveprefix $predicate_bin_file \
@@ -39,4 +39,4 @@ echo "metric: $metric"
                                 --metric $metric  \
                                 2>&1 | tee logs/irange.log
 
-python tests/extract_results.py "logs/irange.log" $dataset $attr_type $query_sel $M "irange"
+python ../tests/extract_results.py "logs/irange.log" $dataset $attr_type $query_sel $M "irange"

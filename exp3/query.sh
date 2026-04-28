@@ -26,6 +26,7 @@ echo "query_path: $query_file"
 echo "attr_path: $dataset_attr_file"
 echo "qrange_path: $query_predicate_file"
 echo "gt_path: $ground_truth_file"
+echo "predicate_file: $query_predicate_file"
 echo "n_query_to_use: $query_size"
 echo "attr_type_list: $attr_type"
 echo "threads: $threads"
@@ -67,7 +68,7 @@ else
     echo "HashANN succeed."
 fi
 
-python ../tests/extract_results.py "logs/bfann.log" $dataset $attr_type $query_sel $M "bfann"
+python ../tests/extract_results.py "logs/bfann.log" $dataset $attr_type $query_sel $M "bfann" $K $query_predicate_file
 
 # status=$?
 # if [ $status -eq 0 ]; then

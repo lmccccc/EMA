@@ -1,10 +1,10 @@
 source ./conf.sh
 source ./milvus_conf.sh
 
-# echo "dataset: $dataset" >> logs.txt
-# echo "attr: $attr_type" >> logs.txt
-# echo "sel: $query_sel" >> logs.txt
-# echo "algo: milvus" >> logs.txt
+echo "dataset: $dataset" >> logs.txt
+echo "attr: $attr_type" >> logs.txt
+echo "sel: $query_sel" >> logs.txt
+echo "algo: milvus" >> logs.txt
 
 python -u ../tests/milvus_hnsw_index.py --dataset_file ${dataset_file} \
                              --d ${dim} \
@@ -25,4 +25,4 @@ python -u ../tests/milvus_hnsw_index.py --dataset_file ${dataset_file} \
                              --ef_search ${ef_search_list} \
                              2>&1 | tee logs/milvus.log
 
-python ../tests/extract_results.py "logs/milvus.log" $dataset $attr_type $query_sel $M "milvus"
+python ../tests/extract_results.py "logs/milvus.log" $dataset $attr_type $query_sel $M "milvus" $K $query_predicate_file

@@ -1,5 +1,9 @@
 #! /bin/bash
 
+# Workaround: pybind11 large nested vector conversion can trigger
+# glibc false-positive heap corruption detection at N>=1M
+export MALLOC_CHECK_=3
+
 source ./conf.sh
 
 # check files exist
@@ -35,6 +39,7 @@ echo "ef_search: $ef_search_list"
 
 if [ -f $hashann_index_file ]; then
     echo "index file already exist"
+    ls -lh $hashann_index_file
     exit 0
 fi
 

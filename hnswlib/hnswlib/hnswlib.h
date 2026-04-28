@@ -124,13 +124,6 @@ static bool AVX512Capable() {
 namespace hnswlib {
 typedef size_t labeltype;
 
-// This can be extended to store state for filtering (e.g. from a std::set)
-class BaseFilterFunctor {
- public:
-    virtual bool operator()(hnswlib::labeltype id) { return true; }
-    virtual ~BaseFilterFunctor() {};
-};
-
 template<typename dist_t>
 class BaseSearchStopCondition {
  public:
@@ -189,11 +182,11 @@ class AlgorithmInterface {
     virtual void addPoint(const void *datapoint, labeltype label, bool replace_deleted = false, int level_=-1) = 0;
 
     virtual std::priority_queue<std::pair<dist_t, labeltype>>
-        searchKnn(const void*, size_t, BaseFilterFunctor* isIdAllowed = nullptr) const = 0;
+        searchKnn(const void*, size_t) const = 0;
 
     // Return k nearest neighbor in the order of closer fist
     virtual std::vector<std::pair<dist_t, labeltype>>
-        searchKnnCloserFirst(const void* query_data, size_t k, BaseFilterFunctor* isIdAllowed = nullptr) const;
+        searchKnnCloserFirst(const void* query_data, size_t k) const;
 
     virtual void saveIndex(const std::string &location) = 0;
     virtual ~AlgorithmInterface(){
@@ -202,12 +195,11 @@ class AlgorithmInterface {
 
 template<typename dist_t>
 std::vector<std::pair<dist_t, labeltype>>
-AlgorithmInterface<dist_t>::searchKnnCloserFirst(const void* query_data, size_t k,
-                                                 BaseFilterFunctor* isIdAllowed) const {
+AlgorithmInterface<dist_t>::searchKnnCloserFirst(const void* query_data, size_t k) const {
     std::vector<std::pair<dist_t, labeltype>> result;
 
     // here searchKnn returns the result in the order of further first
-    auto ret = searchKnn(query_data, k, isIdAllowed);
+    auto ret = searchKnn(query_data, k);
     {
         size_t sz = ret.size();
         result.resize(sz);

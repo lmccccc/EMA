@@ -56,4 +56,4 @@ echo "test query size: ${test_query_size}"
                                 $test_query_size \
                                 2>&1 | tee logs/acorn.log
                                 
-python ../tests/extract_results.py "logs/acorn.log" $dataset $attr_type $query_sel $M "acorn"
+python ../tests/extract_results.py "logs/acorn.log" $dataset $attr_type $query_sel $M "acorn" $K $query_predicate_file

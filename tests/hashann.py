@@ -3,9 +3,13 @@
 import hashannlib
 import time
 import os
-import faiss
 import numpy as np
 import time 
+
+try:
+    import faiss
+except (ImportError, AttributeError):
+    faiss = None
 
 class HashANN:
     # NSW with filtering table, B+tree, cluster, pq entry points, counting hash table
@@ -155,6 +159,10 @@ class HashANN:
 
     def hybrid_search(self, query, predicate):
         return self.index.hybrid_knn_query(query, predicate, self.k, num_threads=1)
+
+    def hybrid_search_dnf(self, query, dnf_predicate, check_modes=None):
+        modes = check_modes if check_modes else []
+        return self.index.hybrid_knn_query_dnf(query, dnf_predicate, modes, self.k, num_threads=1)
         
 
     # def build_or_load_index(self, params, base_scalars, attr, index_save_path, threads: int, name: str = "NSW"):

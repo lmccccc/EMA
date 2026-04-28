@@ -4,7 +4,7 @@ algo=DiskANN_Stitched
 alpha=1.2
 Stitched_R=80
 
-diskann_root="${index_root}/diskann/"
+diskann_root="${index_root}/diskann_stitched/"
 diskann_index_root="${diskann_root}/index/index_diskann_${attr_index_type}_M${M}_efc${ef_construction}/"
 diskann_index_prefix="${diskann_index_root}index_"
 diskann_result_root="${diskann_root}/result/"
@@ -31,14 +31,14 @@ if [ -e $dataset_bin_file ]; then
     echo "dataset bin already exist at $dataset_bin_file"
 else
     echo "convert base vecs to bin"
-    ./../../code/DiskANN/build/apps/utils/fvecs_to_bin float $dataset_file $dataset_bin_file
+    ./../../DiskANN/build/apps/utils/fvecs_to_bin float $dataset_file $dataset_bin_file
 fi
 
 if [ -e $query_bin_file ]; then
     echo "query bin already exist at $query_bin_file"
 else
     echo "convert query vecs to bin"
-    ./../../code/DiskANN/build/apps/utils/fvecs_to_bin float $query_file $query_bin_file
+    ./../../DiskANN/build/apps/utils/fvecs_to_bin float $query_file $query_bin_file
 fi
 
 if [ -e $label_file ]; then

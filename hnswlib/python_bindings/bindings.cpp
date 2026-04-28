@@ -1204,6 +1204,49 @@ class Index {
     size_t getCurrentCount() const {
         return appr_alg->cur_element_count;
     }
+
+
+    void setRepairThreshold(double threshold) {
+        appr_alg->setRepairThreshold(threshold);
+    }
+
+    py::dict getRepairCandidates() const {
+        auto candidates = appr_alg->getRepairCandidates();
+        py::dict result;
+        for (auto& [id, ratio] : candidates) {
+            result[py::int_(id)] = ratio;
+        }
+        return result;
+    }
+
+    py::dict popRepairCandidates() {
+        auto candidates = appr_alg->popRepairCandidates();
+        py::dict result;
+        for (auto& [id, ratio] : candidates) {
+            result[py::int_(id)] = ratio;
+        }
+        return result;
+    }
+
+    void clearRepairCandidates() {
+        appr_alg->clearRepairCandidates();
+    }
+
+    size_t repairCandidatesSize() const {
+        return appr_alg->repairCandidatesSize();
+    }
+
+    bool repairNode(size_t internal_id) {
+        return appr_alg->repairNode(static_cast<hnswlib::tableint>(internal_id));
+    }
+
+    size_t repairCandidateNodes() {
+        return appr_alg->repairCandidates();
+    }
+
+    size_t rebuildGraph() {
+        return appr_alg->rebuildGraph();
+    }
 };
 
 template<typename dist_t, typename data_t = float>
@@ -2055,6 +2098,14 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("resize_index", &Index<float>::resizeIndex, py::arg("new_size"))
         .def("get_max_elements", &Index<float>::getMaxElements)
         .def("get_current_count", &Index<float>::getCurrentCount)
+        .def("set_repair_threshold", &Index<float>::setRepairThreshold, py::arg("threshold"))
+        .def("get_repair_candidates", &Index<float>::getRepairCandidates)
+        .def("pop_repair_candidates", &Index<float>::popRepairCandidates)
+        .def("clear_repair_candidates", &Index<float>::clearRepairCandidates)
+        .def("repair_candidates_size", &Index<float>::repairCandidatesSize)
+        .def("repair_node", &Index<float>::repairNode, py::arg("internal_id"))
+        .def("repair_candidate_nodes", &Index<float>::repairCandidateNodes)
+        .def("rebuild_graph", &Index<float>::rebuildGraph)
         .def_readonly("space", &Index<float>::space_name)
         .def_readonly("dim", &Index<float>::dim)
         .def_readwrite("num_threads", &Index<float>::num_threads_default)

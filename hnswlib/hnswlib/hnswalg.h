@@ -112,6 +112,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::mutex deleted_elements_lock;  // lock for deleted_elements
     std::unordered_set<tableint> deleted_elements;  // contains internal ids of deleted elements
 
+    // Repair candidate tracking: nodes with high dead-neighbor ratio detected during search
+    double repair_dead_ratio_threshold_{0.1};  // report nodes with ≥10% deleted neighbors
+    mutable std::mutex repair_candidates_lock_;
+    mutable std::unordered_map<tableint, float> repair_candidates_;  // node_id → dead_ratio
+
     // entry points (items at 2 layer)
     std::vector<tableint> ep_ids_;
 
@@ -2666,6 +2671,24 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             ft_deg += nbrs.size();
             ft_passed += (size - nbrs.size());
 
+            // Repair candidate detection: count deleted neighbors (read-only, keeps const)
+            if (num_deleted_.load(std::memory_order_relaxed) > 0 && size > 0) {
+                int dead_count = 0;
+                for (size_t j = 1; j <= size; j++) {
+                    if (isMarkedDeleted(*(data + j))) dead_count++;
+                }
+                if (dead_count > 0) {
+                    float dead_ratio = static_cast<float>(dead_count) / size;
+                    if (dead_ratio >= repair_dead_ratio_threshold_) {
+                        std::lock_guard<std::mutex> lock(repair_candidates_lock_);
+                        auto it = repair_candidates_.find(current_node_id);
+                        if (it == repair_candidates_.end() || it->second < dead_ratio) {
+                            repair_candidates_[current_node_id] = dead_ratio;
+                        }
+                    }
+                }
+            }
+
             // double passed_ratio = double(size - nbrs.size()) / size;
             // int min_nbrs = 10;
             // std::cout << "size:" << size << " ft nbrs size:" << nbrs.size() << " expected min nbrs:" << min_nbrs << std::endl;
@@ -3706,6 +3729,217 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         node_dominate_count_.resize(new_max_elements, 0);
     }
 
+
+    /*
+     * Repair a single node: re-search neighbors (skipping deleted nodes)
+     * and reconnect via mutuallyConnectNewElement (isUpdate=true).
+     * This rebuilds out-edges, FT, and updates reverse edges.
+     * Returns true if the node was successfully repaired.
+     */
+    bool repairNode(tableint internal_id) {
+        if (internal_id >= cur_element_count) return false;
+        if (isMarkedDeleted(internal_id)) return false;
+
+        const void* data_point = getDataByInternalId(internal_id);
+
+        // Search for nearest non-deleted neighbors from the entry point
+        // searchBaseLayer already skips deleted nodes in top_candidates
+        std::priority_queue<std::pair<dist_t, tableint>,
+                            std::vector<std::pair<dist_t, tableint>>,
+                            CompareByFirst>
+            top_candidates = searchBaseLayer(enterpoint_node_, data_point, 0);
+
+        // Remove self from candidates
+        std::priority_queue<std::pair<dist_t, tableint>,
+                            std::vector<std::pair<dist_t, tableint>>,
+                            CompareByFirst> filtered;
+        while (!top_candidates.empty()) {
+            auto [dist, id] = top_candidates.top();
+            top_candidates.pop();
+            if (id != internal_id) {
+                filtered.emplace(dist, id);
+            }
+        }
+
+        if (filtered.empty()) return false;
+
+        // Reconnect: isUpdate=true allows overwriting existing edges
+        mutuallyConnectNewElement(data_point, internal_id, filtered, 0, true);
+        return true;
+    }
+
+
+    /*
+     * Batch repair: process all current repair candidates.
+     * For each candidate, re-search and reconnect edges (level 0 only).
+     * Returns the number of nodes successfully repaired.
+     */
+    size_t repairCandidates() {
+        auto candidates = popRepairCandidates();
+        size_t repaired = 0;
+        for (auto& [node_id, dead_ratio] : candidates) {
+            if (repairNode(node_id)) {
+                repaired++;
+            }
+        }
+        return repaired;
+    }
+
+
+    /*
+     * Global graph rebuild: zero all edges & FT, then re-insert all live nodes.
+     * Deleted nodes are truly removed (compacted out).
+     * counting_hash_table_mapping (FT codebook) is preserved.
+     * Returns the number of live nodes after rebuild.
+     *
+     * NOT thread-safe — caller must ensure exclusive access.
+     */
+    size_t rebuildGraph() {
+        size_t N = cur_element_count;
+        if (N == 0) return 0;
+
+        // --- Step 1: collect live nodes ---
+        struct NodeInfo {
+            tableint old_id;
+            labeltype label;
+            int level;
+            std::vector<char> data;   // vector data
+            std::vector<int> attr;    // raw attr bytes
+        };
+        std::vector<NodeInfo> live_nodes;
+        live_nodes.reserve(N);
+
+        for (tableint i = 0; i < N; i++) {
+            if (isMarkedDeleted(i)) continue;
+            NodeInfo ni;
+            ni.old_id = i;
+            ni.label = getExternalLabel(i);
+            ni.level = element_levels_[i];
+            ni.data.resize(data_size_);
+            memcpy(ni.data.data(), getDataByInternalId(i), data_size_);
+            int attr_ints = attr_size_per_item_;
+            ni.attr.resize(attr_ints);
+            int* attr_src = (int*)(data_level0_memory_ + i * size_data_per_element_ + offsetAttr_);
+            memcpy(ni.attr.data(), attr_src, attr_ints * sizeof(int));
+            live_nodes.push_back(std::move(ni));
+        }
+
+        size_t live_count = live_nodes.size();
+
+        // --- Step 2: zero all level-0 memory ---
+        memset(data_level0_memory_, 0, max_elements_ * size_data_per_element_);
+
+        // --- Step 3: free upper-layer link lists ---
+        for (size_t i = 0; i < N; i++) {
+            if (linkLists_[i]) {
+                free(linkLists_[i]);
+                linkLists_[i] = nullptr;
+            }
+        }
+
+        // --- Step 4: reset all graph state ---
+        cur_element_count = 0;
+        num_deleted_ = 0;
+        label_lookup_.clear();
+        deleted_elements.clear();
+        enterpoint_node_ = -1;
+        maxlevel_ = -1;
+        clearRepairCandidates();
+        dominate_count = 0;
+        build_stats_printed_ = false;
+
+        // Clear auxiliary ID-based structures (stale after compaction)
+        ep_ids_.clear();
+        bucket_data_.clear();
+        bucket_offsets_.clear();
+        id_to_buckets_.clear();
+        bucket_size_ = 0;
+        btrees.clear();
+        ivf.clear();
+        if (counting_hash_table) {
+            delete[] counting_hash_table;
+            counting_hash_table = nullptr;
+        }
+
+        std::fill(element_levels_.begin(), element_levels_.end(), 0);
+        std::fill(node_dominate_count_.begin(), node_dominate_count_.end(), 0);
+
+        if (live_count == 0) return 0;
+
+        // --- Step 5 & 6: re-insert each live node ---
+        for (size_t idx = 0; idx < live_count; idx++) {
+            auto& ni = live_nodes[idx];
+            tableint cur_c = cur_element_count;
+            cur_element_count++;
+
+            label_lookup_[ni.label] = cur_c;
+            element_levels_[cur_c] = ni.level;
+
+            // Write data, label, attr into compacted position
+            memcpy(getDataByInternalId(cur_c), ni.data.data(), data_size_);
+            memcpy(getExternalLabeLp(cur_c), &ni.label, sizeof(labeltype));
+            int* attr_dst = (int*)(data_level0_memory_ + cur_c * size_data_per_element_ + offsetAttr_);
+            memcpy(attr_dst, ni.attr.data(), ni.attr.size() * sizeof(int));
+
+            // Allocate upper layer if needed
+            if (ni.level > 0) {
+                linkLists_[cur_c] = (char*) malloc(size_links_per_element_ * ni.level + 1);
+                if (!linkLists_[cur_c])
+                    throw std::runtime_error("rebuildGraph: failed to allocate upper layer link list");
+                memset(linkLists_[cur_c], 0, size_links_per_element_ * ni.level + 1);
+            }
+
+            // First node: just set as entry point, no edges to build
+            if (cur_c == 0) {
+                enterpoint_node_ = 0;
+                maxlevel_ = ni.level;
+                continue;
+            }
+
+            // Snapshot current state before insertion (mirrors addPoint logic)
+            int maxlevelcopy = maxlevel_;
+            tableint currObj = enterpoint_node_;
+            const void* data_point = getDataByInternalId(cur_c);
+
+            // Greedy descent through upper layers (only if cur node's level < current max)
+            if (ni.level < maxlevelcopy) {
+                dist_t curdist = fstdistfunc_(data_point, getDataByInternalId(currObj), dist_func_param_);
+                for (int lev = maxlevelcopy; lev > ni.level; lev--) {
+                    bool changed = true;
+                    while (changed) {
+                        changed = false;
+                        unsigned int* data = get_linklist(currObj, lev);
+                        int sz = getListCount(data);
+                        tableint* datal = (tableint*)(data + 1);
+                        for (int j = 0; j < sz; j++) {
+                            dist_t d = fstdistfunc_(data_point, getDataByInternalId(datal[j]), dist_func_param_);
+                            if (d < curdist) {
+                                curdist = d;
+                                currObj = datal[j];
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Connect at each level (search + mutual connect)
+            for (int lev = std::min(ni.level, maxlevelcopy); lev >= 0; lev--) {
+                auto top_candidates = searchBaseLayer(currObj, data_point, lev);
+                currObj = mutuallyConnectNewElement(data_point, cur_c, top_candidates, lev, false);
+            }
+
+            // Update entrypoint AFTER insertion (fixes higher-level race)
+            if (ni.level > maxlevelcopy) {
+                enterpoint_node_ = cur_c;
+                maxlevel_ = ni.level;
+            }
+        }
+
+        return live_count;
+    }
+
+
     size_t indexFileSize() const {
         size_t size = 0;
         size += sizeof(offsetLevel0_);
@@ -4212,6 +4446,39 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     bool isMarkedDeleted(tableint internalId) const {
         unsigned char *ll_cur = ((unsigned char*)get_linklist0(internalId)) + 2;
         return *ll_cur & DELETE_MARK;
+    }
+
+
+    /*
+     * Repair candidate tracking API.
+     * During search, nodes with ≥ repair_dead_ratio_threshold_ fraction of
+     * deleted neighbors are recorded (mutable, lock-protected, keeps search const).
+     * Caller retrieves and decides: local repairNodes() or global rebuild.
+     */
+    void setRepairThreshold(double threshold) {
+        repair_dead_ratio_threshold_ = threshold;
+    }
+
+    std::unordered_map<tableint, float> getRepairCandidates() const {
+        std::lock_guard<std::mutex> lock(repair_candidates_lock_);
+        return repair_candidates_;
+    }
+
+    std::unordered_map<tableint, float> popRepairCandidates() {
+        std::lock_guard<std::mutex> lock(repair_candidates_lock_);
+        std::unordered_map<tableint, float> result;
+        result.swap(repair_candidates_);
+        return result;
+    }
+
+    void clearRepairCandidates() {
+        std::lock_guard<std::mutex> lock(repair_candidates_lock_);
+        repair_candidates_.clear();
+    }
+
+    size_t repairCandidatesSize() const {
+        std::lock_guard<std::mutex> lock(repair_candidates_lock_);
+        return repair_candidates_.size();
     }
 
 

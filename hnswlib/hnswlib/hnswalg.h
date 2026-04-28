@@ -542,20 +542,22 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // init attr space
         init_attr_space();
 
-        // per element: links(maxM0*4 + 4) + data_size_ + label(4) + filter table * attr size + padding + attr(attr_size * 4)
+        // per element: links(maxM0*4 + 4) + data_size_ + label(4) + node FT (size_per_ft_) + padding + attr(attr_size * 4)
         size_links_level0_ = maxM0_ * sizeof(tableint)+ sizeof(linklistsizeint);
         size_per_ft_ = ft_bytes_ * attr_type_.size();
 
         // attr is int*, padding the start position to 4 byte alignment
-        padding = sizeof(int) - (size_links_level0_ % sizeof(int));
+        // Node-level FT: one FT per node (not per edge)
+        size_t ft_total = size_per_ft_;  // single node FT
+        padding = sizeof(int) - ((size_links_level0_ + data_size_ + sizeof(labeltype) + ft_total) % sizeof(int));
         if (padding == sizeof(int)) padding = 0;
-        size_data_per_element_ = size_links_level0_ + data_size_ + sizeof(labeltype) + size_per_ft_* maxM0_ + padding + attr_size_per_item_ * sizeof(int);
+        size_data_per_element_ = size_links_level0_ + data_size_ + sizeof(labeltype) + ft_total + padding + attr_size_per_item_ * sizeof(int);
         nbr_size_per_element = size_links_level0_ + data_size_ + sizeof(labeltype);
         offsetData_ = size_links_level0_;
         label_offset_ = size_links_level0_ + data_size_;
         ft_offset_ = size_links_level0_ + data_size_ + sizeof(labeltype);
-        offsetNbrFt_ = ft_offset_;
-        offsetAttr_ = size_links_level0_ + data_size_ + sizeof(labeltype) + size_per_ft_ * maxM0_ + padding;
+        offsetNbrFt_ = ft_offset_;  // kept for serialization compat field name
+        offsetAttr_ = size_links_level0_ + data_size_ + sizeof(labeltype) + ft_total + padding;
         offsetLevel0_ = 0;
         
         data_level0_memory_ = (char *) malloc(max_elements_ * size_data_per_element_);
@@ -830,11 +832,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     
     
-    inline unsigned char* nbr_ft_at(tableint internal_id, int nbr_idx, int attr_idx=0) const {
-        // int* size = get_linklist0(internal_id);
-        // assert(nbr_idx < getListCount((linklistsizeint*)size));
-        return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + offsetNbrFt_ + nbr_idx * size_per_ft_ + attr_idx * ft_bytes_);
+    // Node-level FT: single FT per node (not per edge)
+    inline unsigned char* node_ft_at(tableint node_id, int attr_idx=0) const {
+        return (unsigned char *) (data_level0_memory_ + node_id * size_data_per_element_ + ft_offset_ + attr_idx * ft_bytes_);
     }
+
+    // Legacy edge-level accessor (kept for reference, not used)
+    // inline unsigned char* nbr_ft_at(tableint internal_id, int nbr_idx, int attr_idx=0) const {
+    //     return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + offsetNbrFt_ + nbr_idx * size_per_ft_ + attr_idx * ft_bytes_);
+    // }
 
     // inline unsigned char *getFilterTable(tableint internal_id) const {
     //     return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + ft_offset_);
@@ -1436,9 +1442,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 #endif
 
 
-    inline bool nbr_ft_check(tableint id, int nbr_idx, char* mapped_predicate) const {
+    inline bool node_ft_check(tableint nbr_id, char* mapped_predicate) const {
         for(int i = 0; i < attr_type_.size(); ++i){
-            unsigned char* ft = nbr_ft_at(id, nbr_idx, i);
+            unsigned char* ft = node_ft_at(nbr_id, i);
             const char* pred = mapped_predicate + i * ft_bytes_;
 
             // Fast scalar path for small FT (16/32/64 bit)
@@ -1525,6 +1531,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     
+    // Edge-level batched FT check — disabled for node-level FT
+    /*
     inline void batched_nbr_ft_check_sse(const tableint& id, const int& size, char* mapped_predicate, std::vector<uint8_t>& res) const {
         
         #ifdef USE_SSE
@@ -1671,11 +1679,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         
         return;
     }
+    */
 
-    inline bool nbr_ft_check_multi_or(tableint id, int nbr_idx, char* mapped_predicate) const {
+    inline bool node_ft_check_multi_or(tableint nbr_id, char* mapped_predicate) const {
         assert(attr_type_.size() > 1); // only one attribute is supported in multi-or query
         for(int i = 0; i < attr_type_.size(); ++i){
-            unsigned char* ft = nbr_ft_at(id, nbr_idx, i);
+            unsigned char* ft = node_ft_at(nbr_id, i);
             #ifdef USE_SSE
             size_t offset = 0;
             if (attr_type_[i] == 0) {  // numerical: exists-anywhere
@@ -1767,7 +1776,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     // ====================================================================
-    // nbr_ft_check_dnf: branchless two-bitmap FT check for DNF predicates
+    // node_ft_check_dnf: branchless two-bitmap FT check for DNF predicates
     //
     // Per attribute, two checks run unconditionally (no attr_type_ branch):
     //   1. Existence: (ft & or_bitmap) != 0
@@ -1777,7 +1786,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     // Outer loop: OR over DNF terms (short-circuit on first pass)
     // Inner loop: AND over constrained attributes (short-circuit on fail)
     // ====================================================================
-    inline bool nbr_ft_check_dnf(tableint id, int nbr_idx,
+    inline bool node_ft_check_dnf(tableint nbr_id,
                                   const DNFPredicate& pred) const {
         for (int t = 0; t < pred.num_terms; ++t) {
             const char*   or_pred = pred.or_bitmaps.data()  + t * pred.term_ft_size;
@@ -1788,7 +1797,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             for (int i = 0; i < pred.attr_count; ++i) {
                 if (!active[i]) continue;  // unconstrained — skip
 
-                unsigned char* ft   = nbr_ft_at(id, nbr_idx, i);
+                unsigned char* ft   = node_ft_at(nbr_id, i);
                 const char* or_p    = or_pred  + i * ft_bytes_;
                 const char* and_p   = and_pred + i * ft_bytes_;
 
@@ -2595,19 +2604,19 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
             tableint current_node_id = current_node_pair.second;
 
+            int *data = (int *) get_linklist0(current_node_id);
+            size_t size = getListCount((linklistsizeint*)data);
+
             #ifdef USE_SSE
-            char* ft0 =
-                data_level0_memory_
-                + current_node_id * size_data_per_element_
-                + offsetNbrFt_;
-            _mm_prefetch((char*)ft0, _MM_HINT_T0);
+            // Node-level FT: prefetch first few neighbors' FT blocks
+            for (size_t pf = 1; pf <= std::min((size_t)4, size); pf++) {
+                tableint pf_id = *(data + pf);
+                _mm_prefetch(data_level0_memory_ + pf_id * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
+            }
             #endif
             #ifdef DEBUG_SEARCH
             std::cout << "round " << round << " checking node " << current_node_id << " candidate dist " << candidate_dist << " lower bound " << lowerBound << std::endl;
             #endif
-
-            int *data = (int *) get_linklist0(current_node_id);
-            size_t size = getListCount((linklistsizeint*)data);
 //                bool cur_node_deleted = isMarkedDeleted(current_node_id);
             if (collect_metrics) {
                 metric_hops++;
@@ -2626,12 +2635,17 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             not_nbrs_idx.clear();
             
             if (use_ft) {
-                // Merged single-pass: FT check + neighbor partition (no heap alloc)
-                // dnf_pred dispatch hoisted out of per-neighbor loop
+                // Node-level FT: check neighbor's own FT (not edge FT)
                 if (dnf_pred) {
                     for (size_t j = 1; j <= size; j++) {
                         tableint nbr_id = *(data + j);
-                        if (nbr_ft_check_dnf(current_node_id, j-1, *dnf_pred)) {
+                        #ifdef USE_SSE
+                        // prefetch-ahead: FT of neighbor a few positions later
+                        if (j + 4 <= size) {
+                            _mm_prefetch(data_level0_memory_ + *(data + j + 4) * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
+                        }
+                        #endif
+                        if (node_ft_check_dnf(nbr_id, *dnf_pred)) {
                             nbrs.push_back(nbr_id);
                             #ifdef USE_SSE
                             _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
@@ -2645,7 +2659,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 } else {
                     for (size_t j = 1; j <= size; j++) {
                         tableint nbr_id = *(data + j);
-                        if (nbr_ft_check(current_node_id, j-1, ft_predicate.data())) {
+                        #ifdef USE_SSE
+                        if (j + 4 <= size) {
+                            _mm_prefetch(data_level0_memory_ + *(data + j + 4) * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
+                        }
+                        #endif
+                        if (node_ft_check(nbr_id, ft_predicate.data())) {
                             nbrs.push_back(nbr_id);
                             #ifdef USE_SSE
                             _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
@@ -3399,95 +3418,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
     }
 
+    // Node-level FT: hash the node's own attributes into its FT slot
+    void update_node_ft(tableint node_id) {
+        unsigned char* ft = node_ft_at(node_id);
+        memset(ft, 0, size_per_ft_);
+        updateft(ft, node_id);
+    }
+
     
     double update_ft_time{0.0};
 
+    // Edge-level update_nbr_ft — replaced by node-level update_node_ft
+    // Kept commented out for reference
+    /*
     void update_nbr_ft(tableint id, std::vector<tableint>& selectedNeighbors, std::vector<std::vector<tableint>>& dominated_list) {
-        // std::cout << "updating filter tables for " << selectedNeighbors.size() << " neighbors for id " << id << std::endl;
-        
-
-        // start time
-        auto start = std::chrono::high_resolution_clock::now();
-
-        std::vector<std::vector<unsigned char>> new_fts; // filter tables of selected neighbors
-        new_fts.resize(selectedNeighbors.size(), std::vector<unsigned char>(size_per_ft_, 0));
-        linklistsizeint *cur_nbrs = get_linklist0(id);               // nbr info of current point
-
-        // initialize new ft.  With old ft if the neighbor was an old neighbor
-        unsigned short int ori_nbr_size = getListCount(cur_nbrs);    // >0 if not first insert
-        // std::cout << "original nbr size: " << ori_nbr_size << std::endl;
-        tableint *nbr = (tableint *)(cur_nbrs + 1);
-
-        // copy old ft to new ft
-        for (size_t i = 0; i < selectedNeighbors.size(); i++) {         // for each new neighbor
-            bool found = false;
-            for (size_t j = 0; j < ori_nbr_size; j++) {             // for each old neighbor
-                if (selectedNeighbors[i] == nbr[j]) {                 // new neighbor i was an old neighbor
-                    memcpy(new_fts[i].data(), nbr_ft_at(id, j), size_per_ft_); // merge old ft to new ft
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                // update attr into new ft
-                updateft(new_fts[i].data(), selectedNeighbors[i]);
-            }
-        }
-
-        // merge dominated points's ft to new ft
-        for (size_t i = 0; i < selectedNeighbors.size(); i++) {         // for each new neighbor
-            tableint cur_id = selectedNeighbors[i];                     // id of new neighbor i
-            
-            // std::cout << "dominated list size: " << dominated_list.size() << std::endl;
-            // if (selectedNeighbors.size() < maxM0_) continue;
-            // std::cout << " neighbor " << cur_id << " dominates " << dominated_list[i].size() << " points" << std::endl;
-
-            for (int dominated_idx = 0; dominated_idx < dominated_list[i].size(); dominated_idx++) {
-                tableint dominated_id = dominated_list[i][dominated_idx];
-                // 9701: 9885
-                // if (id == 9701 && cur_id == 9885) {
-                //     std::cout << "9701's neighbor 9885 dominates " << dominated_id << std::endl;
-                // }
-
-
-                // if dominated id was a neighbor, then inherit its filter table
-                unsigned char* old_ft = nullptr; 
-                // if(ori_nbr_size > 0) {                        // neighbor size > 0, not first insert
-                    for (size_t j = 0; j < ori_nbr_size; j++) {// for each neighbor
-                        if (nbr[j] == dominated_id) {                    // dominated_id was a neighbor
-                            old_ft = nbr_ft_at(id, j);        // get its filter table
-                            break;
-                        }
-                    }
-                    if (old_ft) {                                        // add old ft to new ft, if found
-                        merge_ft(new_fts[i].data(), old_ft);
-                    }
-                    else{
-                        // add dominated id's attr to new_ft, if not found
-                        updateft(new_fts[i].data(), dominated_id);
-                    }
-                // }
-            }
-        }
-
-        // add attr of itself to ft
-        for (size_t i = 0; i < selectedNeighbors.size(); i++) {
-            updateft(new_fts[i].data(), selectedNeighbors[i]);
-        }
-        
-        // cover ft by new_ft
-        for (size_t i = 0; i < selectedNeighbors.size(); i++) {         // for each new neighbor
-            unsigned char* ft = nbr_ft_at(id, i);
-            memcpy(ft, new_fts[i].data(), size_per_ft_);
-        }
-
-        
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> diff = end - start;
-        update_ft_time += diff.count();
-        // std::cout << "ft update done" << std::endl;
-        return;
+        // ... edge-level FT logic removed (see git history) ...
     }
+    */
 
     long long dominate_count{0};
     std::vector<int> node_dominate_count_; // accumulated domination events per node during construction
@@ -3554,11 +3501,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             node_dominate_count_[selectedNeighbors[i]] += (int)dominated_list[i].size();
         }
 
-        // merge attr of dominated points to filter table of neighbors who domianate them
-        // std::vector<std::vector<char>> new_fts; // filter tables of selected neighbors
-        if (level == 0) {
-            update_nbr_ft(cur_c, selectedNeighbors, dominated_list);
-        }
+        // Node-level FT: no edge-level FT update needed (node FT set in addPoint)
+        // if (level == 0) {
+        //     update_nbr_ft(cur_c, selectedNeighbors, dominated_list);
+        // }
 
         tableint next_closest_entry_point = selectedNeighbors.back();
 
@@ -3625,7 +3571,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 if (sz_link_list_other < Mcurmax) {
                     data[sz_link_list_other] = cur_c;
                     setListCount(ll_other, sz_link_list_other + 1);
-                    updateft(nbr_ft_at(selectedNeighbors[idx], sz_link_list_other), cur_c);
+                    // Node-level FT: no edge FT to update
                 } else {
                     // for bottom layer, edges within valid_M0_ follows traditional rng prune
                     // edges above valid_M0_, prune redundant edge by attribute
@@ -3672,9 +3618,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         node_dominate_count_[selectedNeighbors_other[i]] += (int)dominated_list[i].size();
                     }
 
-                    if (level == 0) {
-                        update_nbr_ft(selectedNeighbors[idx], selectedNeighbors_other, dominated_list);
-                    }
+                    // Node-level FT: no edge-level FT update needed
+                    // if (level == 0) {
+                    //     update_nbr_ft(selectedNeighbors[idx], selectedNeighbors_other, dominated_list);
+                    // }
 
                     for (int i = 0; i < selectedNeighbors_other.size(); i++) {
                         data[i] = selectedNeighbors_other[i];
@@ -3881,6 +3828,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             int* attr_dst = (int*)(data_level0_memory_ + cur_c * size_data_per_element_ + offsetAttr_);
             memcpy(attr_dst, ni.attr.data(), ni.attr.size() * sizeof(int));
 
+            // Node-level FT: rebuild after attrs are set
+            update_node_ft(cur_c);
+
             // Allocate upper layer if needed
             if (ni.level > 0) {
                 linkLists_[cur_c] = (char*) malloc(size_links_per_element_ * ni.level + 1);
@@ -3958,6 +3908,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size += sizeof(ef_construction_);
 
         size += cur_element_count * size_data_per_element_;
+        size += sizeof(int);  // ft_format_version
 
         for (size_t i = 0; i < cur_element_count; i++) {
             unsigned int linkListSize = element_levels_[i] > 0 ? size_links_per_element_ * element_levels_[i] : 0;
@@ -4048,6 +3999,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         
         writeBinaryPOD(output, offsetNbrFt_);
         writeBinaryPOD(output, size_per_ft_);
+
+        // Format version: 2 = node-level FT (1 = legacy edge-level)
+        int ft_format_version = 2;
+        writeBinaryPOD(output, ft_format_version);
+
         //
         output.write(data_level0_memory_, cur_element_count * size_data_per_element_);
 
@@ -4187,6 +4143,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         readBinaryPOD(input, offsetNbrFt_);
         readBinaryPOD(input, size_per_ft_);
+
+        // Read format version: 2 = node-level FT, missing = legacy edge-level
+        int ft_format_version = 0;
+        readBinaryPOD(input, ft_format_version);
+        if (ft_format_version != 2) {
+            throw std::runtime_error("Index uses edge-level FT (format version " + std::to_string(ft_format_version) +
+                "). This build requires node-level FT (version 2). Please rebuild the index.");
+        }
 
 
 
@@ -4536,6 +4500,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             lock_table.unlock();
 
             unmarkDeletedInternal(internal_id_replaced);
+            add_attr_to_point(internal_id_replaced, attr_data);
+            update_node_ft(internal_id_replaced);  // rebuild FT for reused slot
             updatePoint(data_point, internal_id_replaced, 1.0);
         }
     }
@@ -4778,6 +4744,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     unmarkDeletedInternal(existingInternalId);
                 }
                 add_attr_to_point(existingInternalId, attr_data);
+                update_node_ft(existingInternalId);  // rebuild node FT after attr change
                 updatePoint(data_point, existingInternalId, 1.0);
 
                 return existingInternalId;
@@ -4796,6 +4763,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
         add_attr_to_point(cur_c, attr_data);
+        // Node-level FT: hash own attributes into FT right after attrs are set
+        update_node_ft(cur_c);
         // int curlevel = getRandomLevel(mult_);
         // if (level > 0)
         //     curlevel = level;

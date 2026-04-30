@@ -73,7 +73,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     double threshold_1_{0.01}, threshold_2_{0.01}, threshold_3_{0.1}; // threshold to decide whether scan the bucket or not
     int maxlevel_{0};
 
-    double two_hop_threshold{10}; // threshold for two hop expansion
+    double two_hop_threshold{10}; // min degree: if FT-passing neighbors < this, do edge recovery
 
     std::unique_ptr<VisitedListPool> visited_list_pool_{nullptr};
 
@@ -106,6 +106,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     mutable std::atomic<long> metric_distance_computations{0};
     mutable std::atomic<long> metric_hops{0};
+    mutable std::atomic<long> metric_ft_passed_total{0};     // nodes that passed FT check
+    mutable std::atomic<long> metric_ft_false_positives{0};  // passed FT but failed predicate (FP)
 
     bool allow_replace_deleted_ = false;  // flag to replace deleted elements (marked as deleted) during insertions
 
@@ -209,7 +211,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     void set_two_hop_threshold(double threshold){
         two_hop_threshold = threshold;
-        std::cout << "set two hop threshold to " << two_hop_threshold << std::endl;
+        std::cout << "set min_deg to " << two_hop_threshold << std::endl;
+    }
+
+    void set_min_deg(double threshold){
+        set_two_hop_threshold(threshold);
     }
 
     void add_buckets(const int *bucket_data, const int * bucket_offsets, size_t offset_size){
@@ -542,22 +548,24 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // init attr space
         init_attr_space();
 
-        // per element: links(maxM0*4 + 4) + data_size_ + label(4) + node FT (size_per_ft_) + padding + attr(attr_size * 4)
+        // per element: links(maxM0*4 + 4) + FT(size_per_ft_) + data_size_ + label(8) + padding + attr(attr_size * 4)
+        // Layout: [link_list | FT | vector_data | label | padding | attr]
+        // FT is placed right after link list for cache locality during search
         size_links_level0_ = maxM0_ * sizeof(tableint)+ sizeof(linklistsizeint);
         size_per_ft_ = ft_bytes_ * attr_type_.size();
 
-        // attr is int*, padding the start position to 4 byte alignment
-        // Node-level FT: one FT per node (not per edge)
         size_t ft_total = size_per_ft_;  // single node FT
-        padding = sizeof(int) - ((size_links_level0_ + data_size_ + sizeof(labeltype) + ft_total) % sizeof(int));
+        // New layout: FT right after link list, before vector data
+        ft_offset_ = size_links_level0_;
+        offsetNbrFt_ = ft_offset_;
+        offsetData_ = size_links_level0_ + ft_total;
+        label_offset_ = size_links_level0_ + ft_total + data_size_;
+        // attr is int*, padding the start position to 4 byte alignment
+        padding = sizeof(int) - ((size_links_level0_ + ft_total + data_size_ + sizeof(labeltype)) % sizeof(int));
         if (padding == sizeof(int)) padding = 0;
-        size_data_per_element_ = size_links_level0_ + data_size_ + sizeof(labeltype) + ft_total + padding + attr_size_per_item_ * sizeof(int);
-        nbr_size_per_element = size_links_level0_ + data_size_ + sizeof(labeltype);
-        offsetData_ = size_links_level0_;
-        label_offset_ = size_links_level0_ + data_size_;
-        ft_offset_ = size_links_level0_ + data_size_ + sizeof(labeltype);
-        offsetNbrFt_ = ft_offset_;  // kept for serialization compat field name
-        offsetAttr_ = size_links_level0_ + data_size_ + sizeof(labeltype) + ft_total + padding;
+        offsetAttr_ = size_links_level0_ + ft_total + data_size_ + sizeof(labeltype) + padding;
+        size_data_per_element_ = offsetAttr_ + attr_size_per_item_ * sizeof(int);
+        nbr_size_per_element = size_links_level0_ + ft_total + data_size_ + sizeof(labeltype);
         offsetLevel0_ = 0;
         
         data_level0_memory_ = (char *) malloc(max_elements_ * size_data_per_element_);
@@ -2565,10 +2573,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
 
-        // if (!top_candidates.empty())
-        //     lowerBound = top_candidates.top().first;
-        // else
-            lowerBound = std::numeric_limits<dist_t>::max();
+        // Initialize lowerBound from the first candidate (entry point distance),
+        // regardless of whether it matches the predicate
+        // Use max to avoid premature termination at low selectivity
+        lowerBound = std::numeric_limits<dist_t>::max();
+        size_t lb_update_threshold = ef;
         int round = 0;
         int passed = 0;
         int ft_passed = 0;
@@ -2594,7 +2603,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 if (stop_condition) {
                     flag_stop_search = stop_condition->should_stop_search(candidate_dist, lowerBound);
                 } else {
-                    flag_stop_search = candidate_dist > lowerBound && top_candidates.size() == ef;
+                    // Stop when candidate is farther than lowerBound and we have ef qualifying results
+                    flag_stop_search = candidate_dist > lowerBound && top_candidates.size() >= ef;
                 }
             }
             if (flag_stop_search) {
@@ -2620,7 +2630,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 //                bool cur_node_deleted = isMarkedDeleted(current_node_id);
             if (collect_metrics) {
                 metric_hops++;
-                metric_distance_computations+=size;
+                // metric_distance_computations counted after FT filtering below
             }
 
 
@@ -2633,14 +2643,18 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             nbrs.clear();
             not_nbrs.clear();
             not_nbrs_idx.clear();
+            size_t orig_nbrs_end = 0; // boundary in nbrs[] between original and augmented edge neighbors
             
             if (use_ft) {
                 // Node-level FT: check neighbor's own FT (not edge FT)
                 if (dnf_pred) {
+                    size_t orig_size = size;
+                    if (use_augmented_edges_ && !orig_degree_.empty()) {
+                        orig_size = std::min((size_t)orig_degree_[current_node_id], size);
+                    }
                     for (size_t j = 1; j <= size; j++) {
                         tableint nbr_id = *(data + j);
                         #ifdef USE_SSE
-                        // prefetch-ahead: FT of neighbor a few positions later
                         if (j + 4 <= size) {
                             _mm_prefetch(data_level0_memory_ + *(data + j + 4) * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
                         }
@@ -2655,8 +2669,22 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             not_nbrs.push_back(nbr_id);
                             not_nbrs_idx.push_back(j);
                         }
+                        if (j == orig_size) {
+                            orig_nbrs_end = nbrs.size();
+                            // Adaptive: skip augmented edges if original edges have enough FT-passing neighbors
+                            if (orig_size < size && (int)orig_nbrs_end >= augmented_min_deg_) {
+                                break;
+                            }
+                        }
                     }
+                    if (orig_size == size) orig_nbrs_end = nbrs.size();
                 } else {
+                    // Determine original-edge boundary for conditional augmented-edge activation
+                    size_t orig_size = size;
+                    if (use_augmented_edges_ && !orig_degree_.empty()) {
+                        orig_size = std::min((size_t)orig_degree_[current_node_id], size);
+                    }
+                    // FT check edges; skip augmented if original edges have enough FT-passing neighbors
                     for (size_t j = 1; j <= size; j++) {
                         tableint nbr_id = *(data + j);
                         #ifdef USE_SSE
@@ -2674,7 +2702,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             not_nbrs.push_back(nbr_id);
                             not_nbrs_idx.push_back(j);
                         }
+                        if (j == orig_size) {
+                            orig_nbrs_end = nbrs.size();
+                            // Adaptive: skip augmented edges if original edges have enough FT-passing neighbors
+                            if (orig_size < size && (int)orig_nbrs_end >= augmented_min_deg_) {
+                                break;
+                            }
+                        }
                     }
+                    if (orig_size == size) orig_nbrs_end = nbrs.size();
                 }
             }
             else {
@@ -2686,6 +2722,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
                     #endif
                 }
+                orig_nbrs_end = nbrs.size();
             }
             ft_deg += nbrs.size();
             ft_passed += (size - nbrs.size());
@@ -2852,9 +2889,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
 #endif
 
+            // Count actual distance computations (only FT-passing + min_deg backfill)
+            if (collect_metrics) {
+                metric_distance_computations += nbrs.size();
+            }
 
-
-            for (int nbr_idx = 0; nbr_idx < nbrs.size(); ++nbr_idx) {
+            // Augmented-edge decision already made in FT loop (adaptive skip).
+            // Process all FT-passing neighbors in nbrs without further gating.
+            for (int nbr_idx = 0; nbr_idx < (int)nbrs.size(); ++nbr_idx) {
                 int candidate_id = nbrs[nbr_idx];
                 // size_t j_next = nbr_idx + 1 < nbrs.size() ? nbrs[nbr_idx + 1] : size + 1;
                 
@@ -2949,11 +2991,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             }
                         }
 
-                        // if (!top_candidates.empty()) 
-                        //     lowerBound = top_candidates.top().first;
-
-
-                        if (top_candidates.size() >= search_k) 
+                        // Key change: update lowerBound as soon as top_candidates reaches lb_update_threshold
+                        if (top_candidates.size() >= lb_update_threshold) 
                             lowerBound = top_candidates.top().first;
                     }
                 }
@@ -2975,11 +3014,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         //              << ", max degree " << max_deg
         //              << ", use two hop freq " << use_two_hop_freq
         //              << std::endl;
-        // std::cout << " two hop collection time (ms): " << two_hop_collection_time << " (" << coll_pct << "%)" << std::endl;
-        // std::cout << " two hop scan time (ms): " << two_hop_scan_time << " (" << scan_pct << "%)" << std::endl;
-        // std::cout << " visited array time (ms): " << visited_array_time << " (" << visit_pct << "%)" << std::endl;
-        // std::cout << " linklist fetch time (ms): " << linklist_fetch_time << " (" << linklist_pct << "%)" << std::endl;
-        // std::cout << " nbr ft check time (ms): " << nbr_ft_time << " (" << nbr_ft_pct << "%)" << std::endl;
+        // FT stats: ft_deg = nodes passed FT, passed = passed FT but failed predicate (FP)
+        metric_ft_passed_total.fetch_add(ft_deg, std::memory_order_relaxed);
+        metric_ft_false_positives.fetch_add(passed, std::memory_order_relaxed);
         return top_candidates;
     }
 
@@ -3435,6 +3472,206 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
     }
 
+    // Post-construction graph augmentation: ensure each node has >= min_same
+    // neighbors sharing each of its rare labels, to boost filtered-search connectivity.
+    //
+    // Strategy: group nodes by each label. For rare labels (frequency < freq_threshold),
+    // within the group, ensure each node has >= min_same same-label neighbors.
+    // If not, BFS within the group to find nearby same-label nodes and add edges.
+    //
+    // Returns: {edges_added, nodes_augmented}
+    std::pair<long long, long long> augment_ft_neighbors(int min_same = 8, int max_hops = 2) {
+        long long edges_added = 0;
+        long long nodes_augmented = 0;
+
+        int cat_attr_idx = -1;
+        for (int i = 0; i < (int)attr_type_.size(); i++) {
+            if (attr_type_[i] == 1) { cat_attr_idx = i; break; }
+        }
+        if (cat_attr_idx < 0) {
+            fprintf(stderr, "augment_ft_neighbors: no categorical attribute found\n");
+            return {0, 0};
+        }
+
+        size_t n = cur_element_count;
+        int num_labels = max_cate_size_ + 1;
+        fprintf(stderr, "augment_ft_neighbors: n=%zu, min_same=%d, max_hops=%d, maxM0=%zu, num_labels=%d\n",
+                n, min_same, max_hops, maxM0_, num_labels);
+
+        // Record original degree for each node (uint8, max 255)
+        orig_degree_.resize(n);
+        for (size_t i = 0; i < n; i++) {
+            linklistsizeint* ll = get_linklist0(i);
+            unsigned short int deg = getListCount(ll);
+            orig_degree_[i] = (uint8_t)std::min((int)deg, 255);
+        }
+
+        // Step 1: Build per-label membership lists
+        std::vector<std::vector<tableint>> label_members(num_labels);
+        for (size_t i = 0; i < n; i++) {
+            const int* cat = attr_at(i, cat_attr_idx);
+            for (int k = 0; k < num_labels; k++) {
+                int byte_pos = k >> 5;
+                int bit_pos = k & 31;
+                if (byte_pos < cate_int_byte_ && (cat[byte_pos] & (1 << bit_pos))) {
+                    label_members[k].push_back((tableint)i);
+                }
+            }
+        }
+
+        // Step 2: Build per-label membership sets for O(1) lookup
+        // Use a flat bitset: label_has[label][node] = true
+        // Too much memory for 20 × 4M. Use flat visited tag instead per label.
+        std::vector<unsigned char> has_label(n, 0);  // reused per label
+
+        // Flat visited tag for BFS
+        std::vector<unsigned int> visited_tag(n, 0);
+        unsigned int cur_tag = 0;
+        std::vector<tableint> frontier, next_frontier;
+        std::vector<std::pair<dist_t, tableint>> candidates;
+
+        // Process labels from rarest to most common (rare labels benefit most)
+        std::vector<int> label_order(num_labels);
+        std::iota(label_order.begin(), label_order.end(), 0);
+        std::sort(label_order.begin(), label_order.end(), [&](int a, int b) {
+            return label_members[a].size() < label_members[b].size();
+        });
+
+        for (int li = 0; li < num_labels; li++) {
+            int label = label_order[li];
+            auto& members = label_members[label];
+            if (members.empty()) continue;
+
+            double freq = (double)members.size() / n;
+            // Skip very common labels (>50% of nodes) — they're useless for filtering
+            if (freq > 0.5) {
+                fprintf(stderr, "  label %d: %zu members (%.1f%%) — skipping (too common)\n",
+                        label, members.size(), freq * 100);
+                continue;
+            }
+
+            fprintf(stderr, "  label %d: %zu members (%.1f%%)\n",
+                    label, members.size(), freq * 100);
+
+            // Mark members of this label
+            for (tableint m : members) has_label[m] = 1;
+
+            // For each member, count same-label neighbors
+            for (tableint node_id : members) {
+                linklistsizeint* ll = get_linklist0(node_id);
+                unsigned short int cur_degree = getListCount(ll);
+                if (cur_degree >= maxM0_) {
+                    has_label[node_id] = 0;
+                    continue;
+                }
+
+                tableint* nbr_data = (tableint*)(ll + 1);
+
+                int same_count = 0;
+                for (int j = 0; j < cur_degree; j++) {
+                    if (has_label[nbr_data[j]]) same_count++;
+                }
+
+                if (same_count >= min_same) {
+                    has_label[node_id] = 0;
+                    continue;
+                }
+
+                int needed = std::min(min_same - same_count, (int)(maxM0_ - cur_degree));
+                if (needed <= 0) {
+                    has_label[node_id] = 0;
+                    continue;
+                }
+
+                // BFS from this node to find same-label candidates
+                cur_tag++;
+                if (cur_tag == 0) {
+                    memset(visited_tag.data(), 0, n * sizeof(unsigned int));
+                    cur_tag = 1;
+                }
+
+                visited_tag[node_id] = cur_tag;
+                frontier.clear();
+                for (int j = 0; j < cur_degree; j++) {
+                    visited_tag[nbr_data[j]] = cur_tag;
+                    frontier.push_back(nbr_data[j]);
+                }
+
+                candidates.clear();
+
+                for (int hop = 0; hop < max_hops; hop++) {
+                    next_frontier.clear();
+                    for (tableint fnode : frontier) {
+                        linklistsizeint* ll2 = get_linklist0(fnode);
+                        unsigned short int deg2 = getListCount(ll2);
+                        tableint* data2 = (tableint*)(ll2 + 1);
+                        for (int k = 0; k < deg2; k++) {
+                            tableint cand = data2[k];
+                            if (visited_tag[cand] == cur_tag) continue;
+                            visited_tag[cand] = cur_tag;
+
+                            if (has_label[cand]) {
+                                dist_t d = fstdistfunc_(getDataByInternalId(node_id),
+                                                        getDataByInternalId(cand),
+                                                        dist_func_param_);
+                                candidates.push_back({d, cand});
+                            }
+                            next_frontier.push_back(cand);
+                        }
+                    }
+                    std::swap(frontier, next_frontier);
+                    if (frontier.size() > 1500) frontier.resize(1500);
+                    if ((int)candidates.size() >= needed + 4) break;
+                }
+
+                // Add best candidates
+                if (!candidates.empty()) {
+                    std::sort(candidates.begin(), candidates.end());
+                    int added = 0;
+                    cur_degree = getListCount(ll);
+
+                    for (auto& [d, cand_id] : candidates) {
+                        if (added >= needed || cur_degree >= maxM0_) break;
+
+                        nbr_data[cur_degree] = cand_id;
+                        cur_degree++;
+                        setListCount(ll, cur_degree);
+                        edges_added++;
+                        added++;
+
+                        // Reverse edge
+                        linklistsizeint* ll_c = get_linklist0(cand_id);
+                        unsigned short int cd = getListCount(ll_c);
+                        if (cd < maxM0_) {
+                            tableint* cd_data = (tableint*)(ll_c + 1);
+                            cd_data[cd] = (tableint)node_id;
+                            setListCount(ll_c, cd + 1);
+                            edges_added++;
+                        }
+                    }
+                    if (added > 0) {
+                        nodes_augmented++;
+                        update_node_ft(node_id);
+                    }
+                }
+
+                has_label[node_id] = 0;  // clear as we go
+            }
+
+            // Clear remaining has_label flags
+            for (tableint m : members) has_label[m] = 0;
+        }
+
+        fprintf(stderr, "augment_ft_neighbors: done. edges_added=%lld, nodes_augmented=%lld\n",
+                edges_added, nodes_augmented);
+        
+        // Enable conditional augmented-edge activation during search
+        augmented_min_deg_ = min_same;
+        use_augmented_edges_ = true;
+        fprintf(stderr, "augment_ft_neighbors: augmented edges enabled, min_deg threshold=%d\n", min_same);
+        
+        return {edges_added, nodes_augmented};
+    }
     
     double update_ft_time{0.0};
 
@@ -3448,6 +3685,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     long long dominate_count{0};
     std::vector<int> node_dominate_count_; // accumulated domination events per node during construction
+
+    // Per-node original degree marker (uint8).
+    // After augment_ft_neighbors(), neighbors[0..orig_degree_[i]) are original edges,
+    // neighbors[orig_degree_[i]..total_degree) are augmented edges.
+    // During search, augmented edges only activate when FT-matched original neighbors < augmented_min_deg_.
+    std::vector<uint8_t> orig_degree_;
+    int augmented_min_deg_{0};
+    bool use_augmented_edges_{false};
 
     void print_build_stats() const {
         if (cur_element_count == 0) return;
@@ -4018,8 +4263,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         writeBinaryPOD(output, offsetNbrFt_);
         writeBinaryPOD(output, size_per_ft_);
 
-        // Format version: 2 = node-level FT (1 = legacy edge-level)
-        int ft_format_version = 2;
+        // Format version: 3 = node-level FT with FT-before-vector layout
+        // (2 = node-level FT old layout, 1 = legacy edge-level)
+        int ft_format_version = 3;
         writeBinaryPOD(output, ft_format_version);
 
         //
@@ -4162,13 +4408,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         readBinaryPOD(input, offsetNbrFt_);
         readBinaryPOD(input, size_per_ft_);
 
-        // Read format version: 2 = node-level FT, missing = legacy edge-level
+        // Read format version: 3 = new FT-before-vector layout, 2 = old node-level FT layout
         int ft_format_version = 0;
         readBinaryPOD(input, ft_format_version);
-        if (ft_format_version != 2) {
-            throw std::runtime_error("Index uses edge-level FT (format version " + std::to_string(ft_format_version) +
-                "). This build requires node-level FT (version 2). Please rebuild the index.");
+        if (ft_format_version != 2 && ft_format_version != 3) {
+            throw std::runtime_error("Index uses unsupported FT format version " + std::to_string(ft_format_version) +
+                ". This build requires version 2 or 3.");
         }
+        bool need_layout_migration = (ft_format_version == 2);
 
 
 
@@ -4210,6 +4457,48 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             throw std::runtime_error("Not enough memory: loadIndex failed to allocate level0");
 
         input.read(data_level0_memory_, cur_element_count * size_data_per_element_);
+
+        // Compute size_links_level0_ early (needed for migration and integrity check)
+        size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
+
+        // Migrate v2 layout [link|vector|label|FT|attr] → v3 [link|FT|vector|label|attr]
+        if (need_layout_migration) {
+            std::cout << "Migrating index from v2 to v3 layout (FT before vector)..." << std::endl;
+            // Old offsets (from file): ft at end, vector right after link list
+            size_t old_ft_offset = ft_offset_;         // e.g. 2380
+            size_t old_offsetData = offsetData_;        // e.g. 324
+            // New offsets: FT right after link list
+            size_t new_ft_offset = size_links_level0_;  // e.g. 324
+            size_t new_offsetData = size_links_level0_ + size_per_ft_;  // e.g. 356
+            size_t new_label_offset = new_offsetData + data_size_;
+            size_t vec_label_size = data_size_ + sizeof(labeltype);  // vector + label block
+
+            char* ft_tmp = (char*)malloc(size_per_ft_);
+            for (size_t i = 0; i < cur_element_count; i++) {
+                char* elem = data_level0_memory_ + i * size_data_per_element_;
+                // 1. Save FT from old position
+                memcpy(ft_tmp, elem + old_ft_offset, size_per_ft_);
+                // 2. Shift vector+label right by size_per_ft_ bytes (overlapping, use memmove)
+                memmove(elem + new_offsetData, elem + old_offsetData, vec_label_size);
+                // 3. Write FT to new position (right after link list)
+                memcpy(elem + new_ft_offset, ft_tmp, size_per_ft_);
+            }
+            free(ft_tmp);
+
+            // Update offsets to new layout
+            ft_offset_ = new_ft_offset;
+            offsetNbrFt_ = new_ft_offset;
+            offsetData_ = new_offsetData;
+            label_offset_ = new_label_offset;
+            size_t padding_new = sizeof(int) - ((new_label_offset + sizeof(labeltype)) % sizeof(int));
+            if (padding_new == sizeof(int)) padding_new = 0;
+            offsetAttr_ = new_label_offset + sizeof(labeltype) + padding_new;
+            nbr_size_per_element = size_links_level0_ + size_per_ft_ + data_size_ + sizeof(labeltype);
+
+            std::cout << "Migration complete. New offsets: ft=" << ft_offset_
+                      << " data=" << offsetData_ << " label=" << label_offset_
+                      << " attr=" << offsetAttr_ << std::endl;
+        }
 
         // in memory check
         for (size_t i = 0; i < cur_element_count; i++) {
@@ -5289,29 +5578,29 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (bare_bone_search) {
             if (use_two_hop_ && use_ft_)
             top_candidates = hybridSearchBaseLayerST<true, true, true, true>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
+                        top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
             else if (use_two_hop_ && !use_ft_)
             top_candidates = hybridSearchBaseLayerST<true, true, true, false>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
+                        top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
             else if (!use_two_hop_ && use_ft_)
             top_candidates = hybridSearchBaseLayerST<true, true, false, true>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
+                        top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
             else
             top_candidates = hybridSearchBaseLayerST<true, true, false, false>(
-                top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
+                top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
         } else {
             if (use_two_hop_ && use_ft_)
             top_candidates = hybridSearchBaseLayerST<false, true, true, true>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
+                        top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
             else if (use_two_hop_ && !use_ft_)
             top_candidates = hybridSearchBaseLayerST<false, true, true, false>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
+                        top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
             else if (!use_two_hop_ && use_ft_)
             top_candidates = hybridSearchBaseLayerST<false, true, false, true>(
-                        top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
+                        top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
             else
             top_candidates = hybridSearchBaseLayerST<false, true, false, false>(
-                top_layer_candidates, query_data, predicate, ft_predicate, std::max(ef_, k), k, vl);
+                top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
         }
         // for multi-attribute, CHT is unnecessary since we have scanned on btree with smallest sel
 
@@ -5493,36 +5782,36 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (use_two_hop_ && use_ft_)
                 top_candidates = hybridSearchBaseLayerST<true, true, true, true>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
-                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+                    ef_, k, vl, nullptr, &dnf_pred);
             else if (use_two_hop_ && !use_ft_)
                 top_candidates = hybridSearchBaseLayerST<true, true, true, false>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
-                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+                    ef_, k, vl, nullptr, &dnf_pred);
             else if (!use_two_hop_ && use_ft_)
                 top_candidates = hybridSearchBaseLayerST<true, true, false, true>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
-                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+                    ef_, k, vl, nullptr, &dnf_pred);
             else
                 top_candidates = hybridSearchBaseLayerST<true, true, false, false>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
-                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+                    ef_, k, vl, nullptr, &dnf_pred);
         } else {
             if (use_two_hop_ && use_ft_)
                 top_candidates = hybridSearchBaseLayerST<false, true, true, true>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
-                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+                    ef_, k, vl, nullptr, &dnf_pred);
             else if (use_two_hop_ && !use_ft_)
                 top_candidates = hybridSearchBaseLayerST<false, true, true, false>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
-                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+                    ef_, k, vl, nullptr, &dnf_pred);
             else if (!use_two_hop_ && use_ft_)
                 top_candidates = hybridSearchBaseLayerST<false, true, false, true>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
-                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+                    ef_, k, vl, nullptr, &dnf_pred);
             else
                 top_candidates = hybridSearchBaseLayerST<false, true, false, false>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
-                    std::max(ef_, k), k, vl, nullptr, &dnf_pred);
+                    ef_, k, vl, nullptr, &dnf_pred);
         }
 
         visited_list_pool_->releaseVisitedList(vl);

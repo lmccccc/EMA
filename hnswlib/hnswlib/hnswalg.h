@@ -13,6 +13,10 @@
 #include <bitset>
 #include <unordered_map>
 #include <cmath>
+#include <deque>
+#include <tuple>
+#include <chrono>
+#include <limits>
 
 namespace hnswlib {
 typedef unsigned int tableint;
@@ -1563,18 +1567,50 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 continue;
             }
 
-            // Generic path for larger FT
-            if (attr_type_[i] == 0) { // numerical
+#ifdef USE_SSE
+            // Vectorized path: 16-byte chunks via SSE.
+            // numerical: any overlap (any AND-bit set across whole FT)
+            // categorical: pred ⊆ ft (every set bit in pred also set in ft)
+            if (attr_type_[i] == 0) {
+                bool matched = false;
+                size_t off = 0;
+                for (; off + 16 <= ft_bytes_; off += 16) {
+                    __m128i v_ft   = _mm_loadu_si128((const __m128i*)(ft + off));
+                    __m128i v_pred = _mm_loadu_si128((const __m128i*)(pred + off));
+                    __m128i v_and  = _mm_and_si128(v_ft, v_pred);
+                    if (!_mm_testz_si128(v_and, v_and)) { matched = true; break; }
+                }
+                // tail (only if ft_bytes_ not multiple of 16)
+                for (; !matched && off < ft_bytes_; ++off) {
+                    if ((ft[off] & (unsigned char)pred[off]) != 0) { matched = true; break; }
+                }
+                if (!matched) return false;
+            } else {
+                size_t off = 0;
+                for (; off + 16 <= ft_bytes_; off += 16) {
+                    __m128i v_ft   = _mm_loadu_si128((const __m128i*)(ft + off));
+                    __m128i v_pred = _mm_loadu_si128((const __m128i*)(pred + off));
+                    // _mm_testc_si128(a,b): tests (~a & b) == 0, i.e. b ⊆ a
+                    if (!_mm_testc_si128(v_ft, v_pred)) return false;
+                }
+                for (; off < ft_bytes_; ++off) {
+                    if ((ft[off] & (unsigned char)pred[off]) != (unsigned char)pred[off]) return false;
+                }
+            }
+#else
+            // Generic path for larger FT (no SSE)
+            if (attr_type_[i] == 0) {
                 bool matched = false;
                 for (int j = 0; j < (int)ft_bytes_; ++j) {
                     if ((ft[j] & (unsigned char)pred[j]) > 0) { matched = true; break; }
                 }
                 if (!matched) return false;
-            } else { // categorical
+            } else {
                 for (int j = 0; j < (int)ft_bytes_; ++j) {
                     if ((ft[j] & (unsigned char)pred[j]) != (unsigned char)pred[j]) return false;
                 }
             }
+#endif
         }
         return true;
     }
@@ -2700,10 +2736,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             size_t size = getListCount((linklistsizeint*)data);
 
             #ifdef USE_SSE
-            // Node-level FT: prefetch first few neighbors' FT blocks
-            for (size_t pf = 1; pf <= std::min((size_t)4, size); pf++) {
-                tableint pf_id = *(data + pf);
-                _mm_prefetch(data_level0_memory_ + pf_id * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
+            if (edge_level_ft_) {
+                // Edge-level FT: all neighbor FTs packed in current node's element.
+                // Single prefetch warms the entire FT block (matches Jan layout).
+                _mm_prefetch(data_level0_memory_ + current_node_id * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
+            } else {
+                // Node-level FT: each neighbor's FT lives in its own element. Prefetch first few.
+                for (size_t pf = 1; pf <= std::min((size_t)8, size); pf++) {
+                    tableint pf_id = *(data + pf);
+                    _mm_prefetch(data_level0_memory_ + pf_id * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
+                }
             }
             #endif
             #ifdef DEBUG_SEARCH
@@ -2728,78 +2770,57 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             size_t orig_nbrs_end = 0; // boundary in nbrs[] between original and augmented edge neighbors
             
             if (use_ft) {
-                // Node-level FT: check neighbor's own FT (not edge FT)
-                if (dnf_pred) {
-                    size_t orig_size = size;
-                    if (use_augmented_edges_ && !orig_degree_.empty()) {
-                        orig_size = std::min((size_t)orig_degree_[current_node_id], size);
+                size_t orig_size = (use_augmented_edges_ && !orig_degree_.empty())
+                    ? std::min((size_t)orig_degree_[current_node_id], size)
+                    : size;
+
+                auto handle_nbr = [&](size_t j, tableint nbr_id, bool ft_pass) {
+                    if (ft_pass) {
+                        nbrs.push_back(nbr_id);
+                        #ifdef USE_SSE
+                        _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                        _mm_prefetch((char *) (visited_array + nbr_id), _MM_HINT_T0);
+                        #endif
+                    } else if constexpr (use_ft_routing) {
+                        not_nbrs.push_back(nbr_id);
+                        not_nbrs_idx.push_back(j);
                     }
+                };
+
+                if (edge_level_ft_) {
+                    // Edge-level: FT block already prefetched above; no per-iter neighbor-FT prefetch.
                     for (size_t j = 1; j <= size; j++) {
                         tableint nbr_id = *(data + j);
-                        #ifdef USE_SSE
-                        if (j + 4 <= size) {
-                            _mm_prefetch(data_level0_memory_ + *(data + j + 4) * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
-                        }
-                        #endif
-                        bool ft_pass = edge_level_ft_
+                        bool ft_pass = dnf_pred
                             ? edge_ft_check_dnf(current_node_id, j - 1, *dnf_pred)
-                            : node_ft_check_dnf(nbr_id, *dnf_pred);
-                        if (ft_pass) {
-                            nbrs.push_back(nbr_id);
-                            #ifdef USE_SSE
-                            _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
-                            _mm_prefetch((char *) (visited_array + nbr_id), _MM_HINT_T0);
-                            #endif
-                        } else if constexpr (use_ft_routing) {
-                            not_nbrs.push_back(nbr_id);
-                            not_nbrs_idx.push_back(j);
-                        }
+                            : edge_ft_check(current_node_id, j - 1, ft_predicate.data());
+                        handle_nbr(j, nbr_id, ft_pass);
                         if (j == orig_size) {
                             orig_nbrs_end = nbrs.size();
-                            // Adaptive: skip augmented edges if original edges have enough FT-passing neighbors
-                            if (orig_size < size && (int)orig_nbrs_end >= augmented_min_deg_) {
-                                break;
-                            }
+                            if (orig_size < size && (int)orig_nbrs_end >= augmented_min_deg_) break;
                         }
                     }
-                    if (orig_size == size) orig_nbrs_end = nbrs.size();
                 } else {
-                    // Determine original-edge boundary for conditional augmented-edge activation
-                    size_t orig_size = size;
-                    if (use_augmented_edges_ && !orig_degree_.empty()) {
-                        orig_size = std::min((size_t)orig_degree_[current_node_id], size);
-                    }
-                    // FT check edges; skip augmented if original edges have enough FT-passing neighbors
                     for (size_t j = 1; j <= size; j++) {
                         tableint nbr_id = *(data + j);
                         #ifdef USE_SSE
-                        if (j + 4 <= size) {
-                            _mm_prefetch(data_level0_memory_ + *(data + j + 4) * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
+                        // Deeper prefetch (j+8) for memory-level parallelism.
+                        // Bulk prefetch above already warmed first 16; this keeps the pipeline filled.
+                        if (j + 8 <= size) {
+                            _mm_prefetch(data_level0_memory_ + *(data + j + 8) * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
                         }
                         #endif
-                        bool ft_pass = edge_level_ft_ 
-                            ? edge_ft_check(current_node_id, j - 1, ft_predicate.data())
+                        bool ft_pass = dnf_pred
+                            ? node_ft_check_dnf(nbr_id, *dnf_pred)
                             : node_ft_check(nbr_id, ft_predicate.data());
-                        if (ft_pass) {
-                            nbrs.push_back(nbr_id);
-                            #ifdef USE_SSE
-                            _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
-                            _mm_prefetch((char *) (visited_array + nbr_id), _MM_HINT_T0);
-                            #endif
-                        } else if constexpr (use_ft_routing) {
-                            not_nbrs.push_back(nbr_id);
-                            not_nbrs_idx.push_back(j);
-                        }
+                        handle_nbr(j, nbr_id, ft_pass);
                         if (j == orig_size) {
                             orig_nbrs_end = nbrs.size();
-                            // Adaptive: skip augmented edges if original edges have enough FT-passing neighbors
-                            if (orig_size < size && (int)orig_nbrs_end >= augmented_min_deg_) {
-                                break;
-                            }
+                            if (orig_size < size && (int)orig_nbrs_end >= augmented_min_deg_) break;
                         }
                     }
-                    if (orig_size == size) orig_nbrs_end = nbrs.size();
                 }
+                if (orig_size == size) orig_nbrs_end = nbrs.size();
             }
             else {
                 for (size_t j = 1; j <= size; j++) {
@@ -4301,6 +4322,537 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         fprintf(stderr, "augment_ft_bfs: augmented edges enabled, min_deg threshold=%d\n", min_same);
 
         return {edges_added.load(), nodes_augmented.load()};
+    }
+
+    /**
+     * color_ft_bit: For a single FT bit (attr_idx, bit_idx), ensure that every
+     * node whose attributes set this bit is reachable from any layer-1 entry
+     * via a path of edges whose edge-FT also has this bit set.
+     *
+     * Phase 1: collect layer-1 nodes whose attrs include this bit -> seeds.
+     * Phase 2: BFS from seeds through edges that already have this bit set;
+     *          mark the reachable closure.
+     * Phase 3: collect "qualifying" nodes (have this bit) that were not reached.
+     * Phase 4: 0-1 BFS on the FULL graph from the reachable set, with
+     *          weight 0 on edges that already have this bit set, weight 1 on
+     *          edges that don't. For each unreachable qualifying node, walk the
+     *          predecessor chain back and OR the bit into edge-FT (both
+     *          directions, since the graph is undirected). This minimises the
+     *          number of bit-flips needed to repair connectivity.
+     *
+     * Returns: {seeds, unreachable_before_repair, bits_flipped}
+     */
+    std::tuple<long long, long long, long long>
+    color_ft_bit(int attr_idx, int bit_idx, int K = 1) {
+        // DEPRECATED: replaced by color_ft_bit_voronoi.
+        // The old "repair only unreachable" approach gave near-zero recall improvement
+        // because reachable nodes (the vast majority) were never given additional FT
+        // paths. Use color_ft_bit_voronoi for true per-node connectivity to nearby
+        // qualifying nodes.
+        (void)attr_idx; (void)bit_idx; (void)K;
+        fprintf(stderr, "color_ft_bit: DEPRECATED — use color_ft_bit_voronoi\n");
+        return {0, 0, 0};
+    }
+
+    // Internal legacy implementation (kept for reference, not bound).
+    std::tuple<long long, long long, long long>
+    color_ft_bit_legacy(int attr_idx, int bit_idx, int K = 1) {
+        if (!edge_level_ft_) {
+            fprintf(stderr, "color_ft_bit: requires edge-level FT\n");
+            return {0, 0, 0};
+        }
+        if (attr_idx < 0 || attr_idx >= (int)attr_type_.size()) {
+            fprintf(stderr, "color_ft_bit: attr_idx out of range\n");
+            return {0, 0, 0};
+        }
+        int byte_pos = bit_idx >> 3;
+        int bit_in_byte = bit_idx & 7;
+        if (byte_pos < 0 || byte_pos >= (int)ft_bytes_) {
+            fprintf(stderr, "color_ft_bit: bit_idx out of range\n");
+            return {0, 0, 0};
+        }
+        unsigned char bit_mask = (unsigned char)(1u << bit_in_byte);
+        size_t N = cur_element_count;
+
+        // -------- helpers --------
+        auto node_has_bit = [&](tableint v) -> bool {
+            int* a = attr_at(v, attr_idx);
+            if (attr_type_[attr_idx] == 0) {  // numerical
+                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
+                                      counting_hash_table_mapping[attr_idx].size(), a[0]);
+                return pos == bit_idx;
+            } else {  // categorical
+                for (int k = 0; k <= max_cate_size_; ++k) {
+                    int bp = k >> 5;
+                    int bi = k & 31;
+                    if (bp < cate_int_byte_ && (a[bp] & (1 << bi))) {
+                        int pos = counting_hash_table_mapping[attr_idx][k];
+                        if (pos == bit_idx) return true;
+                    }
+                }
+                return false;
+            }
+        };
+
+        auto edge_has_bit = [&](tableint u, int j) -> bool {
+            unsigned char* eft = edge_ft_at(u, j, attr_idx);
+            return (eft[byte_pos] & bit_mask) != 0;
+        };
+
+        auto edge_set_bit = [&](tableint u, int j) -> bool {
+            unsigned char* eft = edge_ft_at(u, j, attr_idx);
+            if (eft[byte_pos] & bit_mask) return false;
+            eft[byte_pos] |= bit_mask;
+            return true;
+        };
+
+        // -------- Phase 1+2: BFS through bit-b edges --------
+        // Sources: ALL layer-1 nodes that have this bit. (We want connectivity
+        // from any layer-1 entry that has a bit-b edge to start expansion.)
+        std::vector<uint8_t> reachable(N, 0);
+        std::vector<tableint> queue;
+        queue.reserve(N / 8 + 16);
+
+        for (size_t v = 0; v < N; v++) {
+            if (element_levels_[v] >= 1 && node_has_bit(v)) {
+                reachable[v] = 1;
+                queue.push_back((tableint)v);
+            }
+        }
+        long long n_seeds = (long long)queue.size();
+
+        size_t head = 0;
+        while (head < queue.size()) {
+            tableint u = queue[head++];
+            linklistsizeint* ll = get_linklist0(u);
+            unsigned short cur_deg = getListCount(ll);
+            tableint* nbr = (tableint*)(ll + 1);
+            for (int j = 0; j < cur_deg; j++) {
+                if (!edge_has_bit(u, j)) continue;
+                tableint w = nbr[j];
+                if (!reachable[w]) {
+                    reachable[w] = 1;
+                    queue.push_back(w);
+                }
+            }
+        }
+
+        // -------- Phase 3: collect unreachable qualifying nodes --------
+        std::vector<tableint> unreachable_qual;
+        for (size_t v = 0; v < N; v++) {
+            if (!reachable[v] && node_has_bit(v)) {
+                unreachable_qual.push_back((tableint)v);
+            }
+        }
+        long long n_unreach = (long long)unreachable_qual.size();
+
+        if (n_unreach == 0) {
+            return {n_seeds, 0, 0};
+        }
+
+        // -------- Phase 4: K rounds of repair, each forcing edge-disjoint paths --------
+        // Round 1: standard 0-1 BFS, weight=0 on edges with bit set.
+        // Round r > 1: edges flipped in PREVIOUS rounds get weight=1 (disqualified
+        //   from being weight-0 shortcut), forcing the BFS to find an alternative
+        //   path. Original bit-b edges (set BEFORE coloring) remain weight-0 and
+        //   may be reused. This produces K largely edge-disjoint repair paths per
+        //   unreachable node, ensuring K-redundant connectivity to the source set.
+        const int INF = std::numeric_limits<int>::max();
+
+        // Snapshot original bit-b edges (so we know which edges are "free" across
+        // all rounds). Stored as a flat per-node bitset over local edge indices.
+        // Memory: ~maxM0_ bits per node = ~10 bytes per node => 40MB for 4M.
+        std::vector<uint8_t> orig_bit_set;  // [v * maxM0_ + j] = 1 if edge originally had bit
+        orig_bit_set.assign(N * maxM0_, 0);
+        for (size_t v = 0; v < N; v++) {
+            linklistsizeint* ll = get_linklist0(v);
+            unsigned short cur_deg = getListCount(ll);
+            for (int j = 0; j < cur_deg; j++) {
+                if (edge_has_bit(v, j)) orig_bit_set[v * maxM0_ + j] = 1;
+            }
+        }
+
+        long long bits_flipped = 0;
+        long long unrepairable_last = 0;
+
+        // Snapshot original Phase-4 source set (do NOT add round-r repaired nodes
+        // to source set, otherwise round 2 would find trivial 0-length paths).
+        std::vector<uint8_t> orig_phase4_source(N, 0);
+        for (size_t v = 0; v < N; v++) {
+            if (reachable[v] || element_levels_[v] >= 1) {
+                orig_phase4_source[v] = 1;
+            }
+        }
+
+        // Track which edges have been flipped in any previous round.
+        // Round r > 0 BFS will FORBID these edges (skip them entirely),
+        // forcing round r's repair path to be edge-disjoint from prior rounds.
+        std::vector<uint8_t> flipped_prev(N * maxM0_, 0);
+
+        for (int round = 0; round < K; round++) {
+            std::vector<int> dist(N, INF);
+            std::vector<tableint> pred(N, (tableint)-1);
+            std::deque<tableint> dq;
+
+            for (size_t v = 0; v < N; v++) {
+                if (orig_phase4_source[v]) {
+                    dist[v] = 0;
+                    pred[v] = (tableint)-1;
+                    dq.push_back((tableint)v);
+                }
+            }
+
+            while (!dq.empty()) {
+                tableint u = dq.front();
+                dq.pop_front();
+                int du = dist[u];
+                linklistsizeint* ll = get_linklist0(u);
+                unsigned short cur_deg = getListCount(ll);
+                tableint* nbr = (tableint*)(ll + 1);
+                for (int j = 0; j < cur_deg; j++) {
+                    // Forbid edges flipped in any previous round (forces disjoint paths)
+                    if (flipped_prev[u * maxM0_ + j]) continue;
+                    tableint w = nbr[j];
+                    int weight = orig_bit_set[u * maxM0_ + j] ? 0 : 1;
+                    int nd = du + weight;
+                    if (nd < dist[w]) {
+                        dist[w] = nd;
+                        pred[w] = u;
+                        if (weight == 0) dq.push_front(w);
+                        else dq.push_back(w);
+                    }
+                }
+            }
+
+            // For each unreachable qualifying node, walk pred chain back to source,
+            // flip bits and record flipped edges so next round forbids them.
+            long long unrepairable = 0;
+            long long round_flips = 0;
+            for (tableint u : unreachable_qual) {
+                std::vector<tableint> chain;
+                tableint cur = u;
+                while (cur != (tableint)-1 && !orig_phase4_source[cur]) {
+                    chain.push_back(cur);
+                    if (pred[cur] == cur) break;
+                    cur = pred[cur];
+                }
+                if (cur == (tableint)-1) {
+                    unrepairable++;
+                    continue;
+                }
+                tableint child = cur;
+                for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+                    tableint parent = child;
+                    tableint kid = *it;
+
+                    linklistsizeint* ll_p = get_linklist0(parent);
+                    unsigned short deg_p = getListCount(ll_p);
+                    tableint* nbr_p = (tableint*)(ll_p + 1);
+                    for (int j = 0; j < deg_p; j++) {
+                        if (nbr_p[j] == kid) {
+                            if (edge_set_bit(parent, j)) bits_flipped++, round_flips++;
+                            flipped_prev[parent * maxM0_ + j] = 1;
+                            break;
+                        }
+                    }
+                    linklistsizeint* ll_k = get_linklist0(kid);
+                    unsigned short deg_k = getListCount(ll_k);
+                    tableint* nbr_k = (tableint*)(ll_k + 1);
+                    for (int j = 0; j < deg_k; j++) {
+                        if (nbr_k[j] == parent) {
+                            if (edge_set_bit(kid, j)) bits_flipped++, round_flips++;
+                            flipped_prev[kid * maxM0_ + j] = 1;
+                            break;
+                        }
+                    }
+                    child = kid;
+                }
+            }
+            unrepairable_last = unrepairable;
+            (void)round_flips;
+        }
+
+        if (unrepairable_last > 0) {
+            fprintf(stderr, "  color_ft_bit(attr=%d,bit=%d,K=%d): %lld unreachable could not be repaired (disconnected components)\n",
+                    attr_idx, bit_idx, K, unrepairable_last);
+        }
+        return {n_seeds, n_unreach, bits_flipped};
+    }
+
+    /**
+     * color_all_ft_bits: iterate over all attribute bits and repair
+     * connectivity per bit. Returns total bits flipped.
+     */
+    long long color_all_ft_bits(int K = 1, bool verbose = true) {
+        // DEPRECATED: see color_ft_bit. Use color_all_ft_bits_voronoi instead.
+        (void)K; (void)verbose;
+        fprintf(stderr, "color_all_ft_bits: DEPRECATED — use color_all_ft_bits_voronoi\n");
+        return 0;
+    }
+
+    long long color_all_ft_bits_legacy(int K = 1, bool verbose = true) {
+        if (!edge_level_ft_) {
+            fprintf(stderr, "color_all_ft_bits: requires edge-level FT\n");
+            return 0;
+        }
+        long long total_flipped = 0;
+        long long total_unreach = 0;
+        size_t N = cur_element_count;
+        int n_attrs = (int)attr_type_.size();
+        int total_bits = n_attrs * (int)(ft_bytes_ * 8);
+        fprintf(stderr, "color_all_ft_bits: N=%zu, attrs=%d, ft_bytes=%zu, total_bits=%d, K=%d\n",
+                N, n_attrs, ft_bytes_, total_bits, K);
+        auto t_start = std::chrono::high_resolution_clock::now();
+        for (int a = 0; a < n_attrs; a++) {
+            for (int b = 0; b < (int)ft_bytes_ * 8; b++) {
+                auto bt = std::chrono::high_resolution_clock::now();
+                auto [seeds, unreach, flipped] = color_ft_bit_legacy(a, b, K);
+                auto et = std::chrono::high_resolution_clock::now();
+                double sec = std::chrono::duration<double>(et - bt).count();
+                total_flipped += flipped;
+                total_unreach += unreach;
+                if (verbose) {
+                    fprintf(stderr, "  bit (attr=%d,b=%d): seeds=%lld, unreach_qual=%lld, flipped=%lld, %.2fs\n",
+                            a, b, seeds, unreach, flipped, sec);
+                }
+            }
+        }
+        auto t_end = std::chrono::high_resolution_clock::now();
+        double total_sec = std::chrono::duration<double>(t_end - t_start).count();
+        fprintf(stderr, "color_all_ft_bits: done in %.1fs. total unreach=%lld, total bits flipped=%lld\n",
+                total_sec, total_unreach, total_flipped);
+        return total_flipped;
+    }
+
+    /**
+     * color_ft_bit_voronoi: per-bit connectivity coloring via multi-source BFS.
+     *
+     * Goal: for every qualifying node q (node_has_bit=true), guarantee that at
+     * least K_neighbors of its "Voronoi neighbor" qualifying nodes are reachable
+     * from q via FT-bit-set edges only (without traversing distant chains).
+     *
+     * Algorithm (per bit):
+     *   1. Multi-source BFS on full HNSW from all qualifying nodes. For every
+     *      node v: source[v] = nearest qualifying, parent[v] = BFS-tree parent.
+     *   2. Scan all directed edges (u -> w). If source[u] != source[w], this
+     *      edge bridges two Voronoi regions. Track best (shortest combined
+     *      dist[u]+dist[w]+1) bridge per ordered (source[u], source[w]) pair.
+     *   3. For each qualifying source s, pick the K_neighbors closest other
+     *      sources (by best-bridge distance). For each picked bridge: walk
+     *      parent chain from u back to source[u], from w back to source[w],
+     *      and color the bridge edge itself. All edges set bit (both directions).
+     *
+     * Returns: (n_qualifying, n_selected_bridges, bits_flipped).
+     */
+    std::tuple<long long, long long, long long>
+    color_ft_bit_voronoi(int attr_idx, int bit_idx, int K_neighbors = 4) {
+        if (!edge_level_ft_) {
+            fprintf(stderr, "color_ft_bit_voronoi: requires edge-level FT\n");
+            return {0, 0, 0};
+        }
+        if (attr_idx < 0 || attr_idx >= (int)attr_type_.size()) {
+            fprintf(stderr, "color_ft_bit_voronoi: attr_idx out of range\n");
+            return {0, 0, 0};
+        }
+        int byte_pos = bit_idx >> 3;
+        int bit_in_byte = bit_idx & 7;
+        if (byte_pos < 0 || byte_pos >= (int)ft_bytes_) {
+            fprintf(stderr, "color_ft_bit_voronoi: bit_idx out of range\n");
+            return {0, 0, 0};
+        }
+        unsigned char bit_mask = (unsigned char)(1u << bit_in_byte);
+        size_t N = cur_element_count;
+
+        auto node_has_bit = [&](tableint v) -> bool {
+            int* a = attr_at(v, attr_idx);
+            if (attr_type_[attr_idx] == 0) {
+                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
+                                      counting_hash_table_mapping[attr_idx].size(), a[0]);
+                return pos == bit_idx;
+            } else {
+                for (int k = 0; k <= max_cate_size_; ++k) {
+                    int bp = k >> 5;
+                    int bi = k & 31;
+                    if (bp < cate_int_byte_ && (a[bp] & (1 << bi))) {
+                        int pos = counting_hash_table_mapping[attr_idx][k];
+                        if (pos == bit_idx) return true;
+                    }
+                }
+                return false;
+            }
+        };
+
+        auto edge_set_bit = [&](tableint u, int j) -> bool {
+            unsigned char* eft = edge_ft_at(u, j, attr_idx);
+            if (eft[byte_pos] & bit_mask) return false;
+            eft[byte_pos] |= bit_mask;
+            return true;
+        };
+
+        // 1) Multi-source BFS from all qualifying nodes
+        std::vector<tableint> source(N, (tableint)-1);
+        std::vector<tableint> parent(N, (tableint)-1);
+        std::vector<int> dist(N, std::numeric_limits<int>::max());
+        std::vector<tableint> bfs_q;
+        bfs_q.reserve(N);
+
+        long long n_qual = 0;
+        for (size_t v = 0; v < N; v++) {
+            if (node_has_bit((tableint)v)) {
+                source[v] = (tableint)v;
+                parent[v] = (tableint)-1;
+                dist[v] = 0;
+                bfs_q.push_back((tableint)v);
+                n_qual++;
+            }
+        }
+        if (n_qual == 0) return {0, 0, 0};
+
+        size_t head = 0;
+        while (head < bfs_q.size()) {
+            tableint u = bfs_q[head++];
+            int du = dist[u];
+            linklistsizeint* ll = get_linklist0(u);
+            unsigned short cur_deg = getListCount(ll);
+            tableint* nbr = (tableint*)(ll + 1);
+            for (int j = 0; j < cur_deg; j++) {
+                tableint w = nbr[j];
+                if (dist[w] == std::numeric_limits<int>::max()) {
+                    dist[w] = du + 1;
+                    parent[w] = u;
+                    source[w] = source[u];
+                    bfs_q.push_back(w);
+                }
+            }
+        }
+
+        // 2) Find best bridge per ordered (source_u, source_w) pair
+        struct BridgeInfo {
+            int dist_sum;       // dist[u] + 1 + dist[w]
+            tableint u;
+            tableint w;
+            int j_in_u;         // edge index of w in u's neighbor list
+        };
+        // Key: pack two tableint into uint64
+        auto pack_key = [](tableint a, tableint b) -> uint64_t {
+            return ((uint64_t)a << 32) | (uint64_t)b;
+        };
+        std::unordered_map<uint64_t, BridgeInfo> best_bridge;
+        best_bridge.reserve(N);
+
+        for (size_t v = 0; v < N; v++) {
+            tableint sv = source[v];
+            if (sv == (tableint)-1) continue;
+            linklistsizeint* ll = get_linklist0(v);
+            unsigned short cur_deg = getListCount(ll);
+            tableint* nbr = (tableint*)(ll + 1);
+            int dv = dist[v];
+            for (int j = 0; j < cur_deg; j++) {
+                tableint w = nbr[j];
+                tableint sw = source[w];
+                if (sw == (tableint)-1 || sw == sv) continue;
+                int bd = dv + 1 + dist[w];
+                uint64_t key = pack_key(sv, sw);
+                auto it = best_bridge.find(key);
+                if (it == best_bridge.end() || it->second.dist_sum > bd) {
+                    best_bridge[key] = {bd, (tableint)v, w, j};
+                }
+            }
+        }
+
+        // 3) Group bridges by source, pick top K_neighbors closest
+        std::unordered_map<tableint, std::vector<std::pair<int, uint64_t>>> per_source;
+        per_source.reserve(n_qual);
+        for (auto& kv : best_bridge) {
+            tableint s_u = (tableint)(kv.first >> 32);
+            per_source[s_u].push_back({kv.second.dist_sum, kv.first});
+        }
+
+        // Selected bridges (use set of keys)
+        std::unordered_set<uint64_t> selected;
+        selected.reserve(per_source.size() * (size_t)K_neighbors);
+        for (auto& kv : per_source) {
+            auto& v = kv.second;
+            if ((int)v.size() > K_neighbors) {
+                std::nth_element(v.begin(), v.begin() + K_neighbors, v.end(),
+                    [](const std::pair<int, uint64_t>& a, const std::pair<int, uint64_t>& b) {
+                        return a.first < b.first;
+                    });
+                v.resize(K_neighbors);
+            }
+            for (auto& p : v) selected.insert(p.second);
+        }
+
+        // 4) Color: for each selected bridge, color path u->source[u], path w->source[w], bridge edge
+        long long flipped = 0;
+        long long n_bridges = (long long)selected.size();
+
+        auto color_edge_bidir = [&](tableint a, tableint b) {
+            linklistsizeint* ll_a = get_linklist0(a);
+            unsigned short da = getListCount(ll_a);
+            tableint* nbr_a = (tableint*)(ll_a + 1);
+            for (int j = 0; j < da; j++) {
+                if (nbr_a[j] == b) { if (edge_set_bit(a, j)) flipped++; break; }
+            }
+            linklistsizeint* ll_b = get_linklist0(b);
+            unsigned short db = getListCount(ll_b);
+            tableint* nbr_b = (tableint*)(ll_b + 1);
+            for (int j = 0; j < db; j++) {
+                if (nbr_b[j] == a) { if (edge_set_bit(b, j)) flipped++; break; }
+            }
+        };
+
+        auto color_chain_to_source = [&](tableint v) {
+            tableint cur = v;
+            while (parent[cur] != (tableint)-1) {
+                tableint p = parent[cur];
+                color_edge_bidir(p, cur);
+                cur = p;
+            }
+        };
+
+        for (uint64_t key : selected) {
+            const BridgeInfo& bi = best_bridge[key];
+            color_edge_bidir(bi.u, bi.w);
+            color_chain_to_source(bi.u);
+            color_chain_to_source(bi.w);
+        }
+
+        return {n_qual, n_bridges, flipped};
+    }
+
+    long long color_all_ft_bits_voronoi(int K_neighbors = 4, bool verbose = true) {
+        if (!edge_level_ft_) {
+            fprintf(stderr, "color_all_ft_bits_voronoi: requires edge-level FT\n");
+            return 0;
+        }
+        long long total_flipped = 0;
+        long long total_bridges = 0;
+        size_t N = cur_element_count;
+        int n_attrs = (int)attr_type_.size();
+        int total_bits = n_attrs * (int)(ft_bytes_ * 8);
+        fprintf(stderr, "color_all_ft_bits_voronoi: N=%zu, attrs=%d, ft_bytes=%zu, total_bits=%d, K_neighbors=%d\n",
+                N, n_attrs, ft_bytes_, total_bits, K_neighbors);
+        auto t_start = std::chrono::high_resolution_clock::now();
+        for (int a = 0; a < n_attrs; a++) {
+            for (int b = 0; b < (int)ft_bytes_ * 8; b++) {
+                auto bt = std::chrono::high_resolution_clock::now();
+                auto [n_qual, n_bridges, flipped] = color_ft_bit_voronoi(a, b, K_neighbors);
+                auto et = std::chrono::high_resolution_clock::now();
+                double sec = std::chrono::duration<double>(et - bt).count();
+                total_flipped += flipped;
+                total_bridges += n_bridges;
+                if (verbose) {
+                    fprintf(stderr, "  bit (attr=%d,b=%d): qual=%lld bridges=%lld flipped=%lld %.2fs\n",
+                            a, b, n_qual, n_bridges, flipped, sec);
+                }
+            }
+        }
+        auto t_end = std::chrono::high_resolution_clock::now();
+        double total_sec = std::chrono::duration<double>(t_end - t_start).count();
+        fprintf(stderr, "color_all_ft_bits_voronoi: done in %.1fs. total bridges=%lld, bits flipped=%lld\n",
+                total_sec, total_bridges, total_flipped);
+        return total_flipped;
     }
 
     double update_ft_time{0.0};

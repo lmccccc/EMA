@@ -85,6 +85,7 @@ python -u ../tests/hashann_build.py --data_path $dataset_file \
                                                --n_query_to_use $query_size \
                                                --attr_type_list $attr_type \
                                                --ft_bits ${ft_bits} \
+                                               $( [ "$edge_level_ft" = "true" ] && echo "--edge_level_ft" ) \
                                                --threads $threads \
                                                 2>&1 | tee -a logs/bfann_construction.log
 echo "${hashann_index_file} construction done" >> logs/bfann_construction.log

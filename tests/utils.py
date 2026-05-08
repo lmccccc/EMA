@@ -110,6 +110,7 @@ def arg_init():
     )
     parser.add_argument("--M", type=int, default=16, help="Number of graph connections")
     parser.add_argument("--ft_bits", type=int, default=128, help="Number of bits per filter table/ number of bytes per countering hash table")
+    parser.add_argument("--edge_level_ft", action="store_true", help="Store FT per-edge in each node's element (Jan-style packed layout) instead of per-node.")
     parser.add_argument(
         "--efConstruction", type=int, default=500, help="Parameter for HNSW index"
     )

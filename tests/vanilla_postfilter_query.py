@@ -53,9 +53,56 @@ def build_qualifier(attrs, predicate_sample, attr_type_list):
     return qualifying
 
 
+def precompute_attr_indices(attrs, attr_type_list):
+    """Vectorize attrs once for fast per-query qualifier building.
+    Returns (num_arrays_per_attr, label_bitmaps_per_attr).
+    For numerical attr j: num_arrays_per_attr[j] = np.array of N values.
+    For categorical attr j: label_bitmaps_per_attr[j] = dict {label: np.bool_ array of N}.
+    """
+    n = len(attrs)
+    num_arrays = [None] * len(attr_type_list)
+    label_bitmaps = [None] * len(attr_type_list)
+    for j, atype in enumerate(attr_type_list):
+        if atype == 0:
+            arr = np.empty(n, dtype=np.float64)
+            for i in range(n):
+                arr[i] = attrs[i][j][0]
+            num_arrays[j] = arr
+        else:
+            bmaps = {}
+            for i in range(n):
+                for lab in attrs[i][j]:
+                    bm = bmaps.get(lab)
+                    if bm is None:
+                        bm = np.zeros(n, dtype=bool)
+                        bmaps[lab] = bm
+                    bm[i] = True
+            label_bitmaps[j] = bmaps
+    return num_arrays, label_bitmaps
+
+
+def build_qualifier_fast(num_arrays, label_bitmaps, predicate, attr_type_list, n):
+    mask = np.ones(n, dtype=bool)
+    for j, atype in enumerate(attr_type_list):
+        if atype == 0:
+            low, high = predicate[j]
+            mask &= (num_arrays[j] >= low) & (num_arrays[j] <= high)
+        else:
+            for lab in predicate[j]:
+                bm = label_bitmaps[j].get(lab)
+                if bm is None:
+                    return set()  # no item has this label
+                mask &= bm
+    return set(int(x) for x in np.flatnonzero(mask))
+
+
 def main():
     args = parse_args()
-    import hashannlib as hnswlib
+    # Load real vanilla hnswlib (separate .so from hashannlib)
+    import sys as _sys
+    _sys.path.insert(0, "/home/mocheng/hnswlib")
+    import hnswlib
+    _sys.path.pop(0)
 
     efs_list = ast.literal_eval(args.ef_search)
     if not isinstance(efs_list, list):
@@ -83,13 +130,20 @@ def main():
     all_same = all(preds[i] == preds[0] for i in range(1, len(preds)))
     if all_same:
         qualifying = build_qualifier(attrs, preds[0], attr_type_list)
-        print(f"All queries share same predicate. Qualifying items: {len(qualifying)} ({len(qualifying)/len(attrs)*100:.2f}%)")
+        print(f"All queries share same predicate. Qualifying items: {len(qualifying)} ({len(qualifying)/len(attrs)*100:.2f}%)", flush=True)
         per_query_qualifying = None
     else:
-        print("Queries have different predicates, building per-query qualifying sets...")
+        print("Queries have different predicates, precomputing attr indices...", flush=True)
+        t0 = time.time()
+        num_arrays, label_bitmaps = precompute_attr_indices(attrs, attr_type_list)
+        print(f"  precompute done in {time.time()-t0:.1f}s", flush=True)
+        n_items = len(attrs)
         per_query_qualifying = []
+        t0 = time.time()
         for i in range(nq):
-            per_query_qualifying.append(build_qualifier(attrs, preds[i], attr_type_list))
+            per_query_qualifying.append(
+                build_qualifier_fast(num_arrays, label_bitmaps, preds[i], attr_type_list, n_items))
+        print(f"  built {nq} per-query qualifying sets in {time.time()-t0:.1f}s", flush=True)
         qualifying = None
 
     del attrs  # free memory
@@ -107,11 +161,11 @@ def main():
         p.set_ef(ef)
 
         # warm up
-        p.knn_query_with_stats(queries[:min(3, nq)], k=min(ef, 100))
+        p.knn_query(queries[:min(3, nq)], k=min(ef, 100))
 
         # query: k=ef to get enough candidates for post-filtering
         start = time.time()
-        labels_all, dists_all, cmps, hops = p.knn_query_with_stats(queries, k=ef)
+        labels_all, dists_all = p.knn_query(queries, k=ef)
         elapsed = time.time() - start
         qps = nq / elapsed
 
@@ -124,14 +178,12 @@ def main():
             correct_sum += len(set(filtered) & gt_set)
 
         recall = correct_sum / (nq * args.k)
-        avg_cmps = float(np.mean(cmps))
-        avg_hops = float(np.mean(hops))
 
-        print(f"Query time: {elapsed} seconds, QPS:{qps}, cmps:{avg_cmps}")
+        print(f"Query time: {elapsed} seconds, QPS:{qps}")
         print(f"ef search: {ef}, recall: {recall:.4f}")
-        result.append([ef, recall, qps, avg_cmps])
+        result.append([ef, recall, qps])
 
-    print("Final results (ef_search, recall, QPS, cmps):")
+    print("Final results (ef_search, recall, QPS):")
     for res in result:
         print(res)
 

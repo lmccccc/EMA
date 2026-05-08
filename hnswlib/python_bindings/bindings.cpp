@@ -276,6 +276,36 @@ class Index {
         return result;
     }
 
+    py::dict color_ft_bit(int attr_idx, int bit_idx, int K = 1) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        auto [seeds, unreach, flipped] = appr_alg->color_ft_bit(attr_idx, bit_idx, K);
+        py::dict result;
+        result["seeds"] = seeds;
+        result["unreachable_qualifying"] = unreach;
+        result["bits_flipped"] = flipped;
+        return result;
+    }
+
+    long long color_all_ft_bits(int K = 1, bool verbose = true) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        return appr_alg->color_all_ft_bits(K, verbose);
+    }
+
+    py::dict color_ft_bit_voronoi(int attr_idx, int bit_idx, int K_neighbors = 4) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        auto [n_qual, n_bridges, flipped] = appr_alg->color_ft_bit_voronoi(attr_idx, bit_idx, K_neighbors);
+        py::dict result;
+        result["qualifying"] = n_qual;
+        result["bridges"] = n_bridges;
+        result["bits_flipped"] = flipped;
+        return result;
+    }
+
+    long long color_all_ft_bits_voronoi(int K_neighbors = 4, bool verbose = true) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        return appr_alg->color_all_ft_bits_voronoi(K_neighbors, verbose);
+    }
+
     void augment_edges_cht(int efc = 2000, int num_threads = 32) {
         if (!appr_alg) throw std::runtime_error("Index not initialized");
         appr_alg->augment_edges_cht(efc, num_threads);
@@ -342,6 +372,43 @@ class Index {
             }
         }
         return counts;
+    }
+
+    // Returns (total_bits[a], total_edges[a], total_bit_capacity[a]) per attr,
+    // counted over ALL real edges (sum of degrees). Honest edge-FT density.
+    py::tuple get_edge_ft_bit_stats() {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        if (!appr_alg->edge_level_ft_) throw std::runtime_error("Not edge-level FT");
+        size_t n = appr_alg->cur_element_count;
+        size_t num_attrs = appr_alg->attr_type_.size();
+        size_t ft_bytes = appr_alg->ft_bytes_;
+
+        std::vector<uint64_t> total_bits(num_attrs, 0);
+        uint64_t total_edges = 0;
+        for (size_t i = 0; i < n; i++) {
+            int* data = (int*)appr_alg->get_linklist0(i);
+            size_t deg = appr_alg->getListCount((hnswlib::linklistsizeint*)data);
+            total_edges += deg;
+            for (size_t e = 0; e < deg; e++) {
+                for (size_t a = 0; a < num_attrs; a++) {
+                    unsigned char* ft = appr_alg->edge_ft_at(i, e, a);
+                    int bits = 0;
+                    size_t off = 0;
+                    for (; off + 8 <= ft_bytes; off += 8) {
+                        uint64_t val;
+                        memcpy(&val, ft + off, 8);
+                        bits += __builtin_popcountll(val);
+                    }
+                    for (; off < ft_bytes; off++) bits += __builtin_popcount(ft[off]);
+                    total_bits[a] += bits;
+                }
+            }
+        }
+        py::array_t<uint64_t> bits_arr(num_attrs);
+        auto b = bits_arr.mutable_unchecked<1>();
+        for (size_t a = 0; a < num_attrs; a++) b(a) = total_bits[a];
+        size_t bit_cap_per_edge = ft_bytes * 8;
+        return py::make_tuple(bits_arr, (uint64_t)total_edges, (uint64_t)bit_cap_per_edge);
     }
 
 
@@ -2213,10 +2280,19 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("get_degrees", &Index<float>::get_degrees)
         .def("get_neighbors", &Index<float>::get_neighbors, py::arg("node_id"))
         .def("get_ft_bit_counts", &Index<float>::get_ft_bit_counts)
+        .def("get_edge_ft_bit_stats", &Index<float>::get_edge_ft_bit_stats)
         .def("augment_ft_neighbors", &Index<float>::augment_ft_neighbors,
              py::arg("min_same") = 8, py::arg("max_hops") = 3)
         .def("augment_ft_bfs", &Index<float>::augment_ft_bfs,
              py::arg("min_same") = 4, py::arg("max_hops") = 3, py::arg("num_threads") = 1)
+        .def("color_ft_bit_voronoi", &Index<float>::color_ft_bit_voronoi,
+             py::arg("attr_idx"), py::arg("bit_idx"), py::arg("K_neighbors") = 4)
+        .def("color_all_ft_bits_voronoi", &Index<float>::color_all_ft_bits_voronoi,
+             py::arg("K_neighbors") = 4, py::arg("verbose") = true)
+        .def("color_ft_bit", &Index<float>::color_ft_bit,
+             py::arg("attr_idx"), py::arg("bit_idx"), py::arg("K") = 1)
+        .def("color_all_ft_bits", &Index<float>::color_all_ft_bits,
+             py::arg("K") = 1, py::arg("verbose") = true)
         .def("augment_edges_cht", &Index<float>::augment_edges_cht,
              py::arg("efc") = 2000, py::arg("num_threads") = 32)
         .def("set_attr_sort_alpha", &Index<float>::set_attr_sort_alpha, py::arg("alpha"))

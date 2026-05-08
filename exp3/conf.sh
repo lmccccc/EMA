@@ -17,7 +17,7 @@ attr_type="[0,1]"
 distribution_type="random"  # random, normal, zipf
 
 # 0.5 for numerical, [1,2] for categorical label(s)
-query_sel="[0.333,7]"
+query_sel="${query_sel:-[0.333,7]}"
 
 # sel conf:   
 # attr_type    10%         20%        40%        60%       80%      100%
@@ -54,7 +54,7 @@ M=40
 threads=32 # 1
 ef_construction=300
 ef_top=1
-ft_bits=128
+ft_bits="${ft_bits:-128}"
 use_ft=true
 
 # DNF predicate support (OR of ANDs)
@@ -233,8 +233,16 @@ hashann_index_root=${hashann_root}index/
 
 # use_ft=false
 
+# Edge-level FT layout (Jan-style packed-per-node). Override with env var: edge_level_ft=true
+edge_level_ft="${edge_level_ft:-false}"
+if [ "$edge_level_ft" = "true" ]; then
+    edge_ft_suffix="_edgeFT"
+else
+    edge_ft_suffix=""
+fi
+
 # hashann_index_file=${hashann_index_root}index_${M}_${ef_construction}_${attr_index_type}
-hashann_index_file=${hashann_index_root}index_${M}_${ef_construction}_${attr_index_type}_${ft_bits}
+hashann_index_file=${hashann_index_root}index_${M}_${ef_construction}_${attr_index_type}_${ft_bits}${edge_ft_suffix}
 
 # if hashann_index_file not exist, copy from ori_hashann_index_file and ft_bits=256
 ori_hashann_index_file=${hashann_index_root}index_${M}_${ef_construction}_${attr_index_type}

@@ -84,7 +84,8 @@ class HashANN:
                               M=params["M"], 
                               ft_bits=params["ft_bits"], 
                               attr_type=attr_type_list,
-                              max_cate_size=max_cate_value)
+                              max_cate_size=max_cate_value,
+                              edge_level_ft=bool(params.get("edge_level_ft", False)))
         self.index.set_num_threads(threads)
 
         print("init index done, time:", time.time() - start)

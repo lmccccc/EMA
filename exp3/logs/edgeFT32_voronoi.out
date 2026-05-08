@@ -1,0 +1,220 @@
+===== Baseline density =====
+SSE is supported.
+AVX2 is supported.
+AVX512 is supported.
+attr_size_per_item_:2, max_elements_:4000000
+counting_hash_table_mapping_size:2
+cht 0 vec:0, 3117, 6252, 9382, 12494, 15624, 18740, 21866, 24984, 28102, 31213, 34344, 37458, 40590, 43715, 46844, 49986, 53118, 56241, 59355, 62493, 65620, 68750, 71872, 74993, 78123, 81255, 84369, 87482, 90621, 93761, 96895, 
+cht 1 vec:0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 
+[BASE] edges=114635318 cap_per_edge=32
+[BASE] attr[0]: total_bits=476937539  mean=4.1605  density=13.0015%
+[BASE] attr[1]: total_bits=933183951  mean=8.1405  density=25.4389%
+
+===== Voronoi color K_neighbors=4 =====
+name: HNSW
+Loading index: HNSW...
+index path: /mnt/data/mocheng/dataset/redcaps4m/hashann/index/index_40_300_arbi_0_1_random_32_edgeFT
+SSE is supported.
+AVX2 is supported.
+AVX512 is supported.
+attr_size_per_item_:2, max_elements_:4000000
+counting_hash_table_mapping_size:2
+cht 0 vec:0, 3117, 6252, 9382, 12494, 15624, 18740, 21866, 24984, 28102, 31213, 34344, 37458, 40590, 43715, 46844, 49986, 53118, 56241, 59355, 62493, 65620, 68750, 71872, 74993, 78123, 81255, 84369, 87482, 90621, 93761, 96895, 
+cht 1 vec:0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 
+index loaded
+Generating attribute indexes ...
+Number of attributes: 2
+Attribute 0: numerical
+Attribute 1: categorical
+Attribute indexes generated.
+Index loaded: HNSW, duration: 11.60951852798462.
+Voronoi coloring K_neighbors=4 ...
+color_all_ft_bits_voronoi: N=4000000, attrs=2, ft_bytes=4, total_bits=64, K_neighbors=4
+  bit (attr=0,b=0): qual=56 bridges=224 flipped=1092 3.53s
+  bit (attr=0,b=1): qual=124982 bridges=498421 flipped=465140 42.19s
+  bit (attr=0,b=2): qual=124966 bridges=498338 flipped=475768 41.78s
+  bit (attr=0,b=3): qual=125010 bridges=498564 flipped=486627 39.68s
+  bit (attr=0,b=4): qual=125006 bridges=498624 flipped=495157 42.05s
+  bit (attr=0,b=5): qual=124982 bridges=498377 flipped=503965 40.69s
+  bit (attr=0,b=6): qual=125004 bridges=498553 flipped=510200 40.78s
+  bit (attr=0,b=7): qual=125037 bridges=498686 flipped=515029 40.87s
+  bit (attr=0,b=8): qual=124975 bridges=498511 flipped=517827 41.72s
+  bit (attr=0,b=9): qual=125004 bridges=498653 flipped=521401 43.03s
+  bit (attr=0,b=10): qual=125000 bridges=498547 flipped=522382 40.73s
+  bit (attr=0,b=11): qual=125009 bridges=498704 flipped=526693 40.77s
+  bit (attr=0,b=12): qual=124991 bridges=498529 flipped=525856 40.72s
+  bit (attr=0,b=13): qual=125022 bridges=498594 flipped=529461 40.90s
+  bit (attr=0,b=14): qual=124984 bridges=498460 flipped=532800 40.61s
+  bit (attr=0,b=15): qual=124996 bridges=498629 flipped=532189 41.38s
+  bit (attr=0,b=16): qual=125001 bridges=498589 flipped=528912 42.12s
+  bit (attr=0,b=17): qual=125016 bridges=498715 flipped=531397 42.11s
+  bit (attr=0,b=18): qual=124966 bridges=498377 flipped=530927 41.50s
+  bit (attr=0,b=19): qual=125009 bridges=498633 flipped=530636 41.70s
+  bit (attr=0,b=20): qual=125007 bridges=498590 flipped=530245 41.05s
+  bit (attr=0,b=21): qual=124985 bridges=498579 flipped=527230 41.82s
+  bit (attr=0,b=22): qual=125001 bridges=498563 flipped=525957 41.09s
+  bit (attr=0,b=23): qual=125010 bridges=498622 flipped=524250 41.59s
+  bit (attr=0,b=24): qual=125015 bridges=498557 flipped=519186 40.28s
+  bit (attr=0,b=25): qual=124992 bridges=498437 flipped=517246 41.57s
+  bit (attr=0,b=26): qual=124978 bridges=498430 flipped=513538 41.52s
+  bit (attr=0,b=27): qual=125034 bridges=498596 flipped=509103 41.54s
+  bit (attr=0,b=28): qual=124997 bridges=498538 flipped=502941 40.09s
+  bit (attr=0,b=29): qual=124995 bridges=498536 flipped=496705 39.76s
+  bit (attr=0,b=30): qual=124991 bridges=498425 flipped=486835 41.21s
+  bit (attr=0,b=31): qual=124984 bridges=498407 flipped=476781 41.35s
+  bit (attr=1,b=0): qual=4000000 bridges=15893415 flipped=0 133.40s
+  bit (attr=1,b=1): qual=3599794 bridges=14302964 flipped=31558 124.92s
+  bit (attr=1,b=2): qual=3200933 bridges=12718433 flipped=69500 120.98s
+  bit (attr=1,b=3): qual=2800307 bridges=11126282 flipped=116487 118.14s
+  bit (attr=1,b=4): qual=2400311 bridges=9536644 flipped=177118 109.27s
+  bit (attr=1,b=5): qual=1998699 bridges=7941343 flipped=261078 103.22s
+  bit (attr=1,b=6): qual=1600252 bridges=6358242 flipped=376243 96.96s
+  bit (attr=1,b=7): qual=1201464 bridges=4774618 flipped=538110 90.92s
+  bit (attr=1,b=8): qual=799850 bridges=3180127 flipped=760864 83.39s
+  bit (attr=1,b=9): qual=399667 bridges=1590796 flipped=942608 72.00s
+  bit (attr=1,b=10): qual=359359 bridges=1430802 flipped=931373 70.81s
+  bit (attr=1,b=11): qual=319231 bridges=1271170 flipped=921250 57.29s
+  bit (attr=1,b=12): qual=279547 bridges=1113629 flipped=893514 56.91s
+  bit (attr=1,b=13): qual=240271 bridges=957379 flipped=846330 56.09s
+  bit (attr=1,b=14): qual=199492 bridges=795241 flipped=781157 53.14s
+  bit (attr=1,b=15): qual=160413 bridges=639830 flipped=692140 46.71s
+  bit (attr=1,b=16): qual=120016 bridges=478907 flipped=573469 40.58s
+  bit (attr=1,b=17): qual=80298 bridges=320695 flipped=424262 29.74s
+  bit (attr=1,b=18): qual=39913 bridges=159500 flipped=242016 22.61s
+  bit (attr=1,b=19): qual=4063 bridges=16249 flipped=44422 7.84s
+  bit (attr=1,b=20): qual=0 bridges=0 flipped=0 0.61s
+  bit (attr=1,b=21): qual=0 bridges=0 flipped=0 0.47s
+  bit (attr=1,b=22): qual=0 bridges=0 flipped=0 0.42s
+  bit (attr=1,b=23): qual=0 bridges=0 flipped=0 0.42s
+  bit (attr=1,b=24): qual=0 bridges=0 flipped=0 0.47s
+  bit (attr=1,b=25): qual=0 bridges=0 flipped=0 0.42s
+  bit (attr=1,b=26): qual=0 bridges=0 flipped=0 0.46s
+  bit (attr=1,b=27): qual=0 bridges=0 flipped=0 0.42s
+  bit (attr=1,b=28): qual=0 bridges=0 flipped=0 0.42s
+  bit (attr=1,b=29): qual=0 bridges=0 flipped=0 0.49s
+  bit (attr=1,b=30): qual=0 bridges=0 flipped=0 0.42s
+  bit (attr=1,b=31): qual=0 bridges=0 flipped=0 0.47s
+color_all_ft_bits_voronoi: done in 2782.1s. total bridges=110061274, bits flipped=25536975
+K_neighbors=4 coloring done 2782.1s flipped=25536975
+Saved.
+
+===== K=4 density =====
+SSE is supported.
+AVX2 is supported.
+AVX512 is supported.
+attr_size_per_item_:2, max_elements_:4000000
+counting_hash_table_mapping_size:2
+cht 0 vec:0, 3117, 6252, 9382, 12494, 15624, 18740, 21866, 24984, 28102, 31213, 34344, 37458, 40590, 43715, 46844, 49986, 53118, 56241, 59355, 62493, 65620, 68750, 71872, 74993, 78123, 81255, 84369, 87482, 90621, 93761, 96895, 
+cht 1 vec:0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 
+[voronoi_K=4] edges=114635318 cap_per_edge=32
+[voronoi_K=4] attr[0]: total_bits=492851015  mean=4.2993  density=13.4353%
+[voronoi_K=4] attr[1]: total_bits=942807450  mean=8.2244  density=25.7013%
+
+===== K=4 query =====
+K: 4
+query shape: (10000, 512)
+sorting for label
+Legacy AND-only predicate detected
+name: HNSW
+Loading index: HNSW...
+index path: /mnt/data/mocheng/dataset/redcaps4m/hashann/index/index_40_300_arbi_0_1_random_32_edgeFT_voronoiK4
+SSE is supported.
+AVX2 is supported.
+AVX512 is supported.
+attr_size_per_item_:2, max_elements_:4000000
+counting_hash_table_mapping_size:2
+cht 0 vec:0, 3117, 6252, 9382, 12494, 15624, 18740, 21866, 24984, 28102, 31213, 34344, 37458, 40590, 43715, 46844, 49986, 53118, 56241, 59355, 62493, 65620, 68750, 71872, 74993, 78123, 81255, 84369, 87482, 90621, 93761, 96895, 
+cht 1 vec:0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 
+index loaded
+Generating attribute indexes ...
+Number of attributes: 2
+Attribute 0: numerical
+Attribute 1: categorical
+Attribute indexes generated.
+Index loaded: HNSW, duration: 11.721845865249634.
+start query
+set marker flag: True
+set ft_routing flag to 1
+set ft_routing_min_deg to 0
+index ef_search: 1  ef_top: 1  ft_routing_min_deg: 0
+query size: 1000
+Query time: 0.06347155570983887 seconds, QPS:15755.08885541603, cmps:263.155
+ef search: 1, recall: 0.0000
+set marker flag: True
+set ft_routing flag to 1
+set ft_routing_min_deg to 0
+index ef_search: 5  ef_top: 1  ft_routing_min_deg: 0
+query size: 1000
+Query time: 0.21270537376403809 seconds, QPS:4701.3386747310715, cmps:520.09
+ef search: 5, recall: 0.0000
+set marker flag: True
+set ft_routing flag to 1
+set ft_routing_min_deg to 0
+index ef_search: 10  ef_top: 1  ft_routing_min_deg: 0
+query size: 1000
+Query time: 0.41782069206237793 seconds, QPS:2393.3711733230925, cmps:833.265
+ef search: 10, recall: 0.0000
+set marker flag: True
+set ft_routing flag to 1
+set ft_routing_min_deg to 0
+index ef_search: 20  ef_top: 1  ft_routing_min_deg: 0
+query size: 1000
+Query time: 0.8507893085479736 seconds, QPS:1175.3791331800837, cmps:1545.216
+ef search: 20, recall: 0.0000
+set marker flag: True
+set ft_routing flag to 1
+set ft_routing_min_deg to 0
+index ef_search: 50  ef_top: 1  ft_routing_min_deg: 0
+query size: 1000
+Query time: 2.5268027782440186 seconds, QPS:395.7570446772035, cmps:4422.437
+ef search: 50, recall: 0.0005
+set marker flag: True
+set ft_routing flag to 1
+set ft_routing_min_deg to 0
+index ef_search: 100  ef_top: 1  ft_routing_min_deg: 0
+query size: 1000
+Query time: 5.707162857055664 seconds, QPS:175.21840975042753, cmps:10457.179
+ef search: 100, recall: 0.0005
+set marker flag: True
+set ft_routing flag to 1
+set ft_routing_min_deg to 0
+index ef_search: 200  ef_top: 1  ft_routing_min_deg: 0
+query size: 1000
+Query time: 13.287364959716797 seconds, QPS:75.2594666460726, cmps:24618.886
+ef search: 200, recall: 0.0005
+set marker flag: True
+set ft_routing flag to 1
+set ft_routing_min_deg to 0
+index ef_search: 500  ef_top: 1  ft_routing_min_deg: 0
+query size: 1000
+Query time: 34.48897695541382 seconds, QPS:28.994771323393156, cmps:72528.516
+ef search: 500, recall: 0.0010
+Final results (ef_search, recall, QPS, cmps):
+[1, np.float64(0.0), 15755.08885541603, 263.155]
+[5, np.float64(0.0), 4701.3386747310715, 520.09]
+[10, np.float64(0.0), 2393.3711733230925, 833.265]
+[20, np.float64(0.0), 1175.3791331800837, 1545.216]
+[50, np.float64(0.0005), 395.7570446772035, 4422.437]
+[100, np.float64(0.0005), 175.21840975042753, 10457.179]
+[200, np.float64(0.0005), 75.2594666460726, 24618.886]
+[500, np.float64(0.001), 28.994771323393156, 72528.516]
+
+===== Summary =====
+---- voronoi K=4 ----
+Query time: 0.06347155570983887 seconds, QPS:15755.08885541603, cmps:263.155
+ef search: 1, recall: 0.0000
+Query time: 0.21270537376403809 seconds, QPS:4701.3386747310715, cmps:520.09
+ef search: 5, recall: 0.0000
+Query time: 0.41782069206237793 seconds, QPS:2393.3711733230925, cmps:833.265
+ef search: 10, recall: 0.0000
+Query time: 0.8507893085479736 seconds, QPS:1175.3791331800837, cmps:1545.216
+ef search: 20, recall: 0.0000
+Query time: 2.5268027782440186 seconds, QPS:395.7570446772035, cmps:4422.437
+ef search: 50, recall: 0.0005
+Query time: 5.707162857055664 seconds, QPS:175.21840975042753, cmps:10457.179
+ef search: 100, recall: 0.0005
+Query time: 13.287364959716797 seconds, QPS:75.2594666460726, cmps:24618.886
+ef search: 200, recall: 0.0005
+Query time: 34.48897695541382 seconds, QPS:28.994771323393156, cmps:72528.516
+ef search: 500, recall: 0.0010
+Final results (ef_search, recall, QPS, cmps):

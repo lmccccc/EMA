@@ -6,7 +6,7 @@ now=$(date +"%m-%d-%Y")
 algo=HNSW
 
  # youtube_rgb wiki_negcorr_1_01 wiki_15_4M sift10m Redcaps_4M
-dataset="Redcaps_4M"
+dataset="sift10m"
 wiki_neg_query="wiki_negcorr_9_96"
 # wiki_neg_query="wiki_negcorr_5_10" 
 # wiki_neg_query="wiki_negcorr_9_96"
@@ -17,7 +17,7 @@ attr_type="[0,1]"
 distribution_type="random"  # random, normal, zipf
 
 # 0.5 for numerical, [1,2] for categorical label(s)
-query_sel="[0.333,7]"
+query_sel="[1.0,0]"
 
 # sel conf:   
 # attr_type    10%         20%        40%        60%       80%      100%

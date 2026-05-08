@@ -25,7 +25,8 @@ def load_query_data(query_file, qrange_file, gt_file, N, Nq, k):# fvecs, fvecs, 
     if(".json" in qrange_file):
         query_filter_ranges = read_multy_attr(qrange_file)
         #convert array into turple list
-        # query_filter_ranges = [(query_filter_ranges[i], query_filter_ranges[i+1]) for i in range(0, len(query_filter_ranges), 2)]
+        # query_filter_ranges = [(query_filter_ranges[i], query_filter_ranges[i+1]) for i in range(0, len(query_filter_ranges), 2)]3
+        print("ori query range length:", len(query_filter_ranges), " expected:", Nq)
         assert len(query_filter_ranges) >= Nq
         if len(query_filter_ranges) > Nq:
             query_filter_ranges = query_filter_ranges[:Nq]
@@ -334,6 +335,7 @@ if __name__ == "__main__":
         create_extension(cur, conn)
         # create table
         # delete_table_if_exists(cur, conn, args.schema_name, args.table_name)
+        # exit()
         create_table_if_not_exists(cur, conn, args.schema_name, args.table_name, args.d, attr_type_list)
         # table_exists(cur, args.schema_name, args.table_name)
         # insert data

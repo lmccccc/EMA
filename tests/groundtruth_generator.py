@@ -198,6 +198,38 @@ if __name__ == "__main__":
 
     dataset, attr, query, predicate = read_data(args.dataset_file, args.attr_file, args.N, args.d, args.query_file, args.predicate_file, args.query_size)
 
+    # Detect DNF format: predicate[query][term][attr] vs predicate[query][attr]
+    dnf_mode = False
+    if predicate and predicate[0] and isinstance(predicate[0][0], list) \
+       and len(predicate[0][0]) > 0 and isinstance(predicate[0][0][0], list):
+        dnf_mode = True
+        print("DNF predicate format detected")
+
+    def build_term_expr(term, attr_type_list):
+        """Build Milvus filter expression for a single AND term."""
+        parts = []
+        for j in range(len(attr_type_list)):
+            vals = term[j]
+            if not vals:
+                continue
+            if attr_type_list[j] == 0:
+                parts.append(f"{vals[0]} <= attr_{j} <= {vals[1]}")
+            else:
+                for label in vals:
+                    parts.append(f"array_contains(attr_{j}, {label})")
+        return " and ".join(parts) if parts else ""
+
+    def build_query_expr(pred_i, attr_type_list, is_dnf):
+        """Build Milvus filter expression for one query."""
+        if is_dnf:
+            term_exprs = []
+            for term in pred_i:
+                t_expr = build_term_expr(term, attr_type_list)
+                if t_expr:
+                    term_exprs.append(f"({t_expr})")
+            return " or ".join(term_exprs) if term_exprs else ""
+        else:
+            return build_term_expr(pred_i, attr_type_list)
 
     ids = []
     q_t = 0
@@ -205,20 +237,8 @@ if __name__ == "__main__":
     total_size = args.N * args.K
     positive_size = 0
     for i in range(args.query_size):
-        # if(i % 100 == 0):
-        #     print("batch ", i)
         q_cnt = 0
-        exp = ""
-        for j in range(len(attr_type_list)):
-            if attr_type_list[j] == 0:
-                if j != 0:
-                    exp += " and "
-                exp += f"{predicate[i][j][0]} <= attr_{j} <= {predicate[i][j][1]}"
-            else:
-                for k in range(len(predicate[i][j])):
-                    if j != 0 or k != 0:
-                        exp += " and "
-                    exp += f"array_contains(attr_{j}, {predicate[i][j][k]})"
+        exp = build_query_expr(predicate[i], attr_type_list, dnf_mode)
         # qr = [i for i in range(qrange[i][0], qrange[i][1] + 1)]
         # exp = "label in " + str(qr)
         t0 = time.time()

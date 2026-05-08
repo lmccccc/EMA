@@ -19,7 +19,7 @@ echo "attr: $attr_type" >> logs/acorn_construction.log
 echo "algo: acorn" >> logs/acorn_construction.log
 
 if [ -f $acorn_index_file ]; then
-    echo "index file already exist"
+    echo "index file already exist at $acorn_index_file"
     exit 0
 fi
 

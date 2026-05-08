@@ -13,7 +13,7 @@ source ./conf.sh
 source ./navix_conf.sh
 
 if [ -f $navix_index_file ]; then
-    echo "index file already exist"
+    echo "index file already exist at $navix_index_file"
     exit 0
 fi
 

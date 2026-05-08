@@ -4,9 +4,11 @@
 
 file = "logs.txt"
 
-target_dataset = "wiki_negcorr_1_01" # wiki_15_4M sift10m Redcaps_4M youtube_rgb wiki_negcorr_1_01
-target_attr = "[0]"
-target_algo = ["bfann", "navix", "acorn", "milvus", "msvbase", "bfann_256", "irange", "diskann"]
+target_dataset = "youtube_rgb" # wiki_15_4M sift10m Redcaps_4M youtube_rgb wiki_negcorr_1_01
+# "[0,1]", "[0,1] high", "[0,0]"", "[0,0] biased", "[1]", "[0]"
+target_attr = "[0,1]"
+# target_sel_name = "[0,1]"
+target_algo = ["bfann", "navix", "acorn", "milvus", "msvbase", "bfann_256", "irange_multi", "diskann", "hnsw", "hnsw_navix"]
 target_recall = {
     0.9: 0.9 - 0.001,
     0.95: 0.95 - 0.001,
@@ -15,114 +17,88 @@ target_recall = {
     0.80: 0.80 - 0.001
 }
 target_M = 40
-global_target_r = 0.8
-
-# sel_mapping = {
-#     "[1.0,1.0]": 1.0,
-#     "[0.95,0.95]": 0.9,
-#     "[0.9,0.9]": 0.8,
-#     "[0.84,0.84]": 0.7,
-#     "[0.775,0.775]": 0.6,
-#     "[0.71,0.71]": 0.5,
-#     "[0.63,0.63]": 0.4,
-#     "[0.55,0.55]": 0.3,
-#     "[0.45,0.45]": 0.2,
-#     "[0.32,0.32]": 0.1,
-#     "[0.1,0.1]": 0.01
-# }
+global_target_r = 0.95
+target_k = 10
 
 
+if target_attr == "[0]":
+    # [0]
+    sel_mapping = {
+        "[0.01]": 0.01,
+        "[0.02]": 0.02,
+        "[0.03]": 0.03,
+        "[0.05]": 0.05,
+        "[0.07]": 0.07,
+        "[0.1]": 0.1
+    }
+elif target_attr == "[0,1]":
+    # [0,1]
+    sel_mapping = {
+        "[0.1,9]": 0.01,
+        "[0.1,8]": 0.02,
+        "[0.15,8]": 0.03,
+        "[0.177,7]": 0.05,
+        "[0.233,7]": 0.07,
+        "[0.333,7]": 0.1
+    }
+elif target_attr == "[0,1] high":
+    # [0,1] high
+    sel_mapping = {
+        "[0.333,7]": 0.1,
+        "[0.4,5]": 0.2,
+        "[0.667,4]": 0.4,
+        "[0.75,2]": 0.6,
+        "[0.9,1]": 0.8,
+        "[1.0,0]": 1.0
+    }
+# elif target_attr == "[0,0]":
+#     # [0,0]
+#     sel_mapping = {
+#         "[0.1,0.1]": 0.01,
+#         "[0.141,0.141]": 0.02,
+#         "[0.173,0.173]": 0.03,
+#         "[0.2236,0.2236]": 0.05,
+#         "[0.2646,0.2646]": 0.07,
+#         "[0.316,0.316]": 0.1
+#     }
+elif target_attr == "[0,0]":
+    # [0,0] biased
+    sel_mapping = {
+        "[0.55,0.01818]": 0.01,
+        "[0.60,0.03333]": 0.02,
+        "[0.65,0.04615]": 0.03,
+        "[0.70,0.07143]": 0.05,
+        "[0.75,0.09333]": 0.07,
+        "[0.80,0.125]": 0.1
+    }
+elif target_attr == "[1]":
+    # [1]
+    sel_mapping = {
+        "[18]": 0.01,
+        "[17]": 0.02,
+        "[16]": 0.03,
+        "[14]": 0.05,
+        "[12]": 0.07,
+        "[9]": 0.1
+    }
+elif target_attr == "wiki uncorr":
+    # wiki uncorr
+    sel_mapping = {
+        "[0.0101]": 0.0101,
+        "[0.0510]": 0.0510,
+        "[0.0996]": 0.0996,
+        "[0.1502]": 0.1502,
+        "[0.2293]": 0.2293
+    }
 
-# sel_mapping = {
-#     "[1.0]": 1.0,
-#     "[0.9]": 0.9,
-#     "[0.8]": 0.8,
-#     "[0.7]": 0.7,
-#     "[0.6]": 0.6,
-#     "[0.5]": 0.5,
-#     "[0.4]": 0.4,
-#     "[0.3]": 0.3,
-#     "[0.2]": 0.2,
-#     "[0.1]": 0.1,
-#     "[0.01]": 0.01
-# }
-
-# sel_mapping = {
-#     "[0.1]": 0.1,
-#     "[0.07]": 0.07,
-#     "[0.05]": 0.05,
-#     "[0.03]": 0.03,
-#     "[0.02]": 0.02,
-#     "[0.01]": 0.01
-# }
-
-# [0,1]
-# sel_mapping = {
-#     "[0.1,9]": 0.01,
-#     "[0.1,8]": 0.02,
-#     "[0.15,8]": 0.03,
-#     "[0.177,7]": 0.05,
-#     "[0.233,7]": 0.07,
-#     "[0.333,7]": 0.1
-# }
-
-# [0,1] high
-# sel_mapping = {
-#     "[0.4,5]": 0.2,
-#     "[0.667,4]": 0.4,
-#     "[0.75,2]": 0.6,
-#     "[0.9,1]": 0.8,
-#     "[1.0,0]": 1.0
-# }
-
-# sel_mapping = {
-#     "[0.1,9]": 0.01,
-#     "[0.1,8]": 0.02,
-#     "[0.15,8]": 0.03,
-#     "[0.177,7]": 0.05,
-#     "[0.233,7]": 0.07,
-#     "[0.333,7]": 0.1
-# }
 
 
-# [0,0]
-# sel_mapping = {
-#     "[0.1,0.1]": 0.01,
-#     "[0.141,0.141]": 0.02,
-#     "[0.173,0.173]": 0.03,
-#     "[0.2236,0.2236]": 0.05,
-#     "[0.2646,0.2646]": 0.07,
-#     "[0.316,0.316]": 0.1
-# }
 
-# [1]
-# sel_mapping = {
-#     "[18]": 0.01,
-#     "[17]": 0.02,
-#     "[16]": 0.03,
-#     "[14]": 0.05,
-#     "[12]": 0.07,
-#     "[9]": 0.1
-# }
 
-# [0]
-# sel_mapping = {
-#     "[0.01]": 0.01,
-#     "[0.02]": 0.02,
-#     "[0.03]": 0.03,
-#     "[0.05]": 0.05,
-#     "[0.07]": 0.07,
-#     "[0.1]": 0.1
-# }
 
-# wiki uncorr
-sel_mapping = {
-    "[0.0101]": 0.0101,
-    "[0.0510]": 0.0510,
-    "[0.0996]": 0.0996,
-    "[0.1502]": 0.1502,
-    "[0.2293]": 0.2293
-}
+
+
+
 
 
 res = {}
@@ -161,6 +137,7 @@ for i in range(len(algo_start)):
     line_idx = algo_start[i]
     sel_value = None
     M = 180
+    K = 10
     matched_algo = None
     while line_idx < algo_end[i]:
         if "dataset:" in lines[line_idx]:
@@ -180,6 +157,9 @@ for i in range(len(algo_start)):
         if f"M:" in lines[line_idx]:
             M = int(lines[line_idx].strip().split("M: ")[1])
 
+        if f"K:" in lines[line_idx]:
+            K = int(lines[line_idx].strip().split("K: ")[1])
+
         if "algo:" in lines[line_idx]:
             for algo in target_algo:
                 # "algo: xxxx"
@@ -193,6 +173,8 @@ for i in range(len(algo_start)):
         if lines[line_idx].startswith("recall:"):
             if M != target_M:
                 break
+            if K != target_k:
+                break
             parts = lines[line_idx].strip().split(',')
             recall = float(parts[0].split('recall:')[1].strip())
             qps = float(parts[1].split('qps:')[1].strip())
@@ -204,6 +186,8 @@ for i in range(len(algo_start)):
         # type 1: [400, 0.980, 55.502], efs, recall, qps
         if lines[line_idx][0] == '[':
             if M != target_M:
+                break
+            if K != target_k:
                 break
             parts = lines[line_idx].strip().strip('[]').split(',')
             efs = int(parts[0].strip())
@@ -240,33 +224,33 @@ for method_name in res.keys():
 
 # compute optimization (hashann/sota)
 
-val_list = []
-for sel_value in sorted(sel_mapping.values(), reverse=True):
-    print(f"# sel_value: {sel_value}")
-    bfann = None
-    navix = None
-    for method_name in res.keys():
-        method = res[method_name]
-        if method_name == "bfann":
-            if sel_value in method.keys():
-                if global_target_r in method[sel_value].keys():
-                    bfann = method[sel_value][global_target_r]
-                    print(f"bfann qps: {bfann}")
-        elif method_name == "navix":
-            if sel_value in method.keys():
-                if global_target_r in method[sel_value].keys():
-                    navix = method[sel_value][global_target_r]
-                    print(f"navix qps: {navix}")
-    if bfann is not None and navix is not None:
-        val = bfann / navix
-        val_list.append(val)
+# val_list = []
+# for sel_value in sorted(sel_mapping.values(), reverse=True):
+#     print(f"# sel_value: {sel_value}")
+#     bfann = None
+#     navix = None
+#     for method_name in res.keys():
+#         method = res[method_name]
+#         if method_name == "bfann":
+#             if sel_value in method.keys():
+#                 if global_target_r in method[sel_value].keys():
+#                     bfann = method[sel_value][global_target_r]
+#                     print(f"bfann qps: {bfann}")
+#         elif method_name == "navix":
+#             if sel_value in method.keys():
+#                 if global_target_r in method[sel_value].keys():
+#                     navix = method[sel_value][global_target_r]
+#                     print(f"navix qps: {navix}")
+#     if bfann is not None and navix is not None:
+#         val = bfann / navix
+#         val_list.append(val)
 
-# best and average speedup
-print("Speedup over hashann:")
-if len(val_list) > 0:
-    best_speedup = max(val_list)
-    avg_speedup = sum(val_list) / len(val_list)
-    print(f"Best speedup over hashann: {best_speedup:.2f}x")
-    print(f"Average speedup over hashann: {avg_speedup:.2f}x")
-else:
-    print("No valid comparisons found.")
+# # best and average speedup
+# print("Speedup over hashann:")
+# if len(val_list) > 0:
+#     best_speedup = max(val_list)
+#     avg_speedup = sum(val_list) / len(val_list)
+#     print(f"Best speedup over hashann: {best_speedup:.2f}x")
+#     print(f"Average speedup over hashann: {avg_speedup:.2f}x")
+# else:
+#     print("No valid comparisons found.")

@@ -1,32 +1,66 @@
 #!/bin/bash
+set -euo pipefail
 
-# pred1 = [0.32, 0.45, 0.55, 0.63, 0.71, 0.775, 0.84, 0.9, 0.95, 1.0]
+ensure_inputs() {
+    source ./conf.sh
+
+    if [ ! -f "$dataset_attr_file" ]; then
+        ./attr_generator.sh
+    fi
+
+    if [ ! -f "$query_predicate_file" ]; then
+        ./predicate_generator.sh
+    fi
+
+    if [ ! -f "$ground_truth_file" ]; then
+        ./ground_truth_generator.sh
+    fi
+}
+
+# run_case() {
+#     local dataset="$1"
+#     local attr_type="$2"
+#     local query_sel="$3"
+
+#     set_conf "dataset" "\"${dataset}\""
+#     set_conf "attr_type" "\"${attr_type}\""
+#     set_conf "query_sel" "\"${query_sel}\""
+#     set_conf "use_ft" "false"
+
+#     source ./conf.sh
+#     echo "===================================================="
+#     echo "[Baseline] dataset=${dataset}, attr_type=${attr_type}, query_sel=${query_sel}, use_ft=${use_ft}"
+
+#     ensure_inputs
+#     ./hashann.sh
+#     ./query.sh
+# }
 
 num_high_sel=(
-    "[0.2]" # 20%
-    "[0.4]" # 40%
-    "[0.6]" # 60%
-    "[0.8]"  # 80%
-    "[1.0]" # 100%
-    )
+    "[0.2]"
+    "[0.4]"
+    "[0.6]"
+    "[0.8]"
+    "[1.0]"
+)
 
 num_sel=(
-    "[0.01]"   # 1%
-    "[0.02]"   # 2%
-    "[0.03]"   # 3%
-    "[0.05]"   # 5%
-    "[0.07]"   # 7%
-    "[0.1]"    # 10%
+    "[0.01]"
+    "[0.02]"
+    "[0.03]"
+    "[0.05]"
+    "[0.07]"
+    "[0.1]"
 )
 
 num_num_sel=(
-    "[0.1,0.1]"   # 1%
-    "[0.141,0.141]" # 2%
-    "[0.173,0.173]" # 3%
-    "[0.2236,0.2236]" # 5%
-    "[0.2646,0.2646]" # 7%
-    "[0.316,0.316]" # 10%
-    )
+    "[0.1,0.1]"
+    "[0.141,0.141]"
+    "[0.173,0.173]"
+    "[0.2236,0.2236]"
+    "[0.2646,0.2646]"
+    "[0.316,0.316]"
+)
 
 label_sel=(
     "[18]"   # 1%
@@ -46,12 +80,11 @@ num_label_sel=(
     "[0.333,7]"   # 0.333*0.3=10%
 )
 
-
 datasets=(
     "youtube_rgb"
-    "wiki_15_4M"
-    "sift10m"
-    "Redcaps_4M"
+    # "wiki_15_4M"
+    # "sift10m"
+    # "Redcaps_4M"
 )
 
 range_datasets=(
@@ -64,49 +97,49 @@ label_datasets=(
     "wiki_15_4M"
 )
 
-num_label="[0]"
-sed -i "s|^attr_type=.*|attr_type=\"$num_label\"|" conf.sh
-tmp_num_sel="[1.0]"
-sed -i "s|^query_sel=.*|query_sel=\"$tmp_num_sel\"|" conf.sh
-# num high sel attr_and_gt_generate
-for dataset in "${range_datasets[@]}"
-do
-    sed -i "s|^dataset=.*|dataset=\"$dataset\"|" conf.sh
-    ./attr_generator.sh
-    for sel in "${num_high_sel[@]}"
-    do
-        # modify dataset in conf.sh
-        sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
-        ./predicate_generator.sh
-        ./ground_truth_generator.sh
-    done
+# num_label="[0]"
+# sed -i "s|^attr_type=.*|attr_type=\"$num_label\"|" conf.sh
+# tmp_num_sel="[1.0]"
+# sed -i "s|^query_sel=.*|query_sel=\"$tmp_num_sel\"|" conf.sh
+# # num high sel attr_and_gt_generate
+# for dataset in "${range_datasets[@]}"
+# do
+#     sed -i "s|^dataset=.*|dataset=\"$dataset\"|" conf.sh
+#     ./attr_generator.sh
+#     for sel in "${num_high_sel[@]}"
+#     do
+#         # modify dataset in conf.sh
+#         sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
+#         ./predicate_generator.sh
+#         ./ground_truth_generator.sh
+#     done
 
-    for sel in "${num_sel[@]}"
-    do
-        # modify dataset in conf.sh
-        sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
-        ./predicate_generator.sh
-        ./ground_truth_generator.sh
-    done
-done
+#     for sel in "${num_sel[@]}"
+#     do
+#         # modify dataset in conf.sh
+#         sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
+#         ./predicate_generator.sh
+#         ./ground_truth_generator.sh
+#     done
+# done
 
 
-cate_label="[1]"
-sed -i "s|^attr_type=.*|attr_type=\"$cate_label\"|" conf.sh
-tmp_cate_sel="[18]"
-sed -i "s|^query_sel=.*|query_sel=\"$tmp_cate_sel\"|" conf.sh
-# num high sel attr_and_gt_generate
-for dataset in "${label_datasets[@]}"
-do
-    sed -i "s|^dataset=.*|dataset=\"$dataset\"|" conf.sh
-    ./attr_generator.sh
-    for sel in "${label_sel[@]}"
-    do
-        # modify dataset in conf.sh
-        sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
-        ./predicate_generator.sh
-        ./ground_truth_generator.sh
-done
+# cate_label="[1]"
+# sed -i "s|^attr_type=.*|attr_type=\"$cate_label\"|" conf.sh
+# tmp_cate_sel="[18]"
+# sed -i "s|^query_sel=.*|query_sel=\"$tmp_cate_sel\"|" conf.sh
+# # num high sel attr_and_gt_generate
+# for dataset in "${label_datasets[@]}"
+# do
+#     sed -i "s|^dataset=.*|dataset=\"$dataset\"|" conf.sh
+#     ./attr_generator.sh
+#     for sel in "${label_sel[@]}"
+#     do
+#         # modify dataset in conf.sh
+#         sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
+#         ./predicate_generator.sh
+#         ./ground_truth_generator.sh
+# done
 
 num_cate_label="[0,1]"
 sed -i "s|^attr_type=.*|attr_type=\"$num_cate_label\"|" conf.sh
@@ -116,30 +149,34 @@ sed -i "s|^query_sel=.*|query_sel=\"$tmp_num_cate_sel\"|" conf.sh
 for dataset in "${datasets[@]}"
 do
     sed -i "s|^dataset=.*|dataset=\"$dataset\"|" conf.sh
-    ./attr_generator.sh
+    # ./attr_generator.sh
     for sel in "${num_label_sel[@]}"
     do
         # modify dataset in conf.sh
         sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
-        ./predicate_generator.sh
-        ./ground_truth_generator.sh
+        # ./predicate_generator.sh
+        # ./ground_truth_generator.sh
+        ./hnsw_query.sh
+    done
 done
 
-num_num_label="[0,0]"
-sed -i "s|^attr_type=.*|attr_type=\"$num_num_label\"|" conf.sh
-tmp_num_num_sel="[0.1,0.1]"
-sed -i "s|^query_sel=.*|query_sel=\"$tmp_num_num_sel\"|" conf.sh
-# num high sel attr_and_gt_generate
-for dataset in "${datasets[@]}"
-do
-    sed -i "s|^dataset=.*|dataset=\"$dataset\"|" conf.sh
-    ./attr_generator.sh
-    for sel in "${num_num_sel[@]}"
-    do
-        # modify dataset in conf.sh
-        sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
-        ./predicate_generator.sh
-        ./ground_truth_generator.sh
-done
+# num_num_label="[0,0]"
+# sed -i "s|^attr_type=.*|attr_type=\"$num_num_label\"|" conf.sh
+# tmp_num_num_sel="[0.1,0.1]"
+# sed -i "s|^query_sel=.*|query_sel=\"$tmp_num_num_sel\"|" conf.sh
+# # num high sel attr_and_gt_generate
+# for dataset in "${datasets[@]}"
+# do
+#     sed -i "s|^dataset=.*|dataset=\"$dataset\"|" conf.sh
+#     # ./attr_generator.sh
+#     for sel in "${num_num_sel[@]}"
+#     do
+#         # modify dataset in conf.sh
+#         sed -i "s|^query_sel=.*|query_sel=\"$sel\"|" conf.sh
+#         # ./predicate_generator.sh
+#         # ./ground_truth_generator.sh
+#         ./post_query.sh
+#     done
+# done
 
 

@@ -12,19 +12,16 @@
 source ./conf.sh
 source ./acorn_conf.sh
 
-# check acorn_index_file exists
-
-if [ -f "$acorn_index_file" ]; then
-    echo "Acorn index file $acorn_index_file exists. Skipping construction."
-    exit 0
-fi
-
 
 echo "====================================================" >> logs/acorn_construction.log
 echo "dataset: $dataset" >> logs/acorn_construction.log
 echo "attr: $attr_type" >> logs/acorn_construction.log
 echo "algo: acorn" >> logs/acorn_construction.log
 
+if [ -f $acorn_index_file ]; then
+    echo "index file already exist at $acorn_index_file"
+    exit 0
+fi
 
 
 ../../code/ACORN/build/demos/acorn_build $dataset \
@@ -41,4 +38,5 @@ echo "algo: acorn" >> logs/acorn_construction.log
                             $metric \
                             2>&1 | tee -a logs/acorn_construction.log
 
+echo "${acorn_index_file} construction done" >> logs/acorn_construction.log
 echo "\n" >> logs/acorn_construction.log

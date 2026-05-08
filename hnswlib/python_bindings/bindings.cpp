@@ -187,12 +187,13 @@ class Index {
         size_t ft_bits,
         std::vector<int> attr_type, 
         size_t max_cate_size,
-        bool allow_replace_deleted) {
+        bool allow_replace_deleted,
+        bool edge_level_ft) {
         if (appr_alg) {
             throw std::runtime_error("The index is already initiated.");
         }
         cur_l = 0;
-        appr_alg = new hnswlib::HierarchicalNSW<dist_t>(l2space, maxElements, topElements, M, efConstruction, random_seed, ft_bits, attr_type, max_cate_size, allow_replace_deleted);
+        appr_alg = new hnswlib::HierarchicalNSW<dist_t>(l2space, maxElements, topElements, M, efConstruction, random_seed, ft_bits, attr_type, max_cate_size, allow_replace_deleted, edge_level_ft);
         index_inited = true;
         ep_added = false;
         appr_alg->ef_ = default_ef;
@@ -205,19 +206,142 @@ class Index {
             appr_alg->set_ft_flag(flag);
     }
 
+    void set_edge_level_ft(bool flag){
+        if(appr_alg)
+            appr_alg->edge_level_ft_ = flag;
+    }
+
     void set_thresholds(double threshold_1, double threshold_2, double threshold_3){
         if(appr_alg)
             appr_alg->set_thresholds(threshold_1, threshold_2, threshold_3);
     }
 
-    void set_two_hop_flag(bool flag){
+    void set_ft_routing_flag(bool flag){
         if(appr_alg)
-            appr_alg->set_two_hop_flag(flag);
+            appr_alg->set_ft_routing_flag(flag);
     }
 
-    void set_two_hop_threshold(double threshold){
+    void set_ft_routing_min_deg(double threshold){
         if(appr_alg)
-            appr_alg->set_two_hop_threshold(threshold);
+            appr_alg->set_ft_routing_min_deg(threshold);
+    }
+
+    void set_min_deg(double threshold){
+        set_ft_routing_min_deg(threshold);
+    }
+
+    py::dict get_ft_stats() {
+        py::dict stats;
+        if (appr_alg) {
+            long ft_total = appr_alg->metric_ft_passed_total.load();
+            long ft_fp = appr_alg->metric_ft_false_positives.load();
+            long pred_checked = appr_alg->metric_predicate_checked.load();
+            long total_nbrs = appr_alg->metric_total_neighbors.load();
+            stats["ft_passed_total"] = ft_total;
+            stats["ft_false_positives"] = ft_fp;
+            stats["ft_true_positives"] = ft_total - ft_fp;
+            stats["ft_fp_rate"] = ft_total > 0 ? (double)ft_fp / ft_total : 0.0;
+            stats["predicate_checked"] = pred_checked;
+            stats["predicate_fp_rate"] = pred_checked > 0 ? (double)ft_fp / pred_checked : 0.0;
+            stats["total_neighbors"] = total_nbrs;
+            stats["ft_rejection_rate"] = total_nbrs > 0 ? 1.0 - (double)ft_total / total_nbrs : 0.0;
+        }
+        return stats;
+    }
+
+    void reset_ft_stats() {
+        if (appr_alg) {
+            appr_alg->metric_ft_passed_total = 0;
+            appr_alg->metric_ft_false_positives = 0;
+            appr_alg->metric_predicate_checked = 0;
+            appr_alg->metric_total_neighbors = 0;
+        }
+    }
+
+    py::dict augment_ft_neighbors(int min_same = 8, int max_hops = 3) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        auto [edges, nodes] = appr_alg->augment_ft_neighbors(min_same, max_hops);
+        py::dict result;
+        result["edges_added"] = edges;
+        result["nodes_augmented"] = nodes;
+        return result;
+    }
+
+    py::dict augment_ft_bfs(int min_same = 4, int max_hops = 3, int num_threads = 1) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        auto [edges, nodes] = appr_alg->augment_ft_bfs(min_same, max_hops, num_threads);
+        py::dict result;
+        result["edges_added"] = edges;
+        result["nodes_augmented"] = nodes;
+        return result;
+    }
+
+    void augment_edges_cht(int efc = 2000, int num_threads = 32) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        appr_alg->augment_edges_cht(efc, num_threads);
+    }
+
+    void set_attr_sort_alpha(double alpha) {
+        if (appr_alg) appr_alg->attr_sort_alpha_ = alpha;
+    }
+
+    double get_attr_sort_alpha() {
+        return appr_alg ? appr_alg->attr_sort_alpha_ : 0.0;
+    }
+
+    // Return degree of every L0 node as a numpy array
+    py::array_t<int> get_degrees() {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        size_t n = appr_alg->cur_element_count;
+        py::array_t<int> degrees(n);
+        auto buf = degrees.mutable_unchecked<1>();
+        for (size_t i = 0; i < n; i++) {
+            auto* ll = appr_alg->get_linklist0(i);
+            buf(i) = appr_alg->getListCount(ll);
+        }
+        return degrees;
+    }
+
+    // Return neighbors of a specific node at L0 as numpy array
+    py::array_t<unsigned int> get_neighbors(unsigned int node_id) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        if (node_id >= appr_alg->cur_element_count) throw std::runtime_error("node_id out of range");
+        auto* ll = appr_alg->get_linklist0(node_id);
+        unsigned int size = appr_alg->getListCount(ll);
+        unsigned int* data = (unsigned int*)((char*)ll + sizeof(hnswlib::linklistsizeint));
+        py::array_t<unsigned int> nbrs(size);
+        auto buf = nbrs.mutable_unchecked<1>();
+        for (unsigned int i = 0; i < size; i++) buf(i) = data[i];
+        return nbrs;
+    }
+
+    // Return popcount of each node's FT, shape (n, num_attrs)
+    py::array_t<int> get_ft_bit_counts() {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        size_t n = appr_alg->cur_element_count;
+        size_t num_attrs = appr_alg->attr_type_.size();
+        size_t ft_bytes = appr_alg->ft_bytes_;
+        
+        py::array_t<int> counts({(py::ssize_t)n, (py::ssize_t)num_attrs});
+        auto buf = counts.mutable_unchecked<2>();
+        
+        for (size_t i = 0; i < n; i++) {
+            for (size_t a = 0; a < num_attrs; a++) {
+                unsigned char* ft = appr_alg->node_ft_at(i, a);
+                int bits = 0;
+                size_t off = 0;
+                for (; off + 8 <= ft_bytes; off += 8) {
+                    uint64_t val;
+                    memcpy(&val, ft + off, 8);
+                    bits += __builtin_popcountll(val);
+                }
+                for (; off < ft_bytes; off++) {
+                    bits += __builtin_popcount(ft[off]);
+                }
+                buf(i, a) = bits;
+            }
+        }
+        return counts;
     }
 
 
@@ -1116,10 +1240,13 @@ class Index {
 
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result = appr_alg->hybridSearch(
                         (void*)items.data(row), raw_predicate[row], k);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
+                    size_t actual_k = result.size();
+                    // Pad missing results with -1 label and max distance
+                    for (size_t i = actual_k; i < k; i++) {
+                        data_numpy_d[row * k + i] = std::numeric_limits<dist_t>::max();
+                        data_numpy_l[row * k + i] = (hnswlib::labeltype)(-1);
+                    }
+                    for (int i = (int)actual_k - 1; i >= 0; i--) {
                         auto& result_tuple = result.top();
                         data_numpy_d[row * k + i] = result_tuple.first;
                         data_numpy_l[row * k + i] = result_tuple.second;
@@ -1137,10 +1264,12 @@ class Index {
                     normalize_vector((float*)items.data(row), norm_array.data());
                     std::priority_queue<std::pair<dist_t, hnswlib::labeltype>> result = appr_alg->hybridSearch(
                         (void*)norm_array.data(), raw_predicate[row], k);
-                    if (result.size() != k)
-                        throw std::runtime_error(
-                            "Cannot return the results in a contiguous 2D array. Probably ef or M is too small");
-                    for (int i = k - 1; i >= 0; i--) {
+                    size_t actual_k = result.size();
+                    for (size_t i = actual_k; i < k; i++) {
+                        data_numpy_d[row * k + i] = std::numeric_limits<dist_t>::max();
+                        data_numpy_l[row * k + i] = (hnswlib::labeltype)(-1);
+                    }
+                    for (int i = (int)actual_k - 1; i >= 0; i--) {
                         auto& result_tuple = result.top();
                         data_numpy_d[row * k + i] = result_tuple.first;
                         data_numpy_l[row * k + i] = result_tuple.second;
@@ -2026,7 +2155,8 @@ PYBIND11_PLUGIN(hashannlib) {
             py::arg("ft_bits") = 128,
             py::arg("attr_type") = py::list(py::cast(std::vector<int>{0, 1})),
             py::arg("max_cate_size") = 5,
-            py::arg("allow_replace_deleted") = false)
+            py::arg("allow_replace_deleted") = false,
+            py::arg("edge_level_ft") = false)
         .def("knn_query",
             &Index<float>::knnQuery_return_numpy,
             py::arg("data"),
@@ -2071,9 +2201,32 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("get_ids_list", &Index<float>::getIdsList)
         .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
         .def("set_ft_flag", &Index<float>::set_ft_flag, py::arg("ft_flag"))
+        .def("set_edge_level_ft", &Index<float>::set_edge_level_ft, py::arg("flag"))
         .def("set_thresholds", &Index<float>::set_thresholds, py::arg("threshold_1"), py::arg("threshold_2"), py::arg("threshold_3"))
-        .def("set_two_hop_flag", &Index<float>::set_two_hop_flag, py::arg("two_hop"))
-        .def("set_two_hop_threshold", &Index<float>::set_two_hop_threshold, py::arg("two_hop_threshold"))
+        .def("set_ft_routing_flag", &Index<float>::set_ft_routing_flag, py::arg("flag"))
+        .def("set_ft_routing_min_deg", &Index<float>::set_ft_routing_min_deg, py::arg("min_deg"))
+        .def("set_two_hop_flag", &Index<float>::set_ft_routing_flag, py::arg("two_hop"))  // deprecated alias
+        .def("set_two_hop_threshold", &Index<float>::set_ft_routing_min_deg, py::arg("two_hop_threshold"))  // deprecated alias
+        .def("set_min_deg", &Index<float>::set_min_deg, py::arg("min_deg"))
+        .def("get_ft_stats", &Index<float>::get_ft_stats)
+        .def("reset_ft_stats", &Index<float>::reset_ft_stats)
+        .def("get_degrees", &Index<float>::get_degrees)
+        .def("get_neighbors", &Index<float>::get_neighbors, py::arg("node_id"))
+        .def("get_ft_bit_counts", &Index<float>::get_ft_bit_counts)
+        .def("augment_ft_neighbors", &Index<float>::augment_ft_neighbors,
+             py::arg("min_same") = 8, py::arg("max_hops") = 3)
+        .def("augment_ft_bfs", &Index<float>::augment_ft_bfs,
+             py::arg("min_same") = 4, py::arg("max_hops") = 3, py::arg("num_threads") = 1)
+        .def("augment_edges_cht", &Index<float>::augment_edges_cht,
+             py::arg("efc") = 2000, py::arg("num_threads") = 32)
+        .def("set_attr_sort_alpha", &Index<float>::set_attr_sort_alpha, py::arg("alpha"))
+        .def("get_attr_sort_alpha", &Index<float>::get_attr_sort_alpha)
+        .def("set_augmented_min_deg", [](Index<float>& self, int min_deg) {
+            self.appr_alg->augmented_min_deg_ = min_deg;
+        }, py::arg("min_deg"))
+        .def("set_use_augmented_edges", [](Index<float>& self, bool use) {
+            self.appr_alg->use_augmented_edges_ = use;
+        }, py::arg("use"))
         .def("set_ef_top", &Index<float>::set_ef_top, py::arg("ef_top"))
         .def("addEpIds", &Index<float>::addEpIds, py::arg("ep_ids"))
         .def("predicateTranslate", &Index<float>::predicateTranslate, py::arg("predicate"))

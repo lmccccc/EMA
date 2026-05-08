@@ -12,9 +12,8 @@
 source ./conf.sh
 source ./navix_conf.sh
 
-# check navix_index_file exists
-if [ -f "$navix_index_file" ]; then
-    echo "Navix index file $navix_index_file exists. Skipping construction."
+if [ -f $navix_index_file ]; then
+    echo "index file already exist at $navix_index_file"
     exit 0
 fi
 
@@ -35,4 +34,5 @@ echo "algo: navix" >> logs/navix_construction.log
                             $metric  \
                             2>&1 | tee -a logs/navix_construction.log   
 
+echo "${navix_index_file} construction done" >> logs/navix_construction.log
 echo "\n" >> logs/navix_construction.log

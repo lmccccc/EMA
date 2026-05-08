@@ -7,11 +7,12 @@
 
 source ./conf.sh
 
+
 threads=1
 
 echo "dataset: $dataset"
 echo "data_path: $dataset_file"
-echo "index_cache_path: $hashann_index_file"
+echo "index_cache_path: $hnsw_index_file"
 echo "ef_list: $ef_search"
 echo "k: $K"
 echo "N: $N"
@@ -26,7 +27,6 @@ echo "query_path: $query_file"
 echo "attr_path: $dataset_attr_file"
 echo "qrange_path: $query_predicate_file"
 echo "gt_path: $ground_truth_file"
-echo "predicate_file: $query_predicate_file"
 echo "n_query_to_use: $query_size"
 echo "attr_type_list: $attr_type"
 echo "threads: $threads"
@@ -41,7 +41,7 @@ fi
 # echo "sel: $query_sel" >> logs.txt
 # echo "algo: bfann" >> logs.txt
 
-python -u ../tests/hashann_query.py --data_path $dataset_file \
+python -u ../tests/post_query.py --data_path $dataset_file \
                                                --index_cache_path $hashann_index_file \
                                                --k $K \
                                                --N $N \
@@ -59,19 +59,16 @@ python -u ../tests/hashann_query.py --data_path $dataset_file \
                                                --n_query_to_use $query_size \
                                                --attr_type_list $attr_type \
                                                --threads $threads \
-                                               --use_ft $use_ft \
-                                               --augment_cht ${augment_cht:-false} \
-                                               --augment_cht_efc ${augment_cht_efc:-500} \
-                                               --augment_cht_threads ${augment_cht_threads:-32} \
-                                                2>&1 | tee logs/bfann.log
+                                               --use_ft "false" \
+                                                2>&1 | tee logs/post_query.log
 
 if [ $? -ne 0 ]; then
-    echo "HashANN failed to run."
+    echo "Post-query failed to run."
 else
-    echo "HashANN succeed."
+    echo "Post-query succeed."
 fi
 
-python ../tests/extract_results.py "logs/bfann.log" $dataset $attr_type $query_sel $M "bfann" $K $query_predicate_file
+python ../tests/extract_results.py "logs/post_query.log" $dataset $attr_type $query_sel $M "post"
 
 # status=$?
 # if [ $status -eq 0 ]; then

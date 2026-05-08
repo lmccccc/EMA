@@ -37,6 +37,7 @@ if __name__ == "__main__":
     print("data size: ", len(data), ", topk: ", topk, " data[0] size: ", len(data[0]))
     for item in data:
         new_data.extend(item)
+    print("total number of attr entries: ", len(new_data))
     #write
     with open(output_attr_new_file, mode='wb') as file:
         N = len(data)

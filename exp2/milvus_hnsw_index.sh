@@ -25,5 +25,5 @@ python -u ../tests/milvus_hnsw_index.py --dataset_file ${dataset_file} \
                              --ef_construction ${ef_construction} \
                              --ef_search ${ef_search_list} \
                             2>&1 | tee -a logs/milvus_construction.log
-
+echo "${milvus_collection_name} construction done" >> logs/milvus_construction.log
 echo "\n" >> logs/milvus_construction.log

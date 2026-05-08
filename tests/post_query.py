@@ -9,24 +9,12 @@ import bisect
 import sys
 import json
 from utils import *
+import faiss
 import ast
 
 
 from hashann import HashANN
-
-def is_dnf_predicate(raw_predicate):
-    """Detect DNF format: predicate[query][term][attr] = values (3 levels of nesting)
-    vs legacy format: predicate[query][attr] = values (2 levels)."""
-    if not raw_predicate or not raw_predicate[0]:
-        return False
-    first_query = raw_predicate[0]
-    # DNF: first_query[0] is a term (list of per-attr values)
-    # Legacy: first_query[0] is attr values (list of ints)
-    # Distinguish: in DNF, first_query[0][0] is a list; in legacy, first_query[0][0] is an int
-    if isinstance(first_query[0], list) and len(first_query[0]) > 0 and isinstance(first_query[0][0], list):
-        return True
-    return False
-
+from hashann_query import is_dnf_predicate
 
 def load_query_data(query_file, qrange_file, gt_file, N, Nq, k):# fvecs, fvecs, json, json, json
 
@@ -76,30 +64,12 @@ if __name__ == "__main__":
     dnf_mode = is_dnf_predicate(raw_predicate)
     if dnf_mode:
         print("DNF predicate detected (OR support enabled)")
-    else:
-        print("Legacy AND-only predicate detected")
     hash_ann.init_params(params)
 
     
     index = hash_ann.load_index(
         params, attr_type_list, args.index_cache_path, args.threads, args.name
     )
-
-    # Adaptive augmented edges
-    if args.augment_edges.lower() == 'true':
-        print(f"Building augmented edges (threshold={args.augment_threshold})...")
-        aug_result = index.augment_ft_neighbors(
-            min_same=args.augment_threshold, max_hops=2
-        )
-        print(f"Augment result: {aug_result}")
-
-    # CHT-based edge augmentation
-    if args.augment_cht.lower() == 'true':
-        print(f"Building CHT augmented edges (efc={args.augment_cht_efc}, threads={args.augment_cht_threads})...")
-        t0 = time.time()
-        index.augment_edges_cht(args.augment_cht_efc, args.augment_cht_threads)
-        print(f"CHT augment done in {time.time()-t0:.1f}s")
-
     # index.save_index(args.index_cache_path)
     print("start query")
     # query
@@ -107,7 +77,6 @@ if __name__ == "__main__":
     if not isinstance(efs_list, List):
         efs_list = [efs_list]
     index.set_num_threads(1)
-    has_stats_api = hasattr(index, "hybrid_knn_query_with_stats")
 
     result = []
     # efs_list = [efs_list[-1]]
@@ -116,9 +85,9 @@ if __name__ == "__main__":
         index.set_ef_top(args.ef_top)
         index.set_ft_flag(args.use_ft.lower() == 'true')
         print("set marker flag:", args.use_ft.lower() == 'true')
-        index.set_ft_routing_flag(True)
-        index.set_ft_routing_min_deg(args.ft_routing_min_deg)
-        print("index ef_search:", efs, " ef_top:", args.ef_top, " ft_routing_min_deg:", args.ft_routing_min_deg)
+        index.set_ft_routing_flag(False)
+        index.set_ft_routing_min_deg(16)
+        print("index ef_search:", efs, " ef_top:", args.ef_top)
         # flatten_predicate = index.predicateTranslate(raw_predicate)
         # print("predicate translated")
         # ft_predicate = index.predicateToFT(raw_predicate)
@@ -145,10 +114,6 @@ if __name__ == "__main__":
             _, _ = index.hybrid_knn_query_dnf(
                 _queries[:min(3, len(_queries))],
                 _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
-        elif has_stats_api:
-            index.hybrid_knn_query_with_stats(
-                _queries[:min(3, len(_queries))],
-                _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
         else:
             _, _ = index.hybrid_knn_query(
                 _queries[:min(3, len(_queries))],
@@ -158,31 +123,25 @@ if __name__ == "__main__":
         if dnf_mode:
             ids, distances = index.hybrid_knn_query_dnf(
                 _queries, _raw_predicate, k=args.K)
-            cmps = -1.0
-        elif has_stats_api:
-            ids, distances, distance_counts, hops = index.hybrid_knn_query_with_stats(
-                _queries, _raw_predicate, k=args.K
-            )
-            cmps = float(np.mean(distance_counts))
         else:
             ids, distances = index.hybrid_knn_query(_queries, _raw_predicate, k=args.K)
-            cmps = -1.0
         end = time.time()
         qps = len(target_id)/(end-start)
-        if cmps >= 0:
-            print(f"Query time: {end - start} seconds, QPS:{qps}, cmps:{cmps}")
-        else:
-            print(f"Query time: {end - start} seconds, QPS:{qps}, cmps:N/A")
+        print(f"Query time: {end - start} seconds, QPS:{qps}")
         
         # recall
         correct_sum = 0
         recall_list = []
         for i in range(len(target_id)):
+            # print("predicate:", raw_predicate[i])
+            # print("result:", ids[i])
+            # print("ground truth:", _query_gt[i])
             gt = _query_gt[i]
             res = ids[i]
-            # Filter out padding (-1) from results when ef < k
-            res_valid = res[res >= 0] if hasattr(res, '__len__') else res
-            correct = np.isin(gt, res_valid)
+            if len(gt) != len(res):
+                print(f"Error: ground truth and label length mismatch at query {i}, gt: {len(gt)}, label: {len(res)}")
+                exit(1)
+            correct = np.isin(gt, res)
             correct_sum += np.sum(correct)
             recall_list.append(np.sum(correct)/len(gt))
 
@@ -220,11 +179,11 @@ if __name__ == "__main__":
 
         recall = correct_sum / (len(target_id) * args.K)
         print(f"ef search: {efs}, recall: {recall:.4f}")
-        result.append([efs, recall, qps, cmps])
+        result.append([efs, recall, qps])
         # if recall >= 0.97:
         #     break
     
-    print("Final results (ef_search, recall, QPS, cmps):")
+    print("Final results (ef_search, recall, QPS):")
     for res in result:
         print(res)
     exit()

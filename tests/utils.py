@@ -86,7 +86,7 @@ def check_file(f):
 
 def arg_init():
     parser = argparse.ArgumentParser(description="Index parameters")
-    parser.add_argument("--k", type=int, default=10, help="For kNN search")
+    parser.add_argument('--K','--k',  type=int, default=10, help="For kNN search")
     parser.add_argument(
         "--name", type=str, required=True, help="HNSW or NSW"
     )
@@ -153,12 +153,12 @@ def arg_init():
         required=True,
         help="Dimension",
     )
-    parser.add_argument(
-        "--K",
-        type=int,
-        default=10,
-        help="return knn",
-    )
+    # parser.add_argument(
+    #     "--K",
+    #     type=int,
+    #     default=10,
+    #     help="return knn",
+    # )
     parser.add_argument(
         "--attr_type",
         type=list,
@@ -179,6 +179,30 @@ def arg_init():
     )
     parser.add_argument(
         "--use_ft", type=str, required=False, default="true", help="Use filter table"
+    )
+    parser.add_argument(
+        "--augment_edges", type=str, required=False, default="false",
+        help="Enable adaptive augmented edges (true/false)"
+    )
+    parser.add_argument(
+        "--augment_threshold", type=int, required=False, default=8,
+        help="FT-passing threshold for adaptive augmented edges"
+    )
+    parser.add_argument(
+        "--augment_cht", type=str, required=False, default="false",
+        help="Enable CHT-based edge augmentation (true/false)"
+    )
+    parser.add_argument(
+        "--augment_cht_efc", type=int, required=False, default=500,
+        help="ef_construction for CHT-based augmentation search"
+    )
+    parser.add_argument(
+        "--augment_cht_threads", type=int, required=False, default=32,
+        help="Number of threads for CHT-based augmentation"
+    )
+    parser.add_argument(
+        "--ft_routing_min_deg", type=int, required=False, default=0,
+        help="Min routing degree: backfill non-FT-passing neighbors when FT-passing < this"
     )
 
 

@@ -54,6 +54,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t maxM0_{0};
     size_t M0_mul_{2};
     size_t minM0_{16};
+    double attr_sort_alpha_{0.5};  // weight for attribute similarity in mixed sorting
     size_t ef_construction_{0};
     size_t ef_{ 0 };
     size_t ef_top_{ 0 };
@@ -73,7 +74,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     double threshold_1_{0.01}, threshold_2_{0.01}, threshold_3_{0.1}; // threshold to decide whether scan the bucket or not
     int maxlevel_{0};
 
-    double two_hop_threshold{10}; // min degree: if FT-passing neighbors < this, do edge recovery
+    double ft_routing_min_deg_{10}; // min degree: if FT-passing neighbors < this, backfill for routing
 
     std::unique_ptr<VisitedListPool> visited_list_pool_{nullptr};
 
@@ -108,6 +109,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     mutable std::atomic<long> metric_hops{0};
     mutable std::atomic<long> metric_ft_passed_total{0};     // nodes that passed FT check
     mutable std::atomic<long> metric_ft_false_positives{0};  // passed FT but failed predicate (FP)
+    mutable std::atomic<long> metric_predicate_checked{0};   // nodes that actually reached predicate_check
+    mutable std::atomic<long> metric_total_neighbors{0};     // total neighbors scanned (before FT)
 
     bool allow_replace_deleted_ = false;  // flag to replace deleted elements (marked as deleted) during insertions
 
@@ -143,9 +146,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     int offsetNbrFt_{0};
     int size_per_ft_{0};
 
-    bool use_ft_{true}; 
+    bool use_ft_{true};
+    bool edge_level_ft_{false};  // true = per-edge FT, false = per-node FT
 
-    bool use_two_hop_{true};
+    bool use_ft_routing_{true};
 
     // ====================================================================
     // DNF Predicate: supports arbitrary AND/OR combinations via DNF
@@ -194,9 +198,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         use_ft_ = flag;
     }
 
-    void set_two_hop_flag(bool flag){
-        use_two_hop_ = flag;
-        std::cout << "set two hop flag to " << use_two_hop_ << std::endl;
+    void set_ft_routing_flag(bool flag){
+        use_ft_routing_ = flag;
+        std::cout << "set ft_routing flag to " << use_ft_routing_ << std::endl;
     }
 
     void add_ep_ids(const std::vector<tableint>& ep_ids){
@@ -209,13 +213,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         threshold_3_ = threshold_3;
     }
 
-    void set_two_hop_threshold(double threshold){
-        two_hop_threshold = threshold;
-        std::cout << "set min_deg to " << two_hop_threshold << std::endl;
+    void set_ft_routing_min_deg(double threshold){
+        ft_routing_min_deg_ = threshold;
+        std::cout << "set ft_routing_min_deg to " << ft_routing_min_deg_ << std::endl;
     }
 
     void set_min_deg(double threshold){
-        set_two_hop_threshold(threshold);
+        set_ft_routing_min_deg(threshold);
     }
 
     void add_buckets(const int *bucket_data, const int * bucket_offsets, size_t offset_size){
@@ -510,7 +514,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t ft_bits = 128,
         std::vector<int> attr_type = {0, 1},
         size_t max_cate_size = 5,
-        bool allow_replace_deleted = false)
+        bool allow_replace_deleted = false,
+        bool edge_level_ft = false)
         : label_op_locks_(MAX_LABEL_OPERATION_LOCKS),
             link_list_locks_(max_elements),
             element_levels_(max_elements),
@@ -522,6 +527,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         ft_bytes_ = (ft_bits + 7) / 8;
         attr_type_ = attr_type;
         max_cate_size_ = max_cate_size;
+        edge_level_ft_ = edge_level_ft;
         assert(ft_bits_ % 8 == 0);
         data_size_ = s->get_data_size();
         fstdistfunc_ = s->get_dist_func();
@@ -554,7 +560,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_links_level0_ = maxM0_ * sizeof(tableint)+ sizeof(linklistsizeint);
         size_per_ft_ = ft_bytes_ * attr_type_.size();
 
-        size_t ft_total = size_per_ft_;  // single node FT
+        size_t ft_total = edge_level_ft_ ? (maxM0_ * size_per_ft_) : size_per_ft_;
         // New layout: FT right after link list, before vector data
         ft_offset_ = size_links_level0_;
         offsetNbrFt_ = ft_offset_;
@@ -845,10 +851,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return (unsigned char *) (data_level0_memory_ + node_id * size_data_per_element_ + ft_offset_ + attr_idx * ft_bytes_);
     }
 
-    // Legacy edge-level accessor (kept for reference, not used)
-    // inline unsigned char* nbr_ft_at(tableint internal_id, int nbr_idx, int attr_idx=0) const {
-    //     return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + offsetNbrFt_ + nbr_idx * size_per_ft_ + attr_idx * ft_bytes_);
-    // }
+    // Edge-level FT: one FT per edge slot (edge_idx in [0, maxM0_))
+    inline unsigned char* edge_ft_at(tableint node_id, int edge_idx, int attr_idx=0) const {
+        return (unsigned char *) (data_level0_memory_ + node_id * size_data_per_element_ + ft_offset_ + edge_idx * size_per_ft_ + attr_idx * ft_bytes_);
+    }
 
     // inline unsigned char *getFilterTable(tableint internal_id) const {
     //     return (unsigned char *) (data_level0_memory_ + internal_id * size_data_per_element_ + ft_offset_);
@@ -1538,12 +1544,43 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return true;
     }
 
-    
-    // Edge-level batched FT check — disabled for node-level FT
+    // Edge-level FT check: check the FT stored on edge slot edge_idx of node_id
+    inline bool edge_ft_check(tableint node_id, int edge_idx, char* mapped_predicate) const {
+        for (int i = 0; i < (int)attr_type_.size(); ++i) {
+            unsigned char* ft = edge_ft_at(node_id, edge_idx, i);
+            const char* pred = mapped_predicate + i * ft_bytes_;
+
+            // Fast scalar path for small FT (≤8 bytes)
+            if (ft_bytes_ <= 8) {
+                uint64_t ft_val = 0, pred_val = 0;
+                memcpy(&ft_val, ft, ft_bytes_);
+                memcpy(&pred_val, pred, ft_bytes_);
+                if (attr_type_[i] == 0) { // numerical: any overlap
+                    if ((ft_val & pred_val) == 0) return false;
+                } else { // categorical: pred subset of ft
+                    if ((ft_val & pred_val) != pred_val) return false;
+                }
+                continue;
+            }
+
+            // Generic path for larger FT
+            if (attr_type_[i] == 0) { // numerical
+                bool matched = false;
+                for (int j = 0; j < (int)ft_bytes_; ++j) {
+                    if ((ft[j] & (unsigned char)pred[j]) > 0) { matched = true; break; }
+                }
+                if (!matched) return false;
+            } else { // categorical
+                for (int j = 0; j < (int)ft_bytes_; ++j) {
+                    if ((ft[j] & (unsigned char)pred[j]) != (unsigned char)pred[j]) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Edge-level batched FT check — disabled, kept for reference
     /*
-    inline void batched_nbr_ft_check_sse(const tableint& id, const int& size, char* mapped_predicate, std::vector<uint8_t>& res) const {
-        
-        #ifdef USE_SSE
         assert(ft_bytes_ % 16 == 0); // ensure ft_bytes_ is multiple of 16 for SSE processing
         std::fill(res.begin(), res.end(), 1);
         for(int i = 0; i < attr_type_.size(); ++i){
@@ -1889,6 +1926,50 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
             if (term_pass) return true;  // OR: any term passes
+        }
+        return false;
+    }
+
+    // Edge-level DNF FT check: same logic but reads FT from edge slot
+    inline bool edge_ft_check_dnf(tableint node_id, int edge_idx,
+                                  const DNFPredicate& pred) const {
+        for (int t = 0; t < pred.num_terms; ++t) {
+            const char*   or_pred = pred.or_bitmaps.data()  + t * pred.term_ft_size;
+            const char*   and_pred= pred.and_bitmaps.data() + t * pred.term_ft_size;
+            const int8_t* active  = pred.attr_active.data() + t * pred.attr_count;
+
+            bool term_pass = true;
+            for (int i = 0; i < pred.attr_count; ++i) {
+                if (!active[i]) continue;
+
+                unsigned char* ft   = edge_ft_at(node_id, edge_idx, i);
+                const char* or_p    = or_pred  + i * ft_bytes_;
+                const char* and_p   = and_pred + i * ft_bytes_;
+
+                bool or_pass  = false;
+                bool and_fail = false;
+
+                if (ft_bytes_ <= 8) {
+                    uint64_t ft_val = 0, or_val = 0, and_val = 0;
+                    memcpy(&ft_val, ft, ft_bytes_);
+                    memcpy(&or_val, or_p, ft_bytes_);
+                    memcpy(&and_val, and_p, ft_bytes_);
+                    or_pass  = (ft_val & or_val) != 0;
+                    and_fail = (~ft_val & and_val) != 0;
+                    if (!or_pass || and_fail) { term_pass = false; break; }
+                    continue;
+                }
+
+                for (size_t j = 0; j < ft_bytes_; ++j) {
+                    or_pass |= ((ft[j] & (unsigned char)or_p[j]) != 0);
+                    if ((~ft[j] & (unsigned char)and_p[j]) != 0) {
+                        and_fail = true;
+                        break;
+                    }
+                }
+                if (!or_pass || and_fail) { term_pass = false; break; }
+            }
+            if (term_pass) return true;
         }
         return false;
     }
@@ -2247,7 +2328,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 //         int deg = 0;
 //         int max_deg = 0;
 //         int ft_deg = 0;
-//         int use_two_hop_freq = 0;
+//         int use_ft_routing_freq = 0;
 //         std::vector<int> nbrs;
 //         std::vector<int> not_nbrs;
 //         std::vector<int> not_nbrs_idx;
@@ -2317,11 +2398,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 //             ft_passed += (size - nbrs.size());
 
 //             // double passed_ratio = double(size - nbrs.size()) / size;
-//             int min_nbrs = two_hop_threshold * size;
+//             int min_nbrs = ft_routing_min_deg_ * size;
 //             // std::cout << "size:" << size << " ft nbrs size:" << nbrs.size() << " expected min nbrs:" << min_nbrs << std::endl;
             
-//             if (use_two_hop_ && nbrs.size() < min_nbrs) {
-//                 use_two_hop_freq++;
+//             if (use_ft_routing_ && nbrs.size() < min_nbrs) {
+//                 use_ft_routing_freq++;
 //                 // blind two hop expansion
 //                 int two_hop_loop = 0;
 //                 for (int not_nbr_j = 0; not_nbr_j < not_nbrs.size(); not_nbr_j++) {
@@ -2500,14 +2581,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 //         //              << ", avg degree " << deg * 1.0 / round 
 //         //              << ", ft avg degree "<< ft_deg * 1.0 / round 
 //         //              << ", max degree " << max_deg
-//         //              << ", use two hop freq " << use_two_hop_freq
+//         //              << ", use two hop freq " << use_ft_routing_freq
 //         //              << std::endl;
 
 //         return top_candidates;
 //     }
 
     // bare_bone_search means there is no check for deletions and stop condition is ignored in return of extra performance
-    template <bool bare_bone_search = true, bool collect_metrics = false, bool use_two_hop = true, bool use_ft=true>
+    template <bool bare_bone_search = true, bool collect_metrics = false, bool use_ft_routing = true, bool use_ft=true>
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
     hybridSearchBaseLayerST(
         // tableint ep_id,
@@ -2581,10 +2662,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         int round = 0;
         int passed = 0;
         int ft_passed = 0;
+        int predicate_checked = 0;
         int deg = 0;
         int max_deg = 0;
         int ft_deg = 0;
-        int use_two_hop_freq = 0;
+        int use_ft_routing_freq = 0;
         std::vector<int> nbrs;
         std::vector<int> not_nbrs;
         std::vector<int> not_nbrs_idx;
@@ -2659,13 +2741,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             _mm_prefetch(data_level0_memory_ + *(data + j + 4) * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
                         }
                         #endif
-                        if (node_ft_check_dnf(nbr_id, *dnf_pred)) {
+                        bool ft_pass = edge_level_ft_
+                            ? edge_ft_check_dnf(current_node_id, j - 1, *dnf_pred)
+                            : node_ft_check_dnf(nbr_id, *dnf_pred);
+                        if (ft_pass) {
                             nbrs.push_back(nbr_id);
                             #ifdef USE_SSE
                             _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
                             _mm_prefetch((char *) (visited_array + nbr_id), _MM_HINT_T0);
                             #endif
-                        } else if constexpr (use_two_hop) {
+                        } else if constexpr (use_ft_routing) {
                             not_nbrs.push_back(nbr_id);
                             not_nbrs_idx.push_back(j);
                         }
@@ -2692,13 +2777,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             _mm_prefetch(data_level0_memory_ + *(data + j + 4) * size_data_per_element_ + ft_offset_, _MM_HINT_T0);
                         }
                         #endif
-                        if (node_ft_check(nbr_id, ft_predicate.data())) {
+                        bool ft_pass = edge_level_ft_ 
+                            ? edge_ft_check(current_node_id, j - 1, ft_predicate.data())
+                            : node_ft_check(nbr_id, ft_predicate.data());
+                        if (ft_pass) {
                             nbrs.push_back(nbr_id);
                             #ifdef USE_SSE
                             _mm_prefetch(data_level0_memory_ + nbr_id * size_data_per_element_ + offsetData_, _MM_HINT_T0);
                             _mm_prefetch((char *) (visited_array + nbr_id), _MM_HINT_T0);
                             #endif
-                        } else if constexpr (use_two_hop) {
+                        } else if constexpr (use_ft_routing) {
                             not_nbrs.push_back(nbr_id);
                             not_nbrs_idx.push_back(j);
                         }
@@ -2749,15 +2837,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             // int min_nbrs = 10;
             // std::cout << "size:" << size << " ft nbrs size:" << nbrs.size() << " expected min nbrs:" << min_nbrs << std::endl;
             // std::vector<tableint> two_hop_candidates(256);
-            if (use_two_hop) {
-                if (nbrs.size() < two_hop_threshold) {
-                    size_t extra_nbrs_needed = two_hop_threshold - nbrs.size();
-                    for(int j = 0; j < std::min(not_nbrs.size(), extra_nbrs_needed); ++j){
+            // ft_nbrs_end marks boundary: [0, ft_nbrs_end) = FT-passing (route+result),
+            // [ft_nbrs_end, nbrs.size()) = routing-only (added by min_deg backfill)
+            size_t ft_nbrs_end = nbrs.size();
+
+            if (use_ft_routing) {
+                if (nbrs.size() < ft_routing_min_deg_) {
+                    size_t extra_nbrs_needed = ft_routing_min_deg_ - nbrs.size();
+                    // Pick from HEAD of not_nbrs (nearest non-FT-passing neighbors)
+                    // to maintain minimum local connectivity for routing
+                    size_t pick_count = std::min(extra_nbrs_needed, not_nbrs.size());
+                    for(size_t j = 0; j < pick_count; ++j){
                         nbrs.push_back(not_nbrs[j]);
-                        _mm_prefetch(data_level0_memory_ + (not_nbrs[j]) * size_data_per_element_ + offsetData_, _MM_HINT_T0);  // L1 prefetch
-                        // _mm_prefetch(data_level0_memory_ + (*(data + j)) * size_data_per_element_ + offsetData_, _MM_HINT_T0); // L2 prefetch
-                        _mm_prefetch((char *) (visited_array + (not_nbrs[j])), _MM_HINT_T0);  // L1 prefetch
-                        // _mm_prefetch((char *) nbrs[1], _MM_HINT_T0);
+                        _mm_prefetch(data_level0_memory_ + (not_nbrs[j]) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                        _mm_prefetch((char *) (visited_array + (not_nbrs[j])), _MM_HINT_T0);
                     }
                 }
                 // for(int j = 0; j < std::min(two_hop_candidates.size(), (size_t)2); ++j){
@@ -2846,7 +2939,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 //     }
                     // two_hop_coll_end = std::chrono::high_resolution_clock::now();
                     // two_hop_collection_time += std::chrono::duration<double, std::milli>(two_hop_coll_end - two_hop_coll_start).count();
-                    // use_two_hop_freq++;
+                    // use_ft_routing_freq++;
                     // two_hop_scan_start = std::chrono::high_resolution_clock::now();
                     // linear_two_hop_scan(two_hop_candidates, 
                     //          data_point, 
@@ -2895,17 +2988,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
 
             // Augmented-edge decision already made in FT loop (adaptive skip).
-            // Process all FT-passing neighbors in nbrs without further gating.
+            // Process all neighbors in nbrs:
+            // [0, ft_nbrs_end): FT-passing → route + result
+            // [ft_nbrs_end, nbrs.size()): routing-only backfill → route only, skip result queue
             for (int nbr_idx = 0; nbr_idx < (int)nbrs.size(); ++nbr_idx) {
                 int candidate_id = nbrs[nbr_idx];
-                // size_t j_next = nbr_idx + 1 < nbrs.size() ? nbrs[nbr_idx + 1] : size + 1;
-                
-//                    if (candidate_id == 0) continue;
+                bool routing_only = use_ft && edge_level_ft_ && ((size_t)nbr_idx >= ft_nbrs_end);
+
 #ifdef USE_SSE
-//                 _mm_prefetch((char *) (visited_array + j_next), _MM_HINT_T0);
-//                 _mm_prefetch(data_level0_memory_ + (j_next) * size_data_per_element_ + offsetData_,
-//                                 _MM_HINT_T0);  ////////////
-                if (nbr_idx + 8 < nbrs.size()) {
+                if (nbr_idx + 8 < (int)nbrs.size()) {
                     int next_candidate_id = nbrs[nbr_idx + 8];
                     char* p = (char*)(data_level0_memory_ + next_candidate_id * size_data_per_element_ + offsetData_);
                     _mm_prefetch(p + 0,   _MM_HINT_T0);
@@ -2949,6 +3040,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                                         _MM_HINT_T0);  ////////////////////////
 #endif
 
+                        // Routing-only edges: add to candidate_set for routing but skip result queue
+                        if (routing_only) {
+                            #ifdef DEBUG_SEARCH
+                            std::cout << " (routing-only, skip result)" << std::endl;
+                            #endif
+                            continue;
+                        }
+
+                        predicate_checked++;
                         if (!(dnf_pred ? predicate_check_dnf(candidate_id, *dnf_pred) : predicate_check(candidate_id, predicate))) {
                             passed++;
                             #ifdef DEBUG_SEARCH
@@ -2959,7 +3059,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
                         if (bare_bone_search || 
                             !isMarkedDeleted(candidate_id)) {
-                            // std::cout << "pushed to top candidates" << std::endl;
                             top_candidates.emplace(dist, candidate_id);
                             #ifdef DEBUG_SEARCH
                             std::cout << ", pushed to top candidates" << std::endl;
@@ -3012,11 +3111,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         //              << ", avg degree " << deg * 1.0 / round 
         //              << ", ft avg degree "<< ft_deg * 1.0 / round 
         //              << ", max degree " << max_deg
-        //              << ", use two hop freq " << use_two_hop_freq
+        //              << ", use two hop freq " << use_ft_routing_freq
         //              << std::endl;
         // FT stats: ft_deg = nodes passed FT, passed = passed FT but failed predicate (FP)
         metric_ft_passed_total.fetch_add(ft_deg, std::memory_order_relaxed);
         metric_ft_false_positives.fetch_add(passed, std::memory_order_relaxed);
+        metric_predicate_checked.fetch_add(predicate_checked, std::memory_order_relaxed);
+        metric_total_neighbors.fetch_add(deg, std::memory_order_relaxed);
         return top_candidates;
     }
 
@@ -3028,6 +3129,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                              size_t& ef,
                              dist_t& lowerBound,
                              int& passed,
+                             int& predicate_checked,
                              size_t& search_k,
                              const DNFPredicate* dnf_pred = nullptr) const {
         for (size_t idx = 0; idx < two_hop_candidates.size(); idx++) {
@@ -3038,6 +3140,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             flag_consider_candidate = top_candidates.size() < ef || lowerBound > dist;
             if (flag_consider_candidate) {
                 candidate_set.emplace(-dist, candidate_id);
+                predicate_checked++;
                 if (!(dnf_pred ? predicate_check_dnf(candidate_id, *dnf_pred) : predicate_check(candidate_id, predicate))) {
                     passed++;
                     continue;
@@ -3290,6 +3393,38 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     bool build_stats_printed_{false};
     // #define DEBUG_BUILD
 
+    // Compute attribute distance between src and nbr, normalized to [0, 1].
+    // 0 = identical attributes, 1 = maximally different.
+    // For numerical: |bucket_src - bucket_nbr| / num_buckets
+    // For categorical: 1 if no shared labels, 0 if identical
+    double compute_attr_distance(tableint src_id, tableint nbr_id) {
+        double total_dist = 0.0;
+        int num_attrs = (int)attr_type_.size();
+        for (int attr_idx = 0; attr_idx < num_attrs; attr_idx++) {
+            int* src_attr = attr_at(src_id, attr_idx);
+            int* nbr_attr = attr_at(nbr_id, attr_idx);
+            if (attr_type_[attr_idx] == 0) { // numerical
+                int src_pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
+                                          counting_hash_table_mapping[attr_idx].size(), src_attr[0]);
+                int nbr_pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
+                                          counting_hash_table_mapping[attr_idx].size(), nbr_attr[0]);
+                int num_buckets = (int)counting_hash_table_mapping[attr_idx].size();
+                total_dist += (num_buckets > 1) ? 
+                    (double)std::abs(src_pos - nbr_pos) / (num_buckets - 1) : 0.0;
+            } else { // categorical: 1 - has_shared_label
+                bool has_shared = false;
+                for (int byte = 0; byte < cate_int_byte_; ++byte) {
+                    if (((uint32_t*)src_attr)[byte] & ((uint32_t*)nbr_attr)[byte]) {
+                        has_shared = true;
+                        break;
+                    }
+                }
+                total_dist += has_shared ? 0.0 : 1.0;
+            }
+        }
+        return total_dist / num_attrs;
+    }
+
     bool cht_low_degree(int* cht, tableint src_id, tableint nbr_id, int return_list_size) {
         if (return_list_size < maxM_ / 3) return true;
 
@@ -3359,29 +3494,57 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             return;
         }
 
-        std::priority_queue<std::pair<dist_t, tableint>> queue_closest;
-        std::vector<std::pair<dist_t, tableint>> return_list;
+        // Extract all candidates and sort by mixed score (distance + alpha * attr_distance)
+        std::vector<std::pair<dist_t, tableint>> all_candidates;
+        all_candidates.reserve(top_candidates.size());
         while (top_candidates.size() > 0) {
-            queue_closest.emplace(-top_candidates.top().first, top_candidates.top().second);
+            all_candidates.emplace_back(top_candidates.top().first, top_candidates.top().second);
             top_candidates.pop();
         }
 
-        // modify stop condition: stop when new candidate is good
+        // Sort by mixed score: normalized distance + alpha * attr_distance
+        if (need_record && attr_sort_alpha_ > 0 && cur_id >= 0 && !counting_hash_table_mapping.empty()) {
+            // Find max distance for normalization
+            dist_t max_dist = 0;
+            for (auto& [d, id] : all_candidates) {
+                if (d > max_dist) max_dist = d;
+            }
+            if (max_dist <= 0) max_dist = 1.0f;
+
+            // Compute mixed scores and sort
+            std::vector<std::pair<double, size_t>> scored; // (score, original_index)
+            scored.reserve(all_candidates.size());
+            for (size_t idx = 0; idx < all_candidates.size(); idx++) {
+                double norm_dist = (double)all_candidates[idx].first / max_dist;
+                double attr_dist = compute_attr_distance(cur_id, all_candidates[idx].second);
+                double score = norm_dist + attr_sort_alpha_ * attr_dist;
+                scored.emplace_back(score, idx);
+            }
+            std::sort(scored.begin(), scored.end());
+
+            // Reorder candidates by mixed score
+            std::vector<std::pair<dist_t, tableint>> sorted_candidates;
+            sorted_candidates.reserve(all_candidates.size());
+            for (auto& [score, idx] : scored) {
+                sorted_candidates.push_back(all_candidates[idx]);
+            }
+            all_candidates = std::move(sorted_candidates);
+        } else {
+            // Default: sort by distance (ascending)
+            std::sort(all_candidates.begin(), all_candidates.end());
+        }
+
+        // Heuristic pruning on reordered candidates
+        std::vector<std::pair<dist_t, tableint>> return_list;
         std::vector<int> temp_cht;
         if (need_record) temp_cht.resize(table_size_ * attr_type_.size(), 0);
 
-        while (queue_closest.size()) {
-            // if (return_list.size() >= M)
-            //     break;
-            std::pair<dist_t, tableint> curent_pair = queue_closest.top();
-            dist_t dist_to_query = -curent_pair.first;
-            queue_closest.pop();
+        for (auto& curent_pair : all_candidates) {
+            dist_t dist_to_query = curent_pair.first;
             bool good = true;
 
-            
             for (int i = 0; i < return_list.size(); i++) {
                 std::pair<dist_t, tableint> second_pair = return_list[i];
-            // for (std::pair<dist_t, tableint> second_pair : return_list) {
                 dist_t curdist =
                         fstdistfunc_(getDataByInternalId(second_pair.second),
                                         getDataByInternalId(curent_pair.second),
@@ -3390,9 +3553,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     good = false;
 
                     if (need_record) {
-                        // add attr to ft
                         tableint nbr_id = curent_pair.second;
-                        (*dominated_list)[i].push_back(nbr_id); // nbr_id is dominated by return_list[i]
+                        (*dominated_list)[i].push_back(nbr_id);
                         pruned_count++;
                     }
                     break;
@@ -3401,7 +3563,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (good) {
 
                 if (return_list.size() >= M) break;
-
 
                 bool need_push = !need_record;
                 if (need_record && cht_low_degree(temp_cht.data(), cur_id, curent_pair.second, return_list.size())) {
@@ -3470,6 +3631,182 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         for (tableint dom_id : dominated_nodes) {
             updateft(ft, dom_id);  // OR dominated node's attr hashes into surviving neighbor's FT
         }
+    }
+
+    // Augment edges: for each node with degree < maxM0, search with large efc
+    // to find more candidates, then use CHT-based selection to fill gaps.
+    // Keeps all existing neighbors, only appends new ones.
+    void augment_edges_cht(int efc = 2000, int num_threads = 32) {
+        size_t n = cur_element_count;
+        fprintf(stderr, "augment_edges_cht: n=%zu, efc=%d, maxM0=%zu, minM0=%zu, threads=%d\n",
+                n, efc, maxM0_, minM0_, num_threads);
+
+        size_t orig_efc = ef_construction_;
+        ef_construction_ = efc;
+
+        std::atomic<long long> total_added{0};
+        std::atomic<size_t> nodes_augmented{0};
+        std::atomic<size_t> nodes_skipped{0};
+        std::atomic<size_t> progress{0};
+
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+#pragma omp parallel for schedule(dynamic, 1000) num_threads(num_threads)
+        for (size_t i = 0; i < n; i++) {
+            size_t cur_progress = progress.fetch_add(1);
+            if (cur_progress % 100000 == 0) {
+                auto now = std::chrono::high_resolution_clock::now();
+                double elapsed = std::chrono::duration<double>(now - start_time).count();
+                double rate = (cur_progress > 0) ? cur_progress / elapsed : 0;
+                double eta = (cur_progress > 0) ? (n - cur_progress) / rate : 0;
+                fprintf(stderr, "  augment: %zu/%zu (%.1f%%) elapsed=%.0fs eta=%.0fs added=%lld augmented=%zu skipped=%zu\n",
+                        cur_progress, n, 100.0 * cur_progress / n, elapsed, eta,
+                        total_added.load(), nodes_augmented.load(), nodes_skipped.load());
+            }
+
+            linklistsizeint* ll = get_linklist0(i);
+            int cur_deg = getListCount(ll);
+            if (cur_deg >= (int)maxM0_) {
+                nodes_skipped++;
+                continue;
+            }
+            int slots_avail = (int)maxM0_ - cur_deg;
+
+            // Collect existing neighbors into a set for fast lookup
+            tableint* existing_nbrs = (tableint*)(ll + 1);
+            std::unordered_set<tableint> existing_set;
+            existing_set.reserve(cur_deg * 2);
+            for (int j = 0; j < cur_deg; j++) {
+                existing_set.insert(existing_nbrs[j]);
+            }
+
+            // Build CHT from existing neighbors
+            std::vector<int> cht(table_size_ * attr_type_.size(), 0);
+            for (int j = 0; j < cur_deg; j++) {
+                update_cht(cht.data(), existing_nbrs[j]);
+            }
+
+            const void* data_point = getDataByInternalId(i);
+
+            // Greedy descent through upper layers
+            tableint currObj = enterpoint_node_;
+            dist_t curdist = fstdistfunc_(data_point, getDataByInternalId(currObj), dist_func_param_);
+            for (int level = maxlevel_; level > 0; level--) {
+                bool changed = true;
+                while (changed) {
+                    changed = false;
+                    linklistsizeint* ll_upper = get_linklist(currObj, level);
+                    int sz = getListCount(ll_upper);
+                    tableint* datal = (tableint*)(ll_upper + 1);
+                    for (int j = 0; j < sz; j++) {
+                        dist_t d = fstdistfunc_(data_point, getDataByInternalId(datal[j]), dist_func_param_);
+                        if (d < curdist) {
+                            curdist = d;
+                            currObj = datal[j];
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            // Search base layer with large efc (read-only traversal, thread-safe)
+            auto top_candidates = searchBaseLayer(currObj, data_point, 0);
+
+            // Sort candidates by mixed score (normalized_dist + alpha * attr_dist)
+            std::vector<std::pair<dist_t, tableint>> sorted_cands;
+            sorted_cands.reserve(top_candidates.size());
+            while (!top_candidates.empty()) {
+                auto& top = top_candidates.top();
+                tableint cand_id = top.second;
+                if (cand_id != (tableint)i && existing_set.find(cand_id) == existing_set.end()) {
+                    sorted_cands.emplace_back(top.first, cand_id);
+                }
+                top_candidates.pop();
+            }
+
+            if (!sorted_cands.empty() && attr_sort_alpha_ > 0 && !counting_hash_table_mapping.empty()) {
+                dist_t max_dist = 0;
+                for (auto& [d, id] : sorted_cands) {
+                    if (d > max_dist) max_dist = d;
+                }
+                if (max_dist <= 0) max_dist = 1.0f;
+
+                std::vector<std::pair<double, size_t>> scored;
+                scored.reserve(sorted_cands.size());
+                for (size_t idx = 0; idx < sorted_cands.size(); idx++) {
+                    double norm_dist = (double)sorted_cands[idx].first / max_dist;
+                    double attr_dist = compute_attr_distance((tableint)i, sorted_cands[idx].second);
+                    scored.emplace_back(norm_dist + attr_sort_alpha_ * attr_dist, idx);
+                }
+                std::sort(scored.begin(), scored.end());
+
+                std::vector<std::pair<dist_t, tableint>> reordered;
+                reordered.reserve(sorted_cands.size());
+                for (auto& [score, idx] : scored) {
+                    reordered.push_back(sorted_cands[idx]);
+                }
+                sorted_cands = std::move(reordered);
+            } else {
+                std::sort(sorted_cands.begin(), sorted_cands.end());
+            }
+
+            // Greedily pick new neighbors using CHT check + mixed-score order
+            std::vector<tableint> new_nbrs;
+            new_nbrs.reserve(slots_avail);
+            for (auto& [dist, cand_id] : sorted_cands) {
+                if ((int)new_nbrs.size() >= slots_avail) break;
+
+                if (cht_low_degree(cht.data(), (tableint)i, cand_id, cur_deg + (int)new_nbrs.size())) {
+                    new_nbrs.push_back(cand_id);
+                    update_cht(cht.data(), cand_id);
+                }
+            }
+
+            if (!new_nbrs.empty()) {
+                // Lock this node and write augmented edges
+                {
+                    std::unique_lock<std::mutex> lock(link_list_locks_[i]);
+                    int cur_sz = getListCount(ll);
+                    tableint* data = (tableint*)(ll + 1);
+                    int can_add = std::min((int)new_nbrs.size(), (int)maxM0_ - cur_sz);
+                    for (int j = 0; j < can_add; j++) {
+                        data[cur_sz + j] = new_nbrs[j];
+                    }
+                    setListCount(ll, cur_sz + can_add);
+                    // Do NOT update FT for augmented edges —
+                    // keep FT reflecting only original edges so it remains selective
+                    total_added += can_add;
+                }
+                nodes_augmented++;
+
+                // Reverse edges with per-node locks
+                for (tableint nbr_id : new_nbrs) {
+                    std::unique_lock<std::mutex> lock(link_list_locks_[nbr_id]);
+                    linklistsizeint* ll_other = get_linklist0(nbr_id);
+                    size_t sz_other = getListCount(ll_other);
+                    if (sz_other < maxM0_) {
+                        tableint* data_other = (tableint*)(ll_other + 1);
+                        bool already = false;
+                        for (size_t k = 0; k < sz_other; k++) {
+                            if (data_other[k] == (tableint)i) { already = true; break; }
+                        }
+                        if (!already) {
+                            data_other[sz_other] = (tableint)i;
+                            setListCount(ll_other, sz_other + 1);
+                        }
+                    }
+                }
+            } else {
+                nodes_skipped++;
+            }
+        }
+
+        ef_construction_ = orig_efc;
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        double total_sec = std::chrono::duration<double>(end_time - start_time).count();
+        fprintf(stderr, "augment_edges_cht: done in %.1fs. nodes_augmented=%zu, nodes_skipped=%zu, total_edges_added=%lld\n",
+                total_sec, nodes_augmented.load(), nodes_skipped.load(), total_added.load());
     }
 
     // Post-construction graph augmentation: ensure each node has >= min_same
@@ -3634,6 +3971,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         if (added >= needed || cur_degree >= maxM0_) break;
 
                         nbr_data[cur_degree] = cand_id;
+                        // Edge-level FT: write edge FT for the new slot
+                        if (edge_level_ft_) {
+                            unsigned char* eft = edge_ft_at(node_id, cur_degree);
+                            memset(eft, 0, size_per_ft_);
+                            updateft(eft, cand_id);
+                        }
                         cur_degree++;
                         setListCount(ll, cur_degree);
                         edges_added++;
@@ -3645,13 +3988,21 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         if (cd < maxM0_) {
                             tableint* cd_data = (tableint*)(ll_c + 1);
                             cd_data[cd] = (tableint)node_id;
+                            // Edge-level FT: write edge FT for reverse edge
+                            if (edge_level_ft_) {
+                                unsigned char* eft = edge_ft_at(cand_id, cd);
+                                memset(eft, 0, size_per_ft_);
+                                updateft(eft, node_id);
+                            }
                             setListCount(ll_c, cd + 1);
                             edges_added++;
                         }
                     }
                     if (added > 0) {
                         nodes_augmented++;
-                        update_node_ft(node_id);
+                        if (!edge_level_ft_) {
+                            update_node_ft(node_id);
+                        }
                     }
                 }
 
@@ -3672,7 +4023,286 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         
         return {edges_added, nodes_augmented};
     }
-    
+
+    /**
+     * augment_ft_bfs: For every node, ensure at least `min_same` edges pass
+     * the node's own "self-FT predicate" (the FT pattern matching the node's attributes).
+     * Uses BFS to find nearby same-attribute nodes, replaces tail neighbors if full.
+     *
+     * @param min_same  Minimum number of edge-FT-passing neighbors required per node
+     * @param max_hops  Maximum BFS hops to search for candidates
+     * @param num_threads  Number of parallel threads (each thread processes a chunk of nodes)
+     */
+    std::pair<long long, long long> augment_ft_bfs(int min_same = 4, int max_hops = 3, int num_threads = 1) {
+        if (!edge_level_ft_) {
+            fprintf(stderr, "augment_ft_bfs: requires edge-level FT\n");
+            return {0, 0};
+        }
+
+        size_t n = cur_element_count;
+        fprintf(stderr, "augment_ft_bfs: n=%zu, min_same=%d, max_hops=%d, maxM0=%zu, ft_bytes=%zu, threads=%d\n",
+                n, min_same, max_hops, maxM0_, ft_bytes_, num_threads);
+
+        // Record original degree for each node before augmentation
+        orig_degree_.resize(n);
+        for (size_t i = 0; i < n; i++) {
+            linklistsizeint* ll = get_linklist0(i);
+            unsigned short int deg = getListCount(ll);
+            orig_degree_[i] = (uint8_t)std::min((int)deg, 255);
+        }
+
+        std::atomic<long long> edges_added{0};
+        std::atomic<long long> nodes_augmented{0};
+        std::atomic<size_t> progress{0};
+
+        auto worker = [&](size_t start, size_t end) {
+            // Thread-local buffers
+            std::vector<char> self_ft(size_per_ft_, 0);
+            std::vector<unsigned int> visited_tag(n, 0);
+            unsigned int cur_tag = 0;
+            std::vector<tableint> frontier, next_frontier;
+            std::vector<std::pair<dist_t, tableint>> candidates;
+
+            for (size_t node_id = start; node_id < end; node_id++) {
+                // Progress reporting
+                size_t p = progress.fetch_add(1);
+                if (p % 500000 == 0) {
+                    fprintf(stderr, "  augment_ft_bfs progress: %zu/%zu (%.1f%%)\n", p, n, p*100.0/n);
+                }
+
+                linklistsizeint* ll = get_linklist0(node_id);
+                unsigned short int cur_degree = getListCount(ll);
+                tableint* nbr_data = (tableint*)(ll + 1);
+
+                // Step 1: Build self-FT predicate for this node's attributes
+                memset(self_ft.data(), 0, size_per_ft_);
+                for (int attr_idx = 0; attr_idx < (int)attr_type_.size(); attr_idx++) {
+                    unsigned char* ft_part = (unsigned char*)(self_ft.data() + attr_idx * ft_bytes_);
+                    int* _attr = attr_at(node_id, attr_idx);
+                    if (attr_type_[attr_idx] == 0) { // numerical
+                        int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
+                                              counting_hash_table_mapping[attr_idx].size(), _attr[0]);
+                        if (pos >= 0) {
+                            int byte_pos = pos >> 3;
+                            int bit_pos = pos & 7;
+                            if (byte_pos < (int)ft_bytes_) ft_part[byte_pos] |= (1 << bit_pos);
+                        }
+                    } else { // categorical
+                        for (int k = 0; k <= max_cate_size_; ++k) {
+                            int byte_pos_attr = k >> 5;
+                            int bit_pos_attr = k & 31;
+                            if (byte_pos_attr < cate_int_byte_ && (_attr[byte_pos_attr] & (1 << bit_pos_attr))) {
+                                int pos = counting_hash_table_mapping[attr_idx][k];
+                                if (pos < 0) continue;
+                                int byte_pos = pos >> 3;
+                                int bit_pos = pos & 7;
+                                if (byte_pos < (int)ft_bytes_) ft_part[byte_pos] |= (1 << bit_pos);
+                            }
+                        }
+                    }
+                }
+
+                // Step 2: Count how many current edges pass self-FT
+                int ft_passing = 0;
+                for (int j = 0; j < cur_degree; j++) {
+                    if (edge_ft_check(node_id, j, self_ft.data())) {
+                        ft_passing++;
+                    }
+                }
+
+                if (ft_passing >= min_same) continue;
+
+                int needed = min_same - ft_passing;
+
+                // Step 3: BFS to find same-attribute candidates
+                cur_tag++;
+                if (cur_tag == 0) {
+                    memset(visited_tag.data(), 0, n * sizeof(unsigned int));
+                    cur_tag = 1;
+                }
+
+                visited_tag[node_id] = cur_tag;
+                frontier.clear();
+                candidates.clear();
+
+                // Seed frontier with current neighbors
+                for (int j = 0; j < cur_degree; j++) {
+                    tableint nb = nbr_data[j];
+                    visited_tag[nb] = cur_tag;
+                    frontier.push_back(nb);
+                }
+
+                for (int hop = 0; hop < max_hops; hop++) {
+                    next_frontier.clear();
+                    for (tableint fnode : frontier) {
+                        linklistsizeint* ll2 = get_linklist0(fnode);
+                        unsigned short int deg2 = getListCount(ll2);
+                        tableint* data2 = (tableint*)(ll2 + 1);
+                        for (int k = 0; k < deg2; k++) {
+                            tableint cand = data2[k];
+                            if (visited_tag[cand] == cur_tag) continue;
+                            visited_tag[cand] = cur_tag;
+
+                            // Check if candidate's attributes match self-FT
+                            // (i.e., if we add edge to cand, will its FT pass our self-predicate?)
+                            // This is equivalent to: cand's attributes would set the same FT bits
+                            bool attr_match = true;
+                            for (int attr_idx = 0; attr_idx < (int)attr_type_.size(); attr_idx++) {
+                                const char* pred = self_ft.data() + attr_idx * ft_bytes_;
+                                int* cand_attr = attr_at(cand, attr_idx);
+
+                                if (attr_type_[attr_idx] == 0) { // numerical: cand's bucket bit must overlap pred
+                                    int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
+                                                          counting_hash_table_mapping[attr_idx].size(), cand_attr[0]);
+                                    if (pos < 0) { attr_match = false; break; }
+                                    int byte_pos = pos >> 3;
+                                    int bit_pos = pos & 7;
+                                    if (byte_pos >= (int)ft_bytes_ || !((uint8_t)pred[byte_pos] & (1 << bit_pos))) {
+                                        attr_match = false; break;
+                                    }
+                                } else { // categorical: cand must have all labels in pred
+                                    // Check: for each bit set in pred, cand must also have that label
+                                    for (int b = 0; b < (int)ft_bytes_; b++) {
+                                        // pred bits that are set — cand's FT for this edge must cover them
+                                        // Since we're adding edge directly to cand, the edge FT = cand's attr bits
+                                        // So check if cand's categorical bits cover pred's categorical bits
+                                        uint8_t pred_byte = (uint8_t)pred[b];
+                                        if (pred_byte == 0) continue;
+                                        // Compute what bits cand would set in this byte
+                                        // We need cand's categorical labels to cover the required bits
+                                        // This is complex with hash mapping; simpler: just check if cand has same labels
+                                        break;
+                                    }
+                                    // Simplified: check if cand has ALL the categorical labels that node has
+                                    int* node_attr = attr_at(node_id, attr_idx);
+                                    bool cat_match = true;
+                                    for (int byte_i = 0; byte_i < cate_int_byte_; byte_i++) {
+                                        if ((node_attr[byte_i] & cand_attr[byte_i]) != node_attr[byte_i]) {
+                                            cat_match = false; break;
+                                        }
+                                    }
+                                    if (!cat_match) { attr_match = false; break; }
+                                }
+                            }
+
+                            if (attr_match) {
+                                dist_t d = fstdistfunc_(getDataByInternalId(node_id),
+                                                        getDataByInternalId(cand),
+                                                        dist_func_param_);
+                                candidates.push_back({d, cand});
+                            }
+                            next_frontier.push_back(cand);
+                        }
+                    }
+                    std::swap(frontier, next_frontier);
+                    if (frontier.size() > 2000) frontier.resize(2000);
+                    if ((int)candidates.size() >= needed * 4 + 4) break;
+                }
+
+                if (candidates.empty()) continue;
+
+                // Step 4: Sort by distance, apply RNG pruning for diversity, pick top `needed`
+                std::sort(candidates.begin(), candidates.end());
+                
+                // RNG pruning: greedily select candidates ensuring diversity
+                std::vector<std::pair<dist_t, tableint>> selected;
+                selected.reserve(needed + 2);
+                for (auto& [d, cand_id] : candidates) {
+                    if ((int)selected.size() >= needed) break;
+                    
+                    // Check if cand_id is already a neighbor
+                    bool already_nb = false;
+                    for (int j = 0; j < cur_degree; j++) {
+                        if (nbr_data[j] == (tableint)cand_id) { already_nb = true; break; }
+                    }
+                    if (already_nb) continue;
+
+                    // RNG rule: reject if any already-selected augment neighbor is closer
+                    // to this candidate than the source node is
+                    bool good = true;
+                    for (auto& [sd, sid] : selected) {
+                        dist_t inter_dist = fstdistfunc_(getDataByInternalId(sid),
+                                                         getDataByInternalId(cand_id),
+                                                         dist_func_param_);
+                        if (inter_dist < d) {
+                            good = false;
+                            break;
+                        }
+                    }
+                    if (good) {
+                        selected.push_back({d, cand_id});
+                    }
+                }
+
+                int added = 0;
+                cur_degree = getListCount(ll);
+
+                for (auto& [d, cand_id] : selected) {
+                    if (cur_degree >= maxM0_) {
+                        // Replace the last (tail) neighbor
+                        int replace_idx = cur_degree - 1;
+                        nbr_data[replace_idx] = (tableint)cand_id;
+                        unsigned char* eft = edge_ft_at(node_id, replace_idx);
+                        memset(eft, 0, size_per_ft_);
+                        updateft(eft, cand_id);
+                        added++;
+                    } else {
+                        // Append to neighbor list
+                        nbr_data[cur_degree] = (tableint)cand_id;
+                        unsigned char* eft = edge_ft_at(node_id, cur_degree);
+                        memset(eft, 0, size_per_ft_);
+                        updateft(eft, cand_id);
+                        cur_degree++;
+                        setListCount(ll, cur_degree);
+                        added++;
+                    }
+
+                    // Add reverse edge (best-effort: only if space available)
+                    linklistsizeint* ll_c = get_linklist0(cand_id);
+                    unsigned short int cd = getListCount(ll_c);
+                    if (cd < maxM0_) {
+                        tableint* cd_data = (tableint*)(ll_c + 1);
+                        cd_data[cd] = (tableint)node_id;
+                        unsigned char* eft_r = edge_ft_at(cand_id, cd);
+                        memset(eft_r, 0, size_per_ft_);
+                        updateft(eft_r, node_id);
+                        setListCount(ll_c, cd + 1);
+                    }
+                }
+                if (added > 0) {
+                    edges_added.fetch_add(added);
+                    nodes_augmented.fetch_add(1);
+                }
+            }
+        };
+
+        // Run in parallel
+        if (num_threads <= 1) {
+            worker(0, n);
+        } else {
+            std::vector<std::thread> threads_vec;
+            size_t chunk = (n + num_threads - 1) / num_threads;
+            for (int t = 0; t < num_threads; t++) {
+                size_t start = t * chunk;
+                size_t end = std::min(start + chunk, n);
+                if (start < end) {
+                    threads_vec.emplace_back(worker, start, end);
+                }
+            }
+            for (auto& t : threads_vec) t.join();
+        }
+
+        fprintf(stderr, "augment_ft_bfs: done. edges_added=%lld, nodes_augmented=%lld\n",
+                edges_added.load(), nodes_augmented.load());
+
+        // Enable conditional augmented-edge activation during search
+        augmented_min_deg_ = min_same;
+        use_augmented_edges_ = true;
+        fprintf(stderr, "augment_ft_bfs: augmented edges enabled, min_deg threshold=%d\n", min_same);
+
+        return {edges_added.load(), nodes_augmented.load()};
+    }
+
     double update_ft_time{0.0};
 
     // Edge-level update_nbr_ft — replaced by node-level update_node_ft
@@ -3756,11 +4386,24 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             node_dominate_count_[selectedNeighbors[i]] += (int)dominated_list[i].size();
         }
 
-        // Node-level FT: merge dominated nodes' attrs into surviving neighbors' FTs
+        // FT update: node-level merges into neighbor's FT; edge-level writes to cur_c's edge slots
         if (level == 0) {
-            for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors.size(); i++) {
-                if (!dominated_list[i].empty()) {
-                    merge_dominated_to_node_ft(selectedNeighbors[i], dominated_list[i]);
+            if (edge_level_ft_) {
+                // Edge-level: write edge FT for each edge slot of cur_c
+                for (int i = 0; i < (int)selectedNeighbors.size(); i++) {
+                    unsigned char* eft = edge_ft_at(cur_c, i);
+                    memset(eft, 0, size_per_ft_);
+                    updateft(eft, selectedNeighbors[i]);  // neighbor's own attr
+                    for (tableint dom_id : dominated_list[i]) {
+                        updateft(eft, dom_id);  // dominated nodes' attrs
+                    }
+                }
+            } else {
+                // Node-level FT: merge dominated nodes' attrs into surviving neighbors' FTs
+                for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors.size(); i++) {
+                    if (!dominated_list[i].empty()) {
+                        merge_dominated_to_node_ft(selectedNeighbors[i], dominated_list[i]);
+                    }
                 }
             }
         }
@@ -3830,7 +4473,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 if (sz_link_list_other < Mcurmax) {
                     data[sz_link_list_other] = cur_c;
                     setListCount(ll_other, sz_link_list_other + 1);
-                    // Node-level FT: no edge FT to update
+                    // Edge-level FT: write edge FT for the new slot (cur_c's attr only, no domination)
+                    if (edge_level_ft_ && level == 0) {
+                        unsigned char* eft = edge_ft_at(selectedNeighbors[idx], sz_link_list_other);
+                        memset(eft, 0, size_per_ft_);
+                        updateft(eft, cur_c);
+                    }
                 } else {
                     // for bottom layer, edges within valid_M0_ follows traditional rng prune
                     // edges above valid_M0_, prune redundant edge by attribute
@@ -3877,11 +4525,31 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         node_dominate_count_[selectedNeighbors_other[i]] += (int)dominated_list[i].size();
                     }
 
-                    // Node-level FT: merge dominated nodes' attrs into surviving neighbors' FTs
+                    // FT update for reverse re-prune
                     if (level == 0) {
-                        for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors_other.size(); i++) {
-                            if (!dominated_list[i].empty()) {
-                                merge_dominated_to_node_ft(selectedNeighbors_other[i], dominated_list[i]);
+                        if (edge_level_ft_) {
+                            // Edge-level: rewrite all edge FTs for selectedNeighbors[idx]
+                            for (int i = 0; i < (int)selectedNeighbors_other.size(); i++) {
+                                unsigned char* eft = edge_ft_at(selectedNeighbors[idx], i);
+                                memset(eft, 0, size_per_ft_);
+                                updateft(eft, selectedNeighbors_other[i]);  // neighbor's own attr
+                                if (i < (int)dominated_list.size()) {
+                                    for (tableint dom_id : dominated_list[i]) {
+                                        updateft(eft, dom_id);
+                                    }
+                                }
+                            }
+                            // Clear remaining edge FT slots
+                            for (int i = (int)selectedNeighbors_other.size(); i < (int)Mcurmax; i++) {
+                                unsigned char* eft = edge_ft_at(selectedNeighbors[idx], i);
+                                memset(eft, 0, size_per_ft_);
+                            }
+                        } else {
+                            // Node-level FT: merge dominated nodes' attrs into surviving neighbors' FTs
+                            for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors_other.size(); i++) {
+                                if (!dominated_list[i].empty()) {
+                                    merge_dominated_to_node_ft(selectedNeighbors_other[i], dominated_list[i]);
+                                }
                             }
                         }
                     }
@@ -4263,9 +4931,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         writeBinaryPOD(output, offsetNbrFt_);
         writeBinaryPOD(output, size_per_ft_);
 
-        // Format version: 3 = node-level FT with FT-before-vector layout
+        // Format version: 4 = edge-level FT, 3 = node-level FT with FT-before-vector layout
         // (2 = node-level FT old layout, 1 = legacy edge-level)
-        int ft_format_version = 3;
+        int ft_format_version = edge_level_ft_ ? 4 : 3;
         writeBinaryPOD(output, ft_format_version);
 
         //
@@ -4408,14 +5076,21 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         readBinaryPOD(input, offsetNbrFt_);
         readBinaryPOD(input, size_per_ft_);
 
-        // Read format version: 3 = new FT-before-vector layout, 2 = old node-level FT layout
+        // Read format version: 4 = edge-level FT, 3 = node-level FT-before-vector layout
+        // Version 2 = old node-level FT layout, 1 = legacy (no version field)
         int ft_format_version = 0;
+        auto pre_version_pos = input.tellg();
         readBinaryPOD(input, ft_format_version);
-        if (ft_format_version != 2 && ft_format_version != 3) {
-            throw std::runtime_error("Index uses unsupported FT format version " + std::to_string(ft_format_version) +
-                ". This build requires version 2 or 3.");
+        if (ft_format_version != 2 && ft_format_version != 3 && ft_format_version != 4) {
+            // Old format (version 1): no version field, data follows size_per_ft_ directly
+            ft_format_version = 1;
+            input.seekg(pre_version_pos);
+            std::cout << "Detected legacy index format (version 1, no version field)" << std::endl;
         }
-        bool need_layout_migration = (ft_format_version == 2);
+        edge_level_ft_ = (ft_format_version == 4);
+        // Version 1 & 2: old layout [link|vector|label|FT|attr]
+        // Version 3 & 4: new layout [link|FT|vector|label|attr]
+        bool need_layout_migration = (ft_format_version <= 2);
 
 
 
@@ -5576,26 +6251,26 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         vl_type *visited_array = vl->mass;
         vl_type visited_array_tag = vl->curV;
         if (bare_bone_search) {
-            if (use_two_hop_ && use_ft_)
+            if (use_ft_routing_ && use_ft_)
             top_candidates = hybridSearchBaseLayerST<true, true, true, true>(
                         top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
-            else if (use_two_hop_ && !use_ft_)
+            else if (use_ft_routing_ && !use_ft_)
             top_candidates = hybridSearchBaseLayerST<true, true, true, false>(
                         top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
-            else if (!use_two_hop_ && use_ft_)
+            else if (!use_ft_routing_ && use_ft_)
             top_candidates = hybridSearchBaseLayerST<true, true, false, true>(
                         top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
             else
             top_candidates = hybridSearchBaseLayerST<true, true, false, false>(
                 top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
         } else {
-            if (use_two_hop_ && use_ft_)
+            if (use_ft_routing_ && use_ft_)
             top_candidates = hybridSearchBaseLayerST<false, true, true, true>(
                         top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
-            else if (use_two_hop_ && !use_ft_)
+            else if (use_ft_routing_ && !use_ft_)
             top_candidates = hybridSearchBaseLayerST<false, true, true, false>(
                         top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
-            else if (!use_two_hop_ && use_ft_)
+            else if (!use_ft_routing_ && use_ft_)
             top_candidates = hybridSearchBaseLayerST<false, true, false, true>(
                         top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
             else
@@ -5779,15 +6454,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
 
         if (bare_bone_search) {
-            if (use_two_hop_ && use_ft_)
+            if (use_ft_routing_ && use_ft_)
                 top_candidates = hybridSearchBaseLayerST<true, true, true, true>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
                     ef_, k, vl, nullptr, &dnf_pred);
-            else if (use_two_hop_ && !use_ft_)
+            else if (use_ft_routing_ && !use_ft_)
                 top_candidates = hybridSearchBaseLayerST<true, true, true, false>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
                     ef_, k, vl, nullptr, &dnf_pred);
-            else if (!use_two_hop_ && use_ft_)
+            else if (!use_ft_routing_ && use_ft_)
                 top_candidates = hybridSearchBaseLayerST<true, true, false, true>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
                     ef_, k, vl, nullptr, &dnf_pred);
@@ -5796,15 +6471,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     top_layer_candidates, query_data, predicate, ft_predicate,
                     ef_, k, vl, nullptr, &dnf_pred);
         } else {
-            if (use_two_hop_ && use_ft_)
+            if (use_ft_routing_ && use_ft_)
                 top_candidates = hybridSearchBaseLayerST<false, true, true, true>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
                     ef_, k, vl, nullptr, &dnf_pred);
-            else if (use_two_hop_ && !use_ft_)
+            else if (use_ft_routing_ && !use_ft_)
                 top_candidates = hybridSearchBaseLayerST<false, true, true, false>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
                     ef_, k, vl, nullptr, &dnf_pred);
-            else if (!use_two_hop_ && use_ft_)
+            else if (!use_ft_routing_ && use_ft_)
                 top_candidates = hybridSearchBaseLayerST<false, true, false, true>(
                     top_layer_candidates, query_data, predicate, ft_predicate,
                     ef_, k, vl, nullptr, &dnf_pred);

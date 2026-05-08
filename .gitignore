@@ -31,3 +31,6 @@ var/
 .vs/
 **.DS_Store
 *.pyc
+
+# Compiled extensions
+*.so

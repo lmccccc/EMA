@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import os
 
 if len(sys.argv) < 7 or len(sys.argv) > 9:
     print("Usage: python extract_results.py <log_file> <dataset> <attr_type> <query_sel> <M> <algo> [K] [predicate_file]")
@@ -9,7 +10,7 @@ K = int(sys.argv[7]) if len(sys.argv) >= 8 else 10
 predicate_file = sys.argv[8] if len(sys.argv) >= 9 else ""
 
 log_path = sys.argv[1]
-output_path = "logs.txt"
+output_path = os.environ.get("EXTRACT_OUTPUT", "logs.txt")
 targets = ["Final results", 
            "efs, recall, qps: ",
            "efs, recall, qps, cmps:",

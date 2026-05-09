@@ -4821,6 +4821,277 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return {n_qual, n_bridges, flipped};
     }
 
+    /*
+     * color_ft_bit_diverse_tail: per-bit "diverse tail" coloring.
+     *
+     * Motivation: plain Voronoi coloring routes paths to the K closest other
+     * sources. For most sources those K closest are already locally reachable
+     * by chance through the FT-bit subgraph; coloring them just thickens
+     * already-good neighborhoods. The recall-limiting case is the *far* but
+     * essential angular directions (RNG cover) where no qualifying neighbor
+     * is locally reachable. So:
+     *   1) gather K_top closest target sources by *vector* distance,
+     *   2) RNG-prune (HNSW heuristic2) to a diverse angular cover,
+     *   3) color paths only for the K_tail farthest survivors.
+     *
+     * Returns: (n_qualifying, n_selected_bridges, bits_flipped).
+     */
+    std::tuple<long long, long long, long long>
+    color_ft_bit_diverse_tail(int attr_idx, int bit_idx,
+                              int K_top = 16, int K_tail = 4) {
+        if (!edge_level_ft_) {
+            fprintf(stderr, "color_ft_bit_diverse_tail: requires edge-level FT\n");
+            return {0, 0, 0};
+        }
+        if (attr_idx < 0 || attr_idx >= (int)attr_type_.size()) {
+            fprintf(stderr, "color_ft_bit_diverse_tail: attr_idx out of range\n");
+            return {0, 0, 0};
+        }
+        int byte_pos = bit_idx >> 3;
+        int bit_in_byte = bit_idx & 7;
+        if (byte_pos < 0 || byte_pos >= (int)ft_bytes_) {
+            fprintf(stderr, "color_ft_bit_diverse_tail: bit_idx out of range\n");
+            return {0, 0, 0};
+        }
+        unsigned char bit_mask = (unsigned char)(1u << bit_in_byte);
+        size_t N = cur_element_count;
+
+        auto node_has_bit = [&](tableint v) -> bool {
+            int* a = attr_at(v, attr_idx);
+            if (attr_type_[attr_idx] == 0) {
+                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
+                                      counting_hash_table_mapping[attr_idx].size(), a[0]);
+                return pos == bit_idx;
+            } else {
+                for (int k = 0; k <= max_cate_size_; ++k) {
+                    int bp = k >> 5;
+                    int bi = k & 31;
+                    if (bp < cate_int_byte_ && (a[bp] & (1 << bi))) {
+                        int pos = counting_hash_table_mapping[attr_idx][k];
+                        if (pos == bit_idx) return true;
+                    }
+                }
+                return false;
+            }
+        };
+
+        auto edge_set_bit = [&](tableint u, int j) -> bool {
+            unsigned char* eft = edge_ft_at(u, j, attr_idx);
+            if (eft[byte_pos] & bit_mask) return false;
+            eft[byte_pos] |= bit_mask;
+            return true;
+        };
+
+        // 1) Multi-source BFS from all qualifying nodes
+        std::vector<tableint> source(N, (tableint)-1);
+        std::vector<tableint> parent(N, (tableint)-1);
+        std::vector<int> dist(N, std::numeric_limits<int>::max());
+        std::vector<tableint> bfs_q;
+        bfs_q.reserve(N);
+
+        long long n_qual = 0;
+        for (size_t v = 0; v < N; v++) {
+            if (node_has_bit((tableint)v)) {
+                source[v] = (tableint)v;
+                parent[v] = (tableint)-1;
+                dist[v] = 0;
+                bfs_q.push_back((tableint)v);
+                n_qual++;
+            }
+        }
+        if (n_qual == 0) return {0, 0, 0};
+
+        size_t head = 0;
+        while (head < bfs_q.size()) {
+            tableint u = bfs_q[head++];
+            int du = dist[u];
+            linklistsizeint* ll = get_linklist0(u);
+            unsigned short cur_deg = getListCount(ll);
+            tableint* nbr = (tableint*)(ll + 1);
+            for (int j = 0; j < cur_deg; j++) {
+                tableint w = nbr[j];
+                if (dist[w] == std::numeric_limits<int>::max()) {
+                    dist[w] = du + 1;
+                    parent[w] = u;
+                    source[w] = source[u];
+                    bfs_q.push_back(w);
+                }
+            }
+        }
+
+        // 2) Find best bridge per ordered (source_u, source_w) pair
+        struct BridgeInfo {
+            int dist_sum;
+            tableint u;
+            tableint w;
+            int j_in_u;
+        };
+        auto pack_key = [](tableint a, tableint b) -> uint64_t {
+            return ((uint64_t)a << 32) | (uint64_t)b;
+        };
+        std::unordered_map<uint64_t, BridgeInfo> best_bridge;
+        best_bridge.reserve(N);
+
+        for (size_t v = 0; v < N; v++) {
+            tableint sv = source[v];
+            if (sv == (tableint)-1) continue;
+            linklistsizeint* ll = get_linklist0(v);
+            unsigned short cur_deg = getListCount(ll);
+            tableint* nbr = (tableint*)(ll + 1);
+            int dv = dist[v];
+            for (int j = 0; j < cur_deg; j++) {
+                tableint w = nbr[j];
+                tableint sw = source[w];
+                if (sw == (tableint)-1 || sw == sv) continue;
+                int bd = dv + 1 + dist[w];
+                uint64_t key = pack_key(sv, sw);
+                auto it = best_bridge.find(key);
+                if (it == best_bridge.end() || it->second.dist_sum > bd) {
+                    best_bridge[key] = {bd, (tableint)v, w, j};
+                }
+            }
+        }
+
+        // 3) Group bridges by source
+        std::unordered_map<tableint, std::vector<uint64_t>> per_source;
+        per_source.reserve(n_qual);
+        for (auto& kv : best_bridge) {
+            tableint s_u = (tableint)(kv.first >> 32);
+            per_source[s_u].push_back(kv.first);
+        }
+
+        // 4) For each source, rank by vector distance, top K_top, RNG-prune,
+        //    then keep the *tail* K_tail
+        std::unordered_set<uint64_t> selected;
+        selected.reserve(per_source.size() * (size_t)K_tail);
+
+        for (auto& kv : per_source) {
+            tableint s = kv.first;
+            auto& keys = kv.second;
+            const void* sdata = getDataByInternalId(s);
+
+            // Compute vector distances s -> t and pair with bridge key
+            std::vector<std::pair<float, uint64_t>> cand;
+            cand.reserve(keys.size());
+            for (uint64_t k : keys) {
+                tableint t = (tableint)(k & 0xFFFFFFFFull);
+                const void* tdata = getDataByInternalId(t);
+                float d = fstdistfunc_(sdata, tdata, dist_func_param_);
+                cand.push_back({d, k});
+            }
+
+            // Top K_top by ascending distance
+            int K_top_eff = std::min(K_top, (int)cand.size());
+            if ((int)cand.size() > K_top_eff) {
+                std::nth_element(cand.begin(), cand.begin() + K_top_eff, cand.end(),
+                    [](const std::pair<float, uint64_t>& a, const std::pair<float, uint64_t>& b) {
+                        return a.first < b.first;
+                    });
+                cand.resize(K_top_eff);
+            }
+            std::sort(cand.begin(), cand.end(),
+                [](const std::pair<float, uint64_t>& a, const std::pair<float, uint64_t>& b) {
+                    return a.first < b.first;
+                });
+
+            // RNG prune (HNSW heuristic2): walk by ascending d(s,t); keep t if
+            // for every already-kept t', d(t,t') >= d(s,t)
+            std::vector<std::pair<float, uint64_t>> kept;
+            kept.reserve(cand.size());
+            for (auto& cp : cand) {
+                float d_st = cp.first;
+                tableint t = (tableint)(cp.second & 0xFFFFFFFFull);
+                const void* tdata = getDataByInternalId(t);
+                bool good = true;
+                for (auto& kp : kept) {
+                    tableint tp = (tableint)(kp.second & 0xFFFFFFFFull);
+                    const void* tpdata = getDataByInternalId(tp);
+                    float d_ttp = fstdistfunc_(tdata, tpdata, dist_func_param_);
+                    if (d_ttp < d_st) { good = false; break; }
+                }
+                if (good) kept.push_back(cp);
+            }
+
+            // Keep only tail K_tail (farthest survivors)
+            int n_keep = std::min(K_tail, (int)kept.size());
+            int start = (int)kept.size() - n_keep;
+            for (int i = start; i < (int)kept.size(); i++) {
+                selected.insert(kept[i].second);
+            }
+        }
+
+        // 5) Color: bridge edge + chains to both sources
+        long long flipped = 0;
+        long long n_bridges = (long long)selected.size();
+
+        auto color_edge_bidir = [&](tableint a, tableint b) {
+            linklistsizeint* ll_a = get_linklist0(a);
+            unsigned short da = getListCount(ll_a);
+            tableint* nbr_a = (tableint*)(ll_a + 1);
+            for (int j = 0; j < da; j++) {
+                if (nbr_a[j] == b) { if (edge_set_bit(a, j)) flipped++; break; }
+            }
+            linklistsizeint* ll_b = get_linklist0(b);
+            unsigned short db = getListCount(ll_b);
+            tableint* nbr_b = (tableint*)(ll_b + 1);
+            for (int j = 0; j < db; j++) {
+                if (nbr_b[j] == a) { if (edge_set_bit(b, j)) flipped++; break; }
+            }
+        };
+
+        auto color_chain_to_source = [&](tableint v) {
+            tableint cur = v;
+            while (parent[cur] != (tableint)-1) {
+                tableint p = parent[cur];
+                color_edge_bidir(p, cur);
+                cur = p;
+            }
+        };
+
+        for (uint64_t key : selected) {
+            const BridgeInfo& bi = best_bridge[key];
+            color_edge_bidir(bi.u, bi.w);
+            color_chain_to_source(bi.u);
+            color_chain_to_source(bi.w);
+        }
+
+        return {n_qual, n_bridges, flipped};
+    }
+
+    long long color_all_ft_bits_diverse_tail(int K_top = 16, int K_tail = 4, bool verbose = true) {
+        if (!edge_level_ft_) {
+            fprintf(stderr, "color_all_ft_bits_diverse_tail: requires edge-level FT\n");
+            return 0;
+        }
+        long long total_flipped = 0;
+        long long total_bridges = 0;
+        size_t N = cur_element_count;
+        int n_attrs = (int)attr_type_.size();
+        int total_bits = n_attrs * (int)(ft_bytes_ * 8);
+        fprintf(stderr, "color_all_ft_bits_diverse_tail: N=%zu, attrs=%d, ft_bytes=%zu, total_bits=%d, K_top=%d, K_tail=%d\n",
+                N, n_attrs, ft_bytes_, total_bits, K_top, K_tail);
+        auto t_start = std::chrono::high_resolution_clock::now();
+        for (int a = 0; a < n_attrs; a++) {
+            for (int b = 0; b < (int)ft_bytes_ * 8; b++) {
+                auto bt = std::chrono::high_resolution_clock::now();
+                auto [n_qual, n_bridges, flipped] = color_ft_bit_diverse_tail(a, b, K_top, K_tail);
+                auto et = std::chrono::high_resolution_clock::now();
+                double sec = std::chrono::duration<double>(et - bt).count();
+                total_flipped += flipped;
+                total_bridges += n_bridges;
+                if (verbose) {
+                    fprintf(stderr, "  bit (attr=%d,b=%d): qual=%lld bridges=%lld flipped=%lld %.2fs\n",
+                            a, b, n_qual, n_bridges, flipped, sec);
+                }
+            }
+        }
+        auto t_end = std::chrono::high_resolution_clock::now();
+        double total_sec = std::chrono::duration<double>(t_end - t_start).count();
+        fprintf(stderr, "color_all_ft_bits_diverse_tail: done in %.1fs. total bridges=%lld, bits flipped=%lld\n",
+                total_sec, total_bridges, total_flipped);
+        return total_flipped;
+    }
+
     long long color_all_ft_bits_voronoi(int K_neighbors = 4, bool verbose = true) {
         if (!edge_level_ft_) {
             fprintf(stderr, "color_all_ft_bits_voronoi: requires edge-level FT\n");
@@ -6167,7 +6438,17 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     setListCount(ll_cur, candSize);
                     tableint *data = (tableint *) (ll_cur + 1);
                     for (size_t idx = 0; idx < candSize; idx++) {
-                        data[idx] = candidates.top().second;
+                        tableint new_dest = candidates.top().second;
+                        data[idx] = new_dest;
+                        // Edge-level FT lives only at layer 0. The neighbor slot
+                        // is being rewritten with a new destination; the previous
+                        // edge_ft at this slot referred to the old destination
+                        // (and may carry stale colored bits). Reset and refill.
+                        if (edge_level_ft_ && layer == 0) {
+                            unsigned char* eft = edge_ft_at(neigh, (int)idx);
+                            memset(eft, 0, size_per_ft_);
+                            updateft(eft, new_dest);
+                        }
                         candidates.pop();
                     }
                 }

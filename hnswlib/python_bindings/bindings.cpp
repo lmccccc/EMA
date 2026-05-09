@@ -306,6 +306,22 @@ class Index {
         return appr_alg->color_all_ft_bits_voronoi(K_neighbors, verbose);
     }
 
+    py::dict color_ft_bit_diverse_tail(int attr_idx, int bit_idx, int K_top = 16, int K_tail = 4) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        auto [n_qual, n_bridges, flipped] = appr_alg->color_ft_bit_diverse_tail(attr_idx, bit_idx, K_top, K_tail);
+        py::dict result;
+        result["qualifying"] = n_qual;
+        result["bridges"] = n_bridges;
+        result["bits_flipped"] = flipped;
+        return result;
+    }
+
+    long long color_all_ft_bits_diverse_tail(int K_top = 16, int K_tail = 4,
+                                              int num_threads = 0, bool verbose = true) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        return appr_alg->color_all_ft_bits_diverse_tail(K_top, K_tail, num_threads, verbose);
+    }
+
     void augment_edges_cht(int efc = 2000, int num_threads = 32) {
         if (!appr_alg) throw std::runtime_error("Index not initialized");
         appr_alg->augment_edges_cht(efc, num_threads);
@@ -2289,6 +2305,12 @@ PYBIND11_PLUGIN(hashannlib) {
              py::arg("attr_idx"), py::arg("bit_idx"), py::arg("K_neighbors") = 4)
         .def("color_all_ft_bits_voronoi", &Index<float>::color_all_ft_bits_voronoi,
              py::arg("K_neighbors") = 4, py::arg("verbose") = true)
+        .def("color_ft_bit_diverse_tail", &Index<float>::color_ft_bit_diverse_tail,
+             py::arg("attr_idx"), py::arg("bit_idx"),
+             py::arg("K_top") = 16, py::arg("K_tail") = 4)
+        .def("color_all_ft_bits_diverse_tail", &Index<float>::color_all_ft_bits_diverse_tail,
+             py::arg("K_top") = 16, py::arg("K_tail") = 4,
+             py::arg("num_threads") = 0, py::arg("verbose") = true)
         .def("color_ft_bit", &Index<float>::color_ft_bit,
              py::arg("attr_idx"), py::arg("bit_idx"), py::arg("K") = 1)
         .def("color_all_ft_bits", &Index<float>::color_all_ft_bits,

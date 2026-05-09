@@ -17,6 +17,9 @@
 #include <tuple>
 #include <chrono>
 #include <limits>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace hnswlib {
 typedef unsigned int tableint;
@@ -4877,9 +4880,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         auto edge_set_bit = [&](tableint u, int j) -> bool {
             unsigned char* eft = edge_ft_at(u, j, attr_idx);
-            if (eft[byte_pos] & bit_mask) return false;
-            eft[byte_pos] |= bit_mask;
-            return true;
+            unsigned char old = __atomic_fetch_or(eft + byte_pos, bit_mask, __ATOMIC_RELAXED);
+            return (old & bit_mask) == 0;
         };
 
         // 1) Multi-source BFS from all qualifying nodes
@@ -5058,7 +5060,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return {n_qual, n_bridges, flipped};
     }
 
-    long long color_all_ft_bits_diverse_tail(int K_top = 16, int K_tail = 4, bool verbose = true) {
+    long long color_all_ft_bits_diverse_tail(int K_top = 16, int K_tail = 4,
+                                              int num_threads = 0, bool verbose = true) {
         if (!edge_level_ft_) {
             fprintf(stderr, "color_all_ft_bits_diverse_tail: requires edge-level FT\n");
             return 0;
@@ -5067,22 +5070,34 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         long long total_bridges = 0;
         size_t N = cur_element_count;
         int n_attrs = (int)attr_type_.size();
-        int total_bits = n_attrs * (int)(ft_bytes_ * 8);
-        fprintf(stderr, "color_all_ft_bits_diverse_tail: N=%zu, attrs=%d, ft_bytes=%zu, total_bits=%d, K_top=%d, K_tail=%d\n",
-                N, n_attrs, ft_bytes_, total_bits, K_top, K_tail);
+        int n_bits_per_attr = (int)ft_bytes_ * 8;
+        int total_bits = n_attrs * n_bits_per_attr;
+        if (num_threads <= 0) {
+#ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+#else
+            num_threads = 1;
+#endif
+        }
+        fprintf(stderr, "color_all_ft_bits_diverse_tail: N=%zu, attrs=%d, ft_bytes=%zu, total_bits=%d, K_top=%d, K_tail=%d, threads=%d\n",
+                N, n_attrs, ft_bytes_, total_bits, K_top, K_tail, num_threads);
         auto t_start = std::chrono::high_resolution_clock::now();
-        for (int a = 0; a < n_attrs; a++) {
-            for (int b = 0; b < (int)ft_bytes_ * 8; b++) {
-                auto bt = std::chrono::high_resolution_clock::now();
-                auto [n_qual, n_bridges, flipped] = color_ft_bit_diverse_tail(a, b, K_top, K_tail);
-                auto et = std::chrono::high_resolution_clock::now();
-                double sec = std::chrono::duration<double>(et - bt).count();
-                total_flipped += flipped;
-                total_bridges += n_bridges;
-                if (verbose) {
-                    fprintf(stderr, "  bit (attr=%d,b=%d): qual=%lld bridges=%lld flipped=%lld %.2fs\n",
-                            a, b, n_qual, n_bridges, flipped, sec);
-                }
+        // Flatten (attr, bit) into a single index so we can dynamic-schedule
+        // across both dims and load-balance heavy/light bits.
+#pragma omp parallel for schedule(dynamic, 1) num_threads(num_threads) reduction(+:total_flipped,total_bridges)
+        for (int idx = 0; idx < total_bits; idx++) {
+            int a = idx / n_bits_per_attr;
+            int b = idx % n_bits_per_attr;
+            auto bt = std::chrono::high_resolution_clock::now();
+            auto [n_qual, n_bridges, flipped] = color_ft_bit_diverse_tail(a, b, K_top, K_tail);
+            auto et = std::chrono::high_resolution_clock::now();
+            double sec = std::chrono::duration<double>(et - bt).count();
+            total_flipped += flipped;
+            total_bridges += n_bridges;
+            if (verbose) {
+#pragma omp critical
+                fprintf(stderr, "  bit (attr=%d,b=%d): qual=%lld bridges=%lld flipped=%lld %.2fs\n",
+                        a, b, n_qual, n_bridges, flipped, sec);
             }
         }
         auto t_end = std::chrono::high_resolution_clock::now();

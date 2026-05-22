@@ -193,6 +193,7 @@ Logs:
 - `exp3_redcaps/ablation/logs/min_deg_sweep/`
 - `exp3_redcaps/ablation/logs/ft_bits_sweep/`
 - `/tmp/m_dense_all2.log`
+- `/tmp/m_dense_all2.log`
 
 ---
 

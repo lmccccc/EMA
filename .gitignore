@@ -34,3 +34,7 @@ var/
 
 # Compiled extensions
 *.so
+
+# Legacy harness scripts at repo root (replaced by exp_benchmark/)
+/*.sh
+/clustering.npz

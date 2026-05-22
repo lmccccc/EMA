@@ -31,6 +31,16 @@ exp_benchmark/
 │   ├── min_deg_sweep.sh          # FT routing min_deg ablation
 │   ├── ft_bits_sweep.sh          # bloom width ablation
 │   └── selectivity_specs.sh      # shared DNF specs for the 6 sel points
+├── dynamic/                      # dynamic update benchmarks
+│   ├── insert.sh                 # incremental insertion (build N0, then +step)
+│   ├── delete.sh                 # mark_delete only (no graph repair)
+│   ├── delete_patch.sh           # mark_delete + selective edge patching
+│   ├── attr_update.sh            # attribute-only updates (no vector change)
+│   ├── incremental.py
+│   ├── delete.py
+│   ├── delete_patch.py
+│   ├── attr_update.py
+│   └── update_common.py          # shared IO / GT helpers
 └── logs/                         # all run logs land here (git-ignored)
 ```
 
@@ -114,3 +124,36 @@ python aggregate.py logs/main > main_table.tsv
 ./ablation/min_deg_sweep.sh  && python aggregate.py logs/min_deg_sweep
 ./ablation/ft_bits_sweep.sh  && python aggregate.py logs/ft_bits_sweep
 ```
+
+## Dynamic updates
+
+All four dynamic operations are exercised on the same EMA index. Run on
+the categorical-attribute layout (`attr_type=[1]`); paths come from
+`conf.sh` and a 10 % selectivity predicate is used by default.
+
+```bash
+# 1. Incremental insertion: build N/2 then add +1M repeatedly up to N.
+dataset=sift10m attr_type=[1] ./dynamic/insert.sh
+
+# 2. Mark-delete only (no graph repair) on an existing index.
+dataset=sift10m attr_type=[1] \
+    INDEX_PATH=<path to existing index> \
+    ./dynamic/delete.sh
+
+# 3. Mark-delete + selective edge patching at chosen stages.
+dataset=sift10m attr_type=[1] \
+    INDEX_PATH=<path to existing index> \
+    PATCH_AT=2,3,4 ./dynamic/delete_patch.sh
+
+# 4. Attribute-only updates (no vector change).
+dataset=sift10m attr_type=[1] \
+    INDEX_PATH=<path to existing index> \
+    ROUNDS=5 ./dynamic/attr_update.sh
+```
+
+Each run produces a `logs/dynamic_<op>_<dataset>_<timestamp>/run.log` and
+a per-stage JSON with recall / QPS / wall-time.
+
+Override `EMA_BASE_FVECS`, `EMA_QUERY_FVECS`, `EMA_ATTR_JSON` directly if
+you want to point at non-default files; the shell wrappers populate these
+from `conf.sh` automatically.

@@ -208,7 +208,7 @@ time excluded.
 | Insert (`add_items`)                            |                  90.8 s |       parallel        |   32    |
 | Mark-delete                                     |                   1.3 s |        serial         |    1    |
 | Attr-only update (`update_attr`)                |                   2.5 s |        serial         |    1    |
-| Update vec+attr (mark-delete + add)             |                 447.5 s | mixed (add parallel)  |   32    |
+| Update vec+attr (mark-delete + add)             |                 447.5 s |       parallel        |   32    |
 | Patch (`batched_patch_deletes`, one call)       |                  48.5 s |       parallel        |   64    |
 | Reconstruct (5 M survivors → fresh index)       |          1492.7 s (24.9 min) |       parallel       |   32    |
 
@@ -246,7 +246,7 @@ survivors took 2247.0 s (~321 μs/point).
     \hline
     Attr-only update (\texttt{update\_attr}, per 1\,M) & 2.5\,s              & serial               & 1  \\
     \hline
-    Update vec$+$attr (per 1\,M)                       & 447.5\,s            & mixed (add parallel) & 32 \\
+    Update vec$+$attr (per 1\,M)                       & 447.5\,s            & parallel             & 32 \\
     \hline
     Patch (\texttt{batched\_patch\_deletes}, per call) & 48.5\,s             & parallel             & 64 \\
     \hline

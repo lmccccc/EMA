@@ -1,11 +1,11 @@
 # EMA (HashANN)
 
-**EMA** (Edge-Marker Augmented ANN) — a hybrid vector-and-attribute
-approximate nearest neighbour index. EMA augments an HNSW graph with
-**per-edge Edge Markers** (small bloom-style signatures) that route the
-search away from neighbours that cannot satisfy the predicate. The Edge
-Marker bits are bundled into the same cache lines as the neighbour list,
-so attribute filtering is essentially free at query time.
+**EMA** (Edge Marker) — a hybrid vector-and-attribute approximate nearest
+neighbour index. EMA augments an HNSW graph with **per-edge Edge Markers**
+(small bloom-style signatures) that route the search away from neighbours
+that cannot satisfy the predicate. The Edge Marker bits are bundled into
+the same cache lines as the neighbour list, so attribute filtering is
+essentially free at query time.
 
 > **Naming note** — the paper calls the per-edge signature **Edge Marker**
 > (EM). Throughout the source tree it is abbreviated **`ft`** (a legacy

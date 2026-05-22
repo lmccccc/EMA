@@ -1,7 +1,7 @@
 # EMA (HashANN) Benchmark Scripts
 
-End-to-end build / query / ablation scripts for **EMA** (Edge-Marker
-Augmented ANN; the method described in the HashANN paper) on four datasets:
+End-to-end build / query / ablation scripts for **EMA** (Edge Marker;
+the method described in the HashANN paper) on four datasets:
 
 | dataset       | n          | dim  | metric |
 |---------------|-----------:|-----:|--------|

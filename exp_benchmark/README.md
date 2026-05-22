@@ -1,7 +1,7 @@
-# EMA Benchmark Scripts
+# EMA (HashANN) Benchmark Scripts
 
-End-to-end build / query / ablation scripts for **EMA** (the HashANN-based
-edge-FT method described in the paper) on four datasets:
+End-to-end build / query / ablation scripts for **EMA** (Edge-Marker
+Augmented ANN; the method described in the HashANN paper) on four datasets:
 
 | dataset       | n          | dim  | metric |
 |---------------|-----------:|-----:|--------|
@@ -13,6 +13,10 @@ edge-FT method described in the paper) on four datasets:
 The scripts wrap the C++/Python bindings in `hnswlib/` and the helper
 tools under `tests/`. They are intentionally self-contained and do **not**
 depend on any of the historical `exp*/` folders.
+
+> The paper's **Edge Marker** is called **`ft`** throughout the code
+> (legacy name "fingerprint"). When you see `ft_bits`, `edge_level_ft`,
+> `ft_routing_min_deg`, etc., read them as Edge-Marker parameters.
 
 ## Layout
 

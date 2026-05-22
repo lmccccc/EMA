@@ -1,18 +1,26 @@
-# HashANN (EMA)
+# EMA (HashANN)
 
-**EMA** (Edge-FT Mixed ANN) — a hybrid vector-and-attribute approximate
-nearest neighbour index. EMA augments an HNSW graph with **per-edge
-Fingerprint (FT) bloom filters** that route the search away from neighbours
-that cannot satisfy the predicate. The FT bits are bundled into the same
-cache lines as the neighbour list, so attribute filtering is essentially
-free at query time.
+**EMA** (Edge-Marker Augmented ANN) — a hybrid vector-and-attribute
+approximate nearest neighbour index. EMA augments an HNSW graph with
+**per-edge Edge Markers** (small bloom-style signatures) that route the
+search away from neighbours that cannot satisfy the predicate. The Edge
+Marker bits are bundled into the same cache lines as the neighbour list,
+so attribute filtering is essentially free at query time.
+
+> **Naming note** — the paper calls the per-edge signature **Edge Marker**
+> (EM). Throughout the source tree it is abbreviated **`ft`** (a legacy
+> name for the same data structure: "fingerprint"). Read `ft_bits`,
+> `edge_level_ft`, `update_node_ft`, `batched_patch_deletes`, etc. as
+> Edge-Marker–related code. Old "HashANN" identifiers (module name
+> `hashannlib`, scripts `hashann_build.py` / `hashann_query.py`) are
+> retained for binary compatibility.
 
 ## Features
 
 - **Numerical and categorical attributes** — each item can carry one or more
   attributes of either kind. Numerical attributes are stored as ranges with
   inclusive lower/upper bounds; categorical attributes are stored as label
-  sets. Both kinds share the same edge-FT bloom layout.
+  sets. Both kinds share the same Edge-Marker bloom layout.
 - **Multi-predicate queries (DNF)** — a query predicate is an OR of ANDs,
   e.g. `(attr0 ∈ [0.1, 0.3] AND attr1 ∈ {9}) OR (attr1 ∈ {12})`. Predicates
   may mix numerical bounds and label lists arbitrarily, on any subset of
@@ -22,17 +30,18 @@ free at query time.
   rebuilding the graph. Deleted nodes are filtered out at query time;
   optional **selective edge patching** can be applied at chosen stages to
   recover navigability after large deletions. Attribute-only updates
-  recompute the affected edge FTs in place.
+  recompute the affected Edge Markers in place.
 - **Hybrid search** — queries return top-K nearest vectors among the
-  attribute-filtered subset. The selectivity-aware FT routing gives large
-  QPS gains over post-filtering across the 1 %–100 % selectivity range.
+  attribute-filtered subset. The selectivity-aware Edge-Marker routing
+  gives large QPS gains over post-filtering across the 1 %–100 %
+  selectivity range.
 
 ## Repository layout
 
 | path                | purpose                                                         |
 |---------------------|-----------------------------------------------------------------|
-| `hnswlib/`          | C++ implementation of EMA (HNSW + edge-level FT) and Python bindings |
-| `tests/`            | Python entry points: `hashann_build.py`, `hashann_query.py`, GT/predicate generators |
+| `hnswlib/`          | C++ implementation of EMA (HNSW + per-edge Edge Markers) and Python bindings |
+| `tests/`            | Python entry points: `hashann_build.py`, `hashann_query.py`, GT/predicate generators (legacy filenames; same code is EMA) |
 | `exp_benchmark/`    | **Clean reproduction harness for the paper experiments**         |
 | `docs/`             | Project map, design notes                                       |
 | `tools/`            | Repo-guard and other developer scripts                          |

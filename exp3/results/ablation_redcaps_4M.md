@@ -209,8 +209,8 @@ time excluded.
 | Mark-delete                                     |                   1.3 s |        serial         |    1    |
 | Attr-only update (`update_attr`)                |                   2.5 s |        serial         |    1    |
 | Update vec+attr (mark-delete + add)             |                 447.5 s | mixed (add parallel)  |   32    |
-| Patch (`batched_patch_deletes`, one call)       |                  ~50  s |       parallel        |   64    |
-| Reconstruct (fresh `add_items` over survivors)  |        306 s / 1 M alive |       parallel       |   32    |
+| Patch (`batched_patch_deletes`, one call)       |                  48.5 s |       parallel        |   64    |
+| Reconstruct (5 M survivors → fresh index)       |          1492.7 s (24.9 min) |       parallel       |   32    |
 
 Sources: `incremental_sift10m_20260513_130559`,
 `delete_sift10m_20260513_164830`,
@@ -218,3 +218,14 @@ Sources: `incremental_sift10m_20260513_130559`,
 `attr_update_20260514_211644`,
 `point_update_20260516_skipdead_parallel`,
 `delete_rebuild_sift10m_20260513_173033`.
+
+**Patch** averaged over 8 calls (3 from delete-only at deletion ratios
+20/30/40 % = 32.6 / 65.1 / 69.3 s, plus 5 from the update flow with
+dead-skip reverse-prune = 49.3 / 26.7 / 54.9 / 46.5 / 43.6 s) →
+mean **48.5 s** per call on ~9 M dirty nodes.
+
+**Reconstruct** averaged over 2 runs that rebuilt from 5 M survivors via
+fresh `add_items` (32 threads): `delete_rebuild` stage 5 = 1534.5 s and
+`point_update` final rebuild = 1450.9 s → mean **1492.7 s** (24.9 min).
+This corresponds to ~298 μs/point; the same machinery scaled to 7 M
+survivors took 2247.0 s (~321 μs/point).

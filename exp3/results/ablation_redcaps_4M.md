@@ -229,3 +229,29 @@ fresh `add_items` (32 threads): `delete_rebuild` stage 5 = 1534.5 s and
 `point_update` final rebuild = 1450.9 s → mean **1492.7 s** (24.9 min).
 This corresponds to ~298 μs/point; the same machinery scaled to 7 M
 survivors took 2247.0 s (~321 μs/point).
+
+### LaTeX version
+
+```latex
+\begin{table}[t]
+  \caption{Per-step cost of EMA dynamic operations (sift10m / sift5m, $M{=}40$, $\textit{ef}_c{=}300$, $\textit{ft\_bits}{=}128$, edge-level Edge Marker). Costs averaged over the rounds actually executed; query time excluded.}
+  \label{tab:dynamic-cost}
+  \begin{tabular}{l|r|c|c}
+    \hline
+    \textbf{Step} & \textbf{Avg. cost} & \textbf{Mode} & \textbf{Threads} \\
+    \hline
+    Insert (\texttt{add\_items}, per 1\,M)            & 90.8\,s              & parallel             & 32 \\
+    \hline
+    Mark-delete (per 1\,M)                            & 1.3\,s               & serial               & 1  \\
+    \hline
+    Attr-only update (\texttt{update\_attr}, per 1\,M) & 2.5\,s              & serial               & 1  \\
+    \hline
+    Update vec$+$attr (per 1\,M)                       & 447.5\,s            & mixed (add parallel) & 32 \\
+    \hline
+    Patch (\texttt{batched\_patch\_deletes}, per call) & 48.5\,s             & parallel             & 64 \\
+    \hline
+    Reconstruct (5\,M survivors $\to$ fresh index)    & 1492.7\,s (24.9\,min)& parallel             & 32 \\
+    \hline
+  \end{tabular}
+\end{table}
+```

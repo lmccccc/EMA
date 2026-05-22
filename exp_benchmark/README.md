@@ -157,24 +157,3 @@ a per-stage JSON with recall / QPS / wall-time.
 Override `EMA_BASE_FVECS`, `EMA_QUERY_FVECS`, `EMA_ATTR_JSON` directly if
 you want to point at non-default files; the shell wrappers populate these
 from `conf.sh` automatically.
-
-### Per-step cost (measured)
-
-Measured on `sift10m` / `sift5m`, M=40, ef_c=300, ft_bits=128, edge-FT.
-All numbers are averaged over the rounds actually run; query is excluded.
-
-| Step | Avg. cost (per 1 M ops) | Mode | Threads |
-|---|---:|:---:|:---:|
-| Insert (`add_items`) | 90.8 s | parallel | 32 |
-| Mark-delete | 1.3 s | serial | 1 |
-| Attr-only update (`update_attr`) | 2.5 s | serial | 1 |
-| Update vec+attr (mark-delete + add) | 447.5 s | mixed (add parallel) | 32 |
-| Patch (`batched_patch_deletes`, one call) | ~50 s | parallel | 64 |
-| Reconstruct (fresh `add_items` over survivors) | 306 s / 1 M alive | parallel | 32 |
-
-Sources: `incremental_sift10m_20260513_130559`,
-`delete_sift10m_20260513_164830`,
-`delete_patch_sift10m_20260514_191343`,
-`attr_update_20260514_211644`,
-`point_update_20260516_skipdead_parallel`,
-`delete_rebuild_sift10m_20260513_173033`.

@@ -29,9 +29,18 @@ edge_level_ft="${edge_level_ft:-true}"
 use_ft="${use_ft:-true}"
 ft_routing_min_deg="${ft_routing_min_deg:-8}"
 
+# Attribute generation defaults (used by attr_generator.sh).
+categorical_attr_max_cardinality="${categorical_attr_max_cardinality:-21}"
+numerical_max_attr="${numerical_max_attr:-100000}"
+
 # DNF predicate (paper uses OR-of-AND label predicates).
 # Defaults to the 10% selectivity spec on attr_type=[0,1]; override per-cell.
-dnf_spec="${dnf_spec:-[{\"0\":0.3,\"1\":[9]},{\"1\":[12]}]}"
+# Note: assigned in two steps because bash's ${var:-default} ends at the
+# first '}' it sees, which would mangle a JSON literal default.
+: "${dnf_spec:=}"
+if [ -z "$dnf_spec" ]; then
+    dnf_spec='[{"0":0.3,"1":[9]},{"1":[12]}]'
+fi
 dnf_name="${dnf_name:-or_T10}"
 
 # ---- attribute layout ----------------------------------------------------

@@ -243,28 +243,62 @@ def get_count(cur, schema_name, table_name):
     print(f"Table {table_name} has {count} rows.")
     return count
 
+def _pred_depth(x):
+    d = 0
+    cur = x
+    while isinstance(cur, (list, tuple)):
+        d += 1
+        if len(cur) == 0:
+            break
+        cur = cur[0]
+    return d
+
+def _build_term_sql(term, attr_type_list):
+    parts = []
+    for idx, attr_type in enumerate(attr_type_list):
+        vals = term[idx] if idx < len(term) else []
+        if attr_type == 0:
+            if len(vals) == 0:
+                continue  # don't-care attr
+            assert len(vals) == 2, f"numerical attr expects [lo,hi], got {vals}"
+            parts.append(f"(attr_{idx} >= {vals[0]} AND attr_{idx} <= {vals[1]})")
+        elif attr_type == 1:
+            if len(vals) == 0:
+                continue
+            vals_str = "{" + ",".join(map(str, vals)) + "}"
+            parts.append(f"(attr_{idx} @> '{vals_str}')")
+        else:
+            print("error: unsupported attribute type ", attr_type)
+            exit()
+    if not parts:
+        return None  # universal term (matches all)
+    return "(" + " AND ".join(parts) + ")"
+
 def generate_sql(schema_name, table_name, query_vector, raw_predicate, K, attr_type_list, metric):
     # example:
     # select id from t_table where price > 15 order by vector_1 <-> '{5,9,8,6,2,1,1,0,4,3}' limit 10;
-    # attr_type_list = []
-    # demo: explain
-    # raw_sql = f"EXPLAIN (ANALYZE, BUFFERS, VERBOSE) SELECT id FROM {table_name} "
+    # Supports both:
+    #   legacy 3D predicate: [attr][vals]           -> single AND-term
+    #   DNF    4D predicate: [term][attr][vals]     -> OR of AND-terms
     raw_sql = f"SELECT id FROM {table_name} "
-    if len(attr_type_list) > 0:
-        raw_sql += "WHERE "
-    for idx, attr_type in enumerate(attr_type_list):
-        if attr_type == 0:
-            raw_sql += f"attr_{idx} >= {raw_predicate[idx][0]} AND attr_{idx} <= {raw_predicate[idx][1]} "
-            if idx != len(attr_type_list) - 1:
-                raw_sql += " AND "
-        elif attr_type == 1:
-            if len(raw_predicate[idx]) == 0:
-                continue
-            for j, val in enumerate(raw_predicate[idx]):
-                raw_sql += f"attr_{idx} @> "
-                raw_sql += "'{" + ",".join(map(str, raw_predicate[idx])) + "}' "
-                if idx < len(attr_type_list) - 1 or j < len(raw_predicate[idx]) - 1:
-                    raw_sql += " AND "
+    depth = _pred_depth(raw_predicate)
+    if depth >= 3:
+        terms = raw_predicate
+    else:
+        terms = [raw_predicate]
+
+    universal = False
+    term_sqls = []
+    for term in terms:
+        t = _build_term_sql(term, attr_type_list)
+        if t is None:
+            universal = True
+            break
+        term_sqls.append(t)
+
+    if not universal and term_sqls:
+        raw_sql += "WHERE " + " OR ".join(term_sqls) + " "
+
     raw_sql += f"ORDER BY vector_0{'<->' if metric == 'L2' else '<*>'}"
     raw_sql += "'{" + ",".join(format(x, ".7f") for x in query_vector) + "}' "
     raw_sql += f"LIMIT {K};"

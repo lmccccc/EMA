@@ -82,6 +82,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     int maxlevel_{0};
 
     double ft_routing_min_deg_{10}; // min degree: if FT-passing neighbors < this, backfill for routing
+    bool ft_routing_backfill_tail_{false}; // false: pick from HEAD of not_nbrs; true: pick from TAIL
 
     std::unique_ptr<VisitedListPool> visited_list_pool_{nullptr};
 
@@ -128,6 +129,27 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     double repair_dead_ratio_threshold_{0.1};  // report nodes with ≥10% deleted neighbors
     mutable std::mutex repair_candidates_lock_;
     mutable std::unordered_map<tableint, float> repair_candidates_;  // node_id → dead_ratio
+
+    // -----------------------------------------------------------------
+    // FreshDiskANN-style dirty tracking for batched delete patching.
+    // Search-side cost: one atomic fetch_or per node that has at least one
+    // deleted neighbor (zero allocation, no mutex). Bit i = "node i's layer-0
+    // neighbor list contains at least one tombstoned id".
+    // Layer-1 patching uses a full scan instead (sparse, cheap).
+    // -----------------------------------------------------------------
+    mutable std::vector<std::atomic<uint64_t>> dirty_bitmap_;
+    mutable std::atomic<size_t> dirty_count_{0};
+    size_t last_patch_deleted_count_{0};
+
+    // Maintenance thresholds (fraction of cur_element_count)
+    double patch_trigger_ratio_{0.20};
+    double rebuild_trigger_ratio_{0.50};
+    size_t patch_min_new_deleted_{100000};   // require ≥100k new dels since last patch
+
+    // Set true by rebuildGraph when it clears aux structures (buckets / ep_ids /
+    // cht / btrees / ivf) that were externally populated. Caller must re-feed
+    // them before using attr-aware search paths.
+    bool aux_structures_invalidated_{false};
 
     // entry points (items at 2 layer)
     std::vector<tableint> ep_ids_;
@@ -212,6 +234,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     void add_ep_ids(const std::vector<tableint>& ep_ids){
         ep_ids_ = ep_ids;
+        if (!ep_ids.empty()) maybe_clear_aux_invalidated();
     }
 
     void set_thresholds(double threshold_1, double threshold_2, double threshold_3){
@@ -223,6 +246,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     void set_ft_routing_min_deg(double threshold){
         ft_routing_min_deg_ = threshold;
         std::cout << "set ft_routing_min_deg to " << ft_routing_min_deg_ << std::endl;
+    }
+
+    void set_ft_routing_backfill_tail(bool from_tail){
+        ft_routing_backfill_tail_ = from_tail;
+        std::cout << "set ft_routing_backfill_tail to " << ft_routing_backfill_tail_ << std::endl;
     }
 
     void set_min_deg(double threshold){
@@ -239,11 +267,31 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         for(size_t i = 0; i < offset_size; i++) {
             bucket_offsets_.push_back(bucket_offsets[i]);
         }
+        maybe_clear_aux_invalidated();
     }
 
     void add_id_to_bucket(const int *id_to_bucket_data){
         id_to_buckets_.resize(max_elements_);
         memcpy(id_to_buckets_.data(), id_to_bucket_data, sizeof(tableint) * max_elements_);
+        maybe_clear_aux_invalidated();
+    }
+
+    bool aux_structures_invalidated() const {
+        return aux_structures_invalidated_;
+    }
+
+    // Clear the aux-invalidated flag if the structures it warned about are
+    // populated again (best-effort: caller is still responsible for re-feeding
+    // every structure they actually use).
+    void maybe_clear_aux_invalidated() {
+        if (!aux_structures_invalidated_) return;
+        // Heuristic: if buckets + ep_ids + id_to_buckets are all back, treat as
+        // restored. cht/btrees/ivf are caller's responsibility to rebuild via
+        // init_counting_hash_table()/generate_attr_indexes() if used.
+        if (!bucket_data_.empty() && !bucket_offsets_.empty()
+            && !id_to_buckets_.empty() && !ep_ids_.empty()) {
+            aux_structures_invalidated_ = false;
+        }
     }
 
 
@@ -605,6 +653,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         node_dominate_count_.assign(max_elements_, 0);
 
+        // dirty bitmap: 1 bit per slot, words of 64 bits
+        size_t dirty_words = (max_elements_ + 63) / 64;
+        dirty_bitmap_ = std::vector<std::atomic<uint64_t>>(dirty_words);
+        for (size_t i = 0; i < dirty_words; i++) dirty_bitmap_[i].store(0, std::memory_order_relaxed);
+        dirty_count_.store(0, std::memory_order_relaxed);
+        last_patch_deleted_count_ = 0;
+
     }
 
 
@@ -734,6 +789,32 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     int bit_pos  = val & 31;
                     assert(byte_pos < cate_int_byte_);
                     attr_space[byte_pos] |= (1u << bit_pos);
+                }
+            }
+        }
+    }
+
+    void validate_update_attr_record(const std::vector<std::vector<int>>& data) const {
+        if (data.size() != attr_type_.size()) {
+            throw std::runtime_error(
+                "update_attr: expected " + std::to_string(attr_type_.size()) +
+                " attributes, got " + std::to_string(data.size()));
+        }
+        for (size_t j = 0; j < data.size(); j++) {
+            if (attr_type_[j] == 0) {
+                if (data[j].size() != 1) {
+                    throw std::runtime_error(
+                        "update_attr: numerical attribute " + std::to_string(j) +
+                        " must contain exactly one value");
+                }
+                continue;
+            }
+            for (int value : data[j]) {
+                if (value < 0 || value >= max_cate_size_) {
+                    throw std::runtime_error(
+                        "update_attr: categorical value " + std::to_string(value) +
+                        " at attribute " + std::to_string(j) +
+                        " is outside [0, " + std::to_string(max_cate_size_) + ")");
                 }
             }
         }
@@ -898,6 +979,58 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t getDeletedCount() {
         return num_deleted_;
     }
+
+    // ---------------- Dirty bitmap (FreshDiskANN-style) ----------------
+    inline bool set_dirty(tableint id) const {
+        if (dirty_bitmap_.empty() || id >= max_elements_) return false;
+        size_t word = id >> 6;
+        uint64_t bit = uint64_t(1) << (id & 63);
+        uint64_t old = dirty_bitmap_[word].fetch_or(bit, std::memory_order_relaxed);
+        if (!(old & bit)) {
+            dirty_count_.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        return false;
+    }
+
+    inline bool is_dirty(tableint id) const {
+        if (dirty_bitmap_.empty() || id >= max_elements_) return false;
+        size_t word = id >> 6;
+        uint64_t bit = uint64_t(1) << (id & 63);
+        return (dirty_bitmap_[word].load(std::memory_order_relaxed) & bit) != 0;
+    }
+
+    void clear_dirty_bitmap() {
+        for (size_t i = 0; i < dirty_bitmap_.size(); i++)
+            dirty_bitmap_[i].store(0, std::memory_order_relaxed);
+        dirty_count_.store(0, std::memory_order_relaxed);
+    }
+
+    void ensure_dirty_bitmap_sized() {
+        size_t needed = (max_elements_ + 63) / 64;
+        if (dirty_bitmap_.size() < needed) {
+            dirty_bitmap_ = std::vector<std::atomic<uint64_t>>(needed);
+            for (size_t i = 0; i < needed; i++) dirty_bitmap_[i].store(0, std::memory_order_relaxed);
+            dirty_count_.store(0, std::memory_order_relaxed);
+        }
+    }
+
+    size_t getDirtyCount() const {
+        return dirty_count_.load(std::memory_order_relaxed);
+    }
+
+    double getDeletedRatio() const {
+        size_t cur = cur_element_count.load(std::memory_order_relaxed);
+        if (cur == 0) return 0.0;
+        return double(num_deleted_.load(std::memory_order_relaxed)) / double(cur);
+    }
+
+    void setMaintenanceThresholds(double patch_ratio, double rebuild_ratio, size_t patch_min_new) {
+        patch_trigger_ratio_ = patch_ratio;
+        rebuild_trigger_ratio_ = rebuild_ratio;
+        patch_min_new_deleted_ = patch_min_new;
+    }
+
 
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
     searchBaseLayer(tableint ep_id, const void *data_point, int layer) {
@@ -1155,10 +1288,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             tableint id = top_candidates_.top().second;
             visited_array[id] = visited_array_tag;
             candidate_set.emplace(-top_candidates_.top().first, id);
-            top_candidates.emplace(top_candidates_.top());
+            if (bare_bone_search || !isMarkedDeleted(id)) {
+                top_candidates.emplace(top_candidates_.top());
+            }
             top_candidates_.pop();
         }
-        lowerBound = top_candidates.top().first;
+        if (top_candidates.empty()) {
+            lowerBound = std::numeric_limits<dist_t>::max();
+        } else {
+            lowerBound = top_candidates.top().first;
+        }
 
         while (!candidate_set.empty()) {
             std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
@@ -2682,7 +2821,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             visited_array[id] = visited_array_tag;
             visited++;
             candidate_set.emplace(-top_candidates_.top().first, id);
-            if (dnf_pred ? predicate_check_dnf(id, *dnf_pred) : predicate_check(id, predicate)) {
+            if ((dnf_pred ? predicate_check_dnf(id, *dnf_pred) : predicate_check(id, predicate))
+                && (bare_bone_search || !isMarkedDeleted(id))) {
                 top_candidates.emplace(top_candidates_.top());
             }
             if (candidate_set.size() >= ef_top_) {
@@ -2697,7 +2837,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // regardless of whether it matches the predicate
         // Use max to avoid premature termination at low selectivity
         lowerBound = std::numeric_limits<dist_t>::max();
-        size_t lb_update_threshold = ef;
+        // Jan-style: update lowerBound only when top_candidates has at least
+        // K qualifying results. Earlier "min(K, ef)" threshold caused premature
+        // tightening that could end search with < K results.
         int round = 0;
         int passed = 0;
         int ft_passed = 0;
@@ -2846,6 +2988,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     if (isMarkedDeleted(*(data + j))) dead_count++;
                 }
                 if (dead_count > 0) {
+                    // FreshDiskANN dirty bitmap: cheap atomic OR, no lock
+                    set_dirty(current_node_id);
+                    // Legacy: also populate ratio-based map for backward-compat API
                     float dead_ratio = static_cast<float>(dead_count) / size;
                     if (dead_ratio >= repair_dead_ratio_threshold_) {
                         std::lock_guard<std::mutex> lock(repair_candidates_lock_);
@@ -2868,13 +3013,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (use_ft_routing) {
                 if (nbrs.size() < ft_routing_min_deg_) {
                     size_t extra_nbrs_needed = ft_routing_min_deg_ - nbrs.size();
-                    // Pick from HEAD of not_nbrs (nearest non-FT-passing neighbors)
-                    // to maintain minimum local connectivity for routing
                     size_t pick_count = std::min(extra_nbrs_needed, not_nbrs.size());
-                    for(size_t j = 0; j < pick_count; ++j){
-                        nbrs.push_back(not_nbrs[j]);
-                        _mm_prefetch(data_level0_memory_ + (not_nbrs[j]) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
-                        _mm_prefetch((char *) (visited_array + (not_nbrs[j])), _MM_HINT_T0);
+                    if (ft_routing_backfill_tail_) {
+                        // Pick from TAIL of not_nbrs (farther / more diverse non-FT-passing)
+                        for(size_t j = 0; j < pick_count; ++j){
+                            tableint nb = not_nbrs[not_nbrs.size() - 1 - j];
+                            nbrs.push_back(nb);
+                            _mm_prefetch(data_level0_memory_ + nb * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                            _mm_prefetch((char *) (visited_array + nb), _MM_HINT_T0);
+                        }
+                    } else {
+                        // Pick from HEAD of not_nbrs (nearest non-FT-passing neighbors)
+                        // to maintain minimum local connectivity for routing
+                        for(size_t j = 0; j < pick_count; ++j){
+                            nbrs.push_back(not_nbrs[j]);
+                            _mm_prefetch(data_level0_memory_ + (not_nbrs[j]) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                            _mm_prefetch((char *) (visited_array + (not_nbrs[j])), _MM_HINT_T0);
+                        }
                     }
                 }
                 // for(int j = 0; j < std::min(two_hop_candidates.size(), (size_t)2); ++j){
@@ -3114,8 +3269,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             }
                         }
 
-                        // Key change: update lowerBound as soon as top_candidates reaches lb_update_threshold
-                        if (top_candidates.size() >= lb_update_threshold) 
+                        // Jan-style: update lowerBound only when ≥ K qualifying results
+                        if (top_candidates.size() >= search_k)
                             lowerBound = top_candidates.top().first;
                     }
                 }
@@ -3318,7 +3473,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             }
                         }
 
-                        if (!top_candidates.empty())
+                        if (top_candidates.size() >= ef)
                             lowerBound = top_candidates.top().first;
                     }
                 }
@@ -5331,6 +5486,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     candidates.emplace(d_max, cur_c);
 
                     for (size_t j = 0; j < sz_link_list_other; j++) {
+                        // Skip dead neighbors: a retired node must not compete for an edge
+                        // slot against a new live node. Letting dead participate in the
+                        // heuristic lets stale geometric priority (from initial build) evict
+                        // a fresh alive candidate (cur_c), which patch's 2-hop replacement
+                        // cannot recover. Dropping them here also opportunistically prunes
+                        // dead edges from w's adjacency, reducing later patch work.
+                        if (isMarkedDeleted(data[j])) continue;
                         candidates.emplace(
                                 fstdistfunc_(getDataByInternalId(data[j]), getDataByInternalId(selectedNeighbors[idx]),
                                                 dist_func_param_), data[j]);
@@ -5503,6 +5665,245 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
     /*
+     * FreshDiskANN-style batched delete patching.
+     *
+     * For each node u whose neighbor list contains at least one deleted id
+     * (sourced from dirty_bitmap_ at layer 0, full-scan at upper layers):
+     *   1. Split N(u) into live + dead sets
+     *   2. candidates = live ∪ {alive 2-hop neighbors via dead nodes}
+     *   3. RobustPrune (getNeighborsByHeuristic2) to ≤ M
+     *   4. Rewrite N(u) and edge FT bits (layer 0 only)
+     *
+     * NOT thread-safe with concurrent queries (stop-the-world).
+     * Returns number of nodes patched (across all layers).
+     */
+    size_t batchedPatchDeletes(int num_threads = -1) {
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = 1;
+            #endif
+        }
+        size_t total_patched = 0;
+        size_t N = cur_element_count.load(std::memory_order_relaxed);
+        if (N == 0) {
+            clear_dirty_bitmap();
+            last_patch_deleted_count_ = num_deleted_.load();
+            return 0;
+        }
+
+        // --- Patch a single node at a given layer ---
+        // Strategy: preserve all surviving live edges (originally selected
+        // during ef_construction=300 search with full diversity). Only fill
+        // empty slots vacated by dead neighbors with the closest live 2-hop
+        // candidates. This avoids the recall hit from re-running RobustPrune
+        // on a locally-clustered 2-hop candidate set.
+        auto patch_one = [&](tableint u, int layer) -> bool {
+            linklistsizeint *ll = (layer == 0) ? get_linklist0(u) : get_linklist(u, layer);
+            int size = getListCount(ll);
+            if (size == 0) return false;
+            tableint *neighbors = (tableint*)(ll + 1);
+
+            std::vector<tableint> live, dead;
+            live.reserve(size); dead.reserve(size);
+            for (int j = 0; j < size; j++) {
+                if (isMarkedDeleted(neighbors[j])) dead.push_back(neighbors[j]);
+                else live.push_back(neighbors[j]);
+            }
+            if (dead.empty()) return false;  // nothing to patch
+
+            size_t Mcurmax = (layer == 0) ? maxM0_ : maxM_;
+            size_t need = (live.size() < Mcurmax) ? (Mcurmax - live.size()) : 0;
+
+            // Build fill candidate set: alive 2-hop neighbors via dead nodes,
+            // excluding u itself and already-live neighbors.
+            std::unordered_set<tableint> in_live(live.begin(), live.end());
+            std::unordered_set<tableint> cand_set;
+            cand_set.reserve(dead.size() * maxM0_);
+            for (tableint d : dead) {
+                linklistsizeint *ll_d = (layer == 0) ? get_linklist0(d) : get_linklist(d, layer);
+                if (!ll_d) continue;
+                int sz_d = getListCount(ll_d);
+                tableint *nbrs_d = (tableint*)(ll_d + 1);
+                for (int k = 0; k < sz_d; k++) {
+                    tableint w = nbrs_d[k];
+                    if (w == u) continue;
+                    if (isMarkedDeleted(w)) continue;
+                    if (in_live.count(w)) continue;
+                    cand_set.insert(w);
+                }
+            }
+
+            // Pick top `need` closest candidates to u.
+            std::vector<tableint> fills;
+            if (need > 0 && !cand_set.empty()) {
+                const void* u_data = getDataByInternalId(u);
+                std::vector<std::pair<dist_t, tableint>> scored;
+                scored.reserve(cand_set.size());
+                for (tableint c : cand_set) {
+                    dist_t d = fstdistfunc_(u_data, getDataByInternalId(c), dist_func_param_);
+                    scored.emplace_back(d, c);
+                }
+                size_t k_pick = std::min(need, scored.size());
+                std::partial_sort(scored.begin(), scored.begin() + k_pick,
+                                  scored.end(),
+                                  [](const std::pair<dist_t, tableint>& a,
+                                     const std::pair<dist_t, tableint>& b) {
+                                      return a.first < b.first;
+                                  });
+                fills.reserve(k_pick);
+                for (size_t i = 0; i < k_pick; i++) fills.push_back(scored[i].second);
+            }
+
+            std::vector<tableint> new_nbrs;
+            new_nbrs.reserve(live.size() + fills.size());
+            for (tableint v : live) new_nbrs.push_back(v);
+            for (tableint v : fills) new_nbrs.push_back(v);
+
+            // Write back neighbor list
+            setListCount(ll, (linklistsizeint)new_nbrs.size());
+            for (size_t k = 0; k < new_nbrs.size(); k++) neighbors[k] = new_nbrs[k];
+
+            // Rewrite edge FT bits (layer 0 only)
+            if (layer == 0 && edge_level_ft_) {
+                for (size_t k = 0; k < new_nbrs.size(); k++) {
+                    unsigned char* eft = edge_ft_at(u, (int)k);
+                    memset(eft, 0, size_per_ft_);
+                    updateft(eft, new_nbrs[k]);
+                }
+                for (size_t k = new_nbrs.size(); k < (size_t)maxM0_; k++) {
+                    unsigned char* eft = edge_ft_at(u, (int)k);
+                    memset(eft, 0, size_per_ft_);
+                }
+            }
+            return true;
+        };
+
+        // Layer 0: scan ALL live nodes (not just dirty). patch_one early-exits
+        // when no dead neighbors are found, so unaffected nodes pay only an
+        // O(M) read. This is required for correctness once we consolidate:
+        // bare_bone search dropping isMarkedDeleted() check is only safe if
+        // EVERY live node's neighbor list is clean. The dirty bitmap captures
+        // only nodes visited by queries; unvisited nodes may still point to
+        // deleted nodes and would leak them into search results.
+        std::vector<tableint> alive0;
+        alive0.reserve(N);
+        for (tableint i = 0; i < N; i++) {
+            if (isMarkedDeleted(i)) continue;
+            alive0.push_back(i);
+        }
+        std::atomic<size_t> patched0{0};
+        #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 64)
+        for (size_t idx = 0; idx < alive0.size(); idx++) {
+            if (patch_one(alive0[idx], 0)) patched0.fetch_add(1);
+        }
+        total_patched += patched0.load();
+
+        // Upper layers: scan all alive nodes with element_levels_[i] >= layer
+        for (int layer = 1; layer <= maxlevel_; layer++) {
+            std::vector<tableint> alive_layer;
+            for (tableint i = 0; i < N; i++) {
+                if (isMarkedDeleted(i)) continue;
+                if (element_levels_[i] < layer) continue;
+                if (linkLists_[i] == nullptr) continue;
+                alive_layer.push_back(i);
+            }
+            std::atomic<size_t> patched_l{0};
+            #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 64)
+            for (size_t idx = 0; idx < alive_layer.size(); idx++) {
+                if (patch_one(alive_layer[idx], layer)) patched_l.fetch_add(1);
+            }
+            total_patched += patched_l.load();
+        }
+
+        // Consolidate: deleted nodes are now unreachable from the live graph,
+        // so we can clear their DELETE_MARK flags and reset num_deleted_=0.
+        // This re-engages the bare_bone_search fast path in searchBaseLayerST,
+        // which gives a large QPS win.
+        //
+        // Safety: invariant after patching is "every live node's neighbor list
+        // contains only live nodes". BFS from a live entry can never reach a
+        // deleted node, so dropping the per-visit isMarkedDeleted() check is
+        // safe — bare_bone search will only ever see live nodes.
+        //
+        // Caveat: the global entry point itself must be live, otherwise search
+        // starts from a deleted node and traverses its (un-patched) edges.
+        if (isMarkedDeleted(enterpoint_node_)) {
+            tableint new_ep = enterpoint_node_;
+            int best_level = -1;
+            for (tableint i = 0; i < N; i++) {
+                if (isMarkedDeleted(i)) continue;
+                if ((int)element_levels_[i] > best_level) {
+                    best_level = (int)element_levels_[i];
+                    new_ep = i;
+                }
+            }
+            if (best_level >= 0) {
+                enterpoint_node_ = new_ep;
+                maxlevel_ = best_level;
+            }
+        }
+        // Unified behavior for both delete-only and update workflows:
+        //   - DELETE_MARK bit = "this id is permanently retired" (NEVER cleared by patch).
+        //   - num_deleted_     = count of nodes with DELETE_MARK set; left UNCHANGED here
+        //     so that `bare_bone_search = !num_deleted_` (in searchKnn etc.) remains
+        //     FALSE while any dead node exists, preserving the dead-filtering fast path.
+        //
+        // Why we don't clear DELETE_MARK:
+        //   * In delete-only flow, dead nodes are unreachable after patch (no alive
+        //     neighbor references them) AND excluded from top_candidates — safe either way,
+        //     so we don't need to clear.
+        //   * In delete+insert (update) flow, the original vector at the retired id is
+        //     stale (logically replaced by a new insert at a different internal id).
+        //     Clearing DELETE_MARK would revive it as a searchable ghost whose attrs
+        //     may pass predicate filters but whose label is no longer mapped — polluting
+        //     recall measurements with apparent misses.
+        //
+        // Why we don't reset num_deleted_:
+        //   * Doing so would break the `bare_bone_search` invariant: after reset, the
+        //     fast path would skip the `isMarkedDeleted` check at search time while
+        //     DELETE_MARK is still set on many nodes — exactly the ghost-leak bug above.
+        //   * The auto-dispatcher (which triggers rebuild at e.g. 50% dead) still has
+        //     correct semantics: num_deleted_ reflects truly retired (never to revive) ids.
+        size_t cleared = 0;
+
+        // Clear dirty + bookkeeping
+        clear_dirty_bitmap();
+        clearRepairCandidates();
+        last_patch_deleted_count_ = num_deleted_.load(std::memory_order_relaxed);
+        return total_patched;
+    }
+
+
+    /*
+     * Automatic maintenance dispatcher.
+     * Returns:
+     *   "none"    - nothing done
+     *   "patch"   - batched patching ran
+     *   "rebuild" - full graph rebuild ran
+     */
+    std::string maintainDeletes(int num_threads = -1) {
+        double ratio = getDeletedRatio();
+        size_t cur_deleted = num_deleted_.load();
+        if (ratio >= rebuild_trigger_ratio_) {
+            rebuildGraph();
+            clear_dirty_bitmap();
+            last_patch_deleted_count_ = 0;
+            return "rebuild";
+        }
+        if (ratio >= patch_trigger_ratio_ &&
+            cur_deleted >= last_patch_deleted_count_ &&
+            (cur_deleted - last_patch_deleted_count_) >= patch_min_new_deleted_) {
+            batchedPatchDeletes(num_threads);
+            return "patch";
+        }
+        return "none";
+    }
+
+
+
+    /*
      * Global graph rebuild: zero all edges & FT, then re-insert all live nodes.
      * Deleted nodes are truly removed (compacted out).
      * counting_hash_table_mapping (FT codebook) is preserved.
@@ -5542,15 +5943,27 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         size_t live_count = live_nodes.size();
 
+        // Insert highest-level nodes first so the entry point and upper-layer
+        // structure get the best candidates from the start. Without this,
+        // early-inserted nodes pick from a near-empty graph and the entry
+        // point gets re-elected several times, hurting recall.
+        std::stable_sort(live_nodes.begin(), live_nodes.end(),
+                         [](const NodeInfo& a, const NodeInfo& b) {
+                             return a.level > b.level;
+                         });
+
         // --- Step 2: zero all level-0 memory ---
         memset(data_level0_memory_, 0, max_elements_ * size_data_per_element_);
 
         // --- Step 3: free upper-layer link lists ---
+        // NOTE: linkLists_ is allocated with malloc (not calloc) at construction,
+        // so slots for level-0 nodes contain garbage non-null pointers. The destructor
+        // and resizeIndex skip them via element_levels_[i] > 0; we must do the same.
         for (size_t i = 0; i < N; i++) {
-            if (linkLists_[i]) {
+            if (element_levels_[i] > 0 && linkLists_[i]) {
                 free(linkLists_[i]);
-                linkLists_[i] = nullptr;
             }
+            linkLists_[i] = nullptr;
         }
 
         // --- Step 4: reset all graph state ---
@@ -5561,8 +5974,26 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         enterpoint_node_ = -1;
         maxlevel_ = -1;
         clearRepairCandidates();
+        clear_dirty_bitmap();
+        last_patch_deleted_count_ = 0;
         dominate_count = 0;
         build_stats_printed_ = false;
+
+        // Detect & warn if aux structures (externally populated) will be invalidated.
+        bool had_buckets = !bucket_data_.empty() || !bucket_offsets_.empty() || !id_to_buckets_.empty() || bucket_size_ > 0;
+        bool had_ep_ids = !ep_ids_.empty();
+        bool had_cht = (counting_hash_table != nullptr);
+        bool had_btrees = !btrees.empty();
+        bool had_ivf = !ivf.empty();
+        if (had_buckets || had_ep_ids || had_cht || had_btrees || had_ivf) {
+            fprintf(stderr,
+                "[rebuildGraph] WARNING: invalidating aux structures (buckets=%d, "
+                "ep_ids=%d, cht=%d, btrees=%d, ivf=%d). Caller must re-feed these "
+                "via add_buckets/add_id_to_bucket/add_ep_ids/init_counting_hash_table/"
+                "generate_attr_indexes before using attr-aware search.\n",
+                (int)had_buckets, (int)had_ep_ids, (int)had_cht, (int)had_btrees, (int)had_ivf);
+            aux_structures_invalidated_ = true;
+        }
 
         // Clear auxiliary ID-based structures (stale after compaction)
         ep_ids_.clear();
@@ -5578,7 +6009,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         std::fill(element_levels_.begin(), element_levels_.end(), 0);
-        std::fill(node_dominate_count_.begin(), node_dominate_count_.end(), 0);
+        // After load_index, node_dominate_count_ may be empty (loadIndex
+        // does not initialize it). Ensure it is sized to max_elements_ so
+        // mutuallyConnectNewElement can safely index into it during rebuild.
+        if (node_dominate_count_.size() < max_elements_) {
+            node_dominate_count_.assign(max_elements_, 0);
+        } else {
+            std::fill(node_dominate_count_.begin(), node_dominate_count_.end(), 0);
+        }
+        ensure_dirty_bitmap_sized();
+        clear_dirty_bitmap();
 
         if (live_count == 0) return 0;
 
@@ -5598,7 +6038,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             memcpy(attr_dst, ni.attr.data(), ni.attr.size() * sizeof(int));
 
             // Node-level FT: rebuild after attrs are set
-            update_node_ft(cur_c);
+            // Edge-mode: node_ft aliases edge slot 0; skip (mutuallyConnect
+            // would overwrite edge_ft below in any case).
+            if (!edge_level_ft_) {
+                update_node_ft(cur_c);
+            }
 
             // Allocate upper layer if needed
             if (ni.level > 0) {
@@ -6114,6 +6558,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         input.close();
 
+        // Allocate dirty bitmap to match max_elements_ (load may have resized)
+        ensure_dirty_bitmap_sized();
+        clear_dirty_bitmap();
+        last_patch_deleted_count_ = num_deleted_.load();
+
         return;
     }
 
@@ -6168,6 +6617,17 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     */
     void markDeletedInternal(tableint internalId) {
         assert(internalId < cur_element_count);
+        // Hold the per-node link list lock: DELETE_MARK lives in the high
+        // 16 bits of the level-0 linklistsizeint (4 bytes); setListCount in
+        // mutuallyConnect writes the full word, so an unlocked RMW here would
+        // race and could lose the DELETE_MARK bit.
+        std::unique_lock<std::mutex> lock_node(link_list_locks_[internalId]);
+        markDeletedInternalLocked(internalId);
+    }
+
+    // Internal helper: caller must hold link_list_locks_[internalId].
+    void markDeletedInternalLocked(tableint internalId) {
+        assert(internalId < cur_element_count);
         if (!isMarkedDeleted(internalId)) {
             unsigned char *ll_cur = ((unsigned char *)get_linklist0(internalId))+2;
             *ll_cur |= DELETE_MARK;
@@ -6209,6 +6669,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     * Remove the deleted mark of the node.
     */
     void unmarkDeletedInternal(tableint internalId) {
+        assert(internalId < cur_element_count);
+        // Same race as markDeletedInternal: hold link_list_locks_ before
+        // RMW of the byte that shares a word with the link-list size.
+        std::unique_lock<std::mutex> lock_node(link_list_locks_[internalId]);
+        unmarkDeletedInternalLocked(internalId);
+    }
+
+    // Internal helper: caller must hold link_list_locks_[internalId].
+    void unmarkDeletedInternalLocked(tableint internalId) {
         assert(internalId < cur_element_count);
         if (isMarkedDeleted(internalId)) {
             unsigned char *ll_cur = ((unsigned char *)get_linklist0(internalId)) + 2;
@@ -6310,19 +6779,54 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (!is_vacant_place) {
             addPoint(data_point, label, attr_data, level_);
         } else {
-            // we assume that there are no concurrent operations on deleted element
+            // Reuse the deleted slot via a full re-insertion so the new point
+            // gets its own neighborhood and (random) level. Reusing updatePoint
+            // would lock it into the deleted node's stale upper-layer links
+            // and lock_listed local neighbours, badly degrading recall.
+            int curlevel = (level_ == -1) ? 0 : level_;
+            assert(curlevel == 0 || curlevel == 1);
+
+            // 1. Acquire per-node lock first (used by markDelete/connect/etc.).
+            std::unique_lock<std::mutex> lock_el(link_list_locks_[internal_id_replaced]);
+
+            // 2. Free old upper-layer link list (if any), then reset metadata
+            //    so the slot looks like a fresh allocation.
+            if (element_levels_[internal_id_replaced] > 0 && linkLists_[internal_id_replaced]) {
+                free(linkLists_[internal_id_replaced]);
+                linkLists_[internal_id_replaced] = nullptr;
+            }
+            element_levels_[internal_id_replaced] = curlevel;
+            if (internal_id_replaced < (tableint)node_dominate_count_.size())
+                node_dominate_count_[internal_id_replaced] = 0;
+
+            // 3. Update label tables.
             labeltype label_replaced = getExternalLabel(internal_id_replaced);
+            {
+                std::unique_lock<std::mutex> lock_table(label_lookup_lock);
+                label_lookup_.erase(label_replaced);
+                label_lookup_[label] = internal_id_replaced;
+            }
             setExternalLabel(internal_id_replaced, label);
 
-            std::unique_lock <std::mutex> lock_table(label_lookup_lock);
-            label_lookup_.erase(label_replaced);
-            label_lookup_[label] = internal_id_replaced;
-            lock_table.unlock();
+            // 4. Clear DELETE_MARK + zero level-0 nbr region (the level-0
+            //    linklistsizeint that holds DELETE_MARK is inside this region,
+            //    so unmark must come first or be implicit in the memset).
+            unmarkDeletedInternalLocked(internal_id_replaced);
+            memset(data_level0_memory_ + internal_id_replaced * size_data_per_element_ + offsetLevel0_,
+                   0, nbr_size_per_element);
 
-            unmarkDeletedInternal(internal_id_replaced);
+            // 5. Write data + attr + FT.
+            memcpy(getDataByInternalId(internal_id_replaced), data_point, data_size_);
             add_attr_to_point(internal_id_replaced, attr_data);
-            update_node_ft(internal_id_replaced);  // rebuild FT for reused slot
-            updatePoint(data_point, internal_id_replaced, 1.0);
+            // Edge-mode: node_ft storage aliases edge_ft slot 0; skip writing it
+            // here to avoid polluting the edge slot. mutuallyConnect (in
+            // connectIntoGraph) will fully rewrite edge_ft anyway.
+            if (!edge_level_ft_) {
+                update_node_ft(internal_id_replaced);
+            }
+
+            // 6. Run the standard greedy-descent + connect pipeline.
+            connectIntoGraph(data_point, internal_id_replaced, curlevel);
         }
     }
 
@@ -6420,10 +6924,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
             }
 
+            size_t Mcurmax = layer == 0 ? maxM0_ : maxM_;
             for (auto&& neigh : sNeigh) {
-                // if (neigh == internalId)
-                //     continue;
-
                 std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidates;
                 size_t size = sCand.find(neigh) == sCand.end() ? sCand.size() : sCand.size() - 1;  // sCand guaranteed to have size >= 1
                 size_t elementsToKeep = std::min(ef_construction_, size);
@@ -6442,35 +6944,260 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     }
                 }
 
-                // Retrieve neighbours using heuristic and set connections.
-                getNeighborsByHeuristic2(candidates, layer == 0 ? maxM0_ : maxM_);
+                // FT-aware reprune at layer 0: track dominated nodes so we can
+                // refresh edge-FT (and node-FT) with dominated attr bits, matching
+                // the mutuallyConnect code path's semantics. At upper layers there
+                // is no FT so we use the simple 2-arg overload.
+                std::vector<std::vector<tableint>> dominated_list(layer == 0 ? Mcurmax : 0);
+                if (layer == 0) {
+                    getNeighborsByHeuristic2(candidates, Mcurmax, true, neigh, &dominated_list);
+                } else {
+                    getNeighborsByHeuristic2(candidates, Mcurmax);
+                }
 
+                std::vector<tableint> new_edges_for_node_ft;
                 {
                     std::unique_lock <std::mutex> lock(link_list_locks_[neigh]);
-                    linklistsizeint *ll_cur;
-                    ll_cur = get_linklist_at_level(neigh, layer);
-                    size_t candSize = candidates.size();
-                    setListCount(ll_cur, candSize);
-                    tableint *data = (tableint *) (ll_cur + 1);
-                    for (size_t idx = 0; idx < candSize; idx++) {
-                        tableint new_dest = candidates.top().second;
-                        data[idx] = new_dest;
-                        // Edge-level FT lives only at layer 0. The neighbor slot
-                        // is being rewritten with a new destination; the previous
-                        // edge_ft at this slot referred to the old destination
-                        // (and may carry stale colored bits). Reset and refill.
-                        if (edge_level_ft_ && layer == 0) {
+
+                    // Pop survivors (closest-first due to negated dist push in heuristic),
+                    // then reverse to match mutuallyConnect's storage order
+                    // (selectedNeighbors_other[0] = farthest, [last] = closest).
+                    std::vector<tableint> new_edges;
+                    new_edges.reserve(candidates.size());
+                    while (!candidates.empty()) {
+                        new_edges.push_back(candidates.top().second);
+                        candidates.pop();
+                    }
+                    std::reverse(new_edges.begin(), new_edges.end());
+
+                    linklistsizeint *ll_cur = get_linklist_at_level(neigh, layer);
+                    setListCount(ll_cur, new_edges.size());
+                    tableint *data = (tableint *)(ll_cur + 1);
+                    for (size_t idx = 0; idx < new_edges.size(); idx++) {
+                        data[idx] = new_edges[idx];
+                    }
+
+                    // Refresh per-edge FT (layer 0 only)
+                    if (layer == 0 && edge_level_ft_) {
+                        for (size_t idx = 0; idx < new_edges.size(); idx++) {
                             unsigned char* eft = edge_ft_at(neigh, (int)idx);
                             memset(eft, 0, size_per_ft_);
-                            updateft(eft, new_dest);
+                            updateft(eft, new_edges[idx]);
+                            if (idx < dominated_list.size()) {
+                                for (tableint dom_id : dominated_list[idx]) {
+                                    updateft(eft, dom_id);
+                                }
+                            }
                         }
-                        candidates.pop();
+                        // Clear vacated edge-FT slots (degree may have shrunk)
+                        for (size_t idx = new_edges.size(); idx < Mcurmax; idx++) {
+                            unsigned char* eft = edge_ft_at(neigh, (int)idx);
+                            memset(eft, 0, size_per_ft_);
+                        }
+                    }
+
+                    new_edges_for_node_ft = std::move(new_edges);
+                }
+
+                // Refresh node-FT bookkeeping at layer 0: reset neigh's own
+                // node-FT to its own attr bits and re-merge fresh dominations
+                // from the new pruning. (Node-FT is OR-based; stale merged bits
+                // would only cause false-positive routing.)
+                if (layer == 0 && !edge_level_ft_) {
+                    update_node_ft(neigh);
+                    for (size_t idx = 0; idx < dominated_list.size(); idx++) {
+                        if (!dominated_list[idx].empty()
+                            && idx < new_edges_for_node_ft.size()) {
+                            // Mirror mutuallyConnect: dominated_list[i] is merged
+                            // into the i-th surviving neighbor's node-FT.
+                            merge_dominated_to_node_ft(new_edges_for_node_ft[idx], dominated_list[idx]);
+                        }
                     }
                 }
             }
         }
 
         repairConnectionsForUpdate(dataPoint, entryPointCopy, internalId, elemLevel, maxLevelCopy);
+    }
+
+
+    // Public, label-addressed update: replace the vector at `label` with `dataPoint`.
+    // Throws if label not found or the slot is marked-deleted. Caller-provided attr
+    // change is intentionally NOT supported here -- attr changes go through addPoint(label, ...).
+    void updatePointByLabel(const void *dataPoint, labeltype label, float updateNeighborProbability = 1.0f) {
+        tableint internalId;
+        {
+            std::unique_lock<std::mutex> lock_table(label_lookup_lock);
+            auto it = label_lookup_.find(label);
+            if (it == label_lookup_.end()) {
+                throw std::runtime_error("update_point: label not found");
+            }
+            internalId = it->second;
+        }
+        if (isMarkedDeleted(internalId)) {
+            throw std::runtime_error("update_point: label is marked-deleted; use addPoint(replace_deleted=true) instead");
+        }
+        updatePoint(dataPoint, internalId, updateNeighborProbability);
+    }
+
+
+    // Public, label-addressed attr-only update: rewrite attrs of `label` in place.
+    // Vector and graph edges remain unchanged.
+    //
+    // FT updates (edge_level_ft_ mode):
+    //   - self.attr region: overwritten by add_attr_to_point (full replace).
+    //   - Incoming edges (v -> self): for each layer-0 1-hop neighbor v of self,
+    //       scan v.neighbors[] for the slot j with neighbors[j]==self and OR the
+    //       new self.attr bits into edge_ft_at(v, j). OR-only preserves the
+    //       dominated bits already there (which describe what self represents
+    //       in v's pruning -- still valid because graph is unchanged).
+    //   - self's outgoing edge_ft slots: untouched (dest attrs unchanged).
+    //   - Third-party FTs that merged self as dominated: NOT updated. Documented
+    //       limitation -- recovering them would require a reverse dominated index.
+    //   - node_ft: not used in edge mode (storage aliases edge slot 0; gated off
+    //       in search and in all writers).
+    //
+    // FT updates (!edge_level_ft_ mode, kept for completeness):
+    //   - update_node_ft(self): reset+rewrite with new attr only (loses dominated
+    //       bits in self's node_ft; accept as documented limitation).
+    void updateAttrByLabel(labeltype label, const std::vector<std::vector<int>>& new_attr) {
+        validate_update_attr_record(new_attr);
+
+        tableint internalId;
+        {
+            std::unique_lock<std::mutex> lock_table(label_lookup_lock);
+            auto it = label_lookup_.find(label);
+            if (it == label_lookup_.end()) {
+                throw std::runtime_error("update_attr: label not found");
+            }
+            internalId = it->second;
+        }
+        if (isMarkedDeleted(internalId)) {
+            throw std::runtime_error("update_attr: label is marked-deleted");
+        }
+
+        // Snapshot 1-hop layer-0 neighbors under self's lock, then write new attr.
+        std::vector<tableint> one_hop;
+        {
+            std::unique_lock<std::mutex> lock_self(link_list_locks_[internalId]);
+            add_attr_to_point(internalId, new_attr);
+            if (!edge_level_ft_) {
+                update_node_ft(internalId);
+            }
+            unsigned int* data = get_linklist0(internalId);
+            int sz = getListCount(data);
+            tableint* nbrs = (tableint*)(data + 1);
+            one_hop.assign(nbrs, nbrs + sz);
+        }
+
+        if (!edge_level_ft_) {
+            // Node-mode: nothing more to do (no per-edge FT to refresh).
+            return;
+        }
+
+        // For each 1-hop neighbor v, find slot j with neighbors[j]==self and
+        // OR new self.attr bits into edge_ft_at(v, j). Lock per-neighbor.
+        for (tableint v : one_hop) {
+            if (v == internalId) continue;
+            std::unique_lock<std::mutex> lock_v(link_list_locks_[v]);
+            unsigned int* data_v = get_linklist0(v);
+            int sz_v = getListCount(data_v);
+            tableint* nbrs_v = (tableint*)(data_v + 1);
+            for (int j = 0; j < sz_v; j++) {
+                if (nbrs_v[j] == internalId) {
+                    unsigned char* eft = edge_ft_at(v, j);
+                    updateft(eft, internalId);  // OR new attr bits; preserve dominated
+                    break;
+                }
+            }
+        }
+    }
+
+    // Batch attribute replacement optimized for large update rounds.
+    // The full layer-0 scan refreshes every direct incoming edge, including
+    // asymmetric HNSW links that cannot be found from the updated node itself.
+    // This is stop-the-world maintenance and must not overlap with queries.
+    size_t batchUpdateAttrByLabel(
+        const std::vector<labeltype>& labels,
+        const std::vector<std::vector<std::vector<int>>>& new_attrs,
+        int num_threads = -1) {
+        if (labels.size() != new_attrs.size()) {
+            throw std::runtime_error(
+                "batch_update_attr: attrs.size() != labels.size()");
+        }
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = 1;
+            #endif
+        }
+
+        const size_t n = labels.size();
+        std::vector<tableint> internal_ids(n);
+        std::unordered_set<labeltype> seen_labels;
+        seen_labels.reserve(n);
+        {
+            std::unique_lock<std::mutex> lock_table(label_lookup_lock);
+            for (size_t i = 0; i < n; i++) {
+                validate_update_attr_record(new_attrs[i]);
+                if (!seen_labels.insert(labels[i]).second) {
+                    throw std::runtime_error(
+                        "batch_update_attr: duplicate label " +
+                        std::to_string(labels[i]));
+                }
+                auto it = label_lookup_.find(labels[i]);
+                if (it == label_lookup_.end()) {
+                    throw std::runtime_error(
+                        "batch_update_attr: label not found: " +
+                        std::to_string(labels[i]));
+                }
+                if (isMarkedDeleted(it->second)) {
+                    throw std::runtime_error(
+                        "batch_update_attr: label is marked-deleted: " +
+                        std::to_string(labels[i]));
+                }
+                internal_ids[i] = it->second;
+            }
+        }
+
+        #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 256)
+        for (size_t i = 0; i < n; i++) {
+            tableint internal_id = internal_ids[i];
+            std::unique_lock<std::mutex> lock_node(link_list_locks_[internal_id]);
+            add_attr_to_point(internal_id, new_attrs[i]);
+            if (!edge_level_ft_) {
+                update_node_ft(internal_id);
+            }
+        }
+
+        if (!edge_level_ft_ || n == 0) {
+            return n;
+        }
+
+        std::vector<uint64_t> updated_bitmap((max_elements_ + 63) / 64, 0);
+        for (tableint internal_id : internal_ids) {
+            updated_bitmap[internal_id >> 6] |=
+                uint64_t(1) << (internal_id & 63);
+        }
+
+        const size_t current_count =
+            cur_element_count.load(std::memory_order_relaxed);
+        #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 256)
+        for (size_t source = 0; source < current_count; source++) {
+            unsigned int* data = get_linklist0(static_cast<tableint>(source));
+            int degree = getListCount(data);
+            tableint* neighbors = reinterpret_cast<tableint*>(data + 1);
+            for (int edge = 0; edge < degree; edge++) {
+                tableint target = neighbors[edge];
+                if ((updated_bitmap[target >> 6] &
+                     (uint64_t(1) << (target & 63))) == 0) {
+                    continue;
+                }
+                updateft(edge_ft_at(static_cast<tableint>(source), edge), target);
+            }
+        }
+        return n;
     }
 
 
@@ -6553,8 +7280,86 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
 
+    // Connects an already-initialized node into the graph at curlevel.
+    //
+    // Pre-conditions (caller must satisfy):
+    //  - data, label, attr have been written to the cur_c slot.
+    //  - update_node_ft(cur_c) has been called.
+    //  - element_levels_[cur_c] == curlevel.
+    //  - level-0 neighbour region for cur_c is zeroed.
+    //  - linkLists_[cur_c] == nullptr (this function allocates upper layers).
+    //  - link_list_locks_[cur_c] is held by caller.
+    void connectIntoGraph(const void *data_point, tableint cur_c, int curlevel) {
+        std::unique_lock<std::mutex> templock(global);
+        int maxlevelcopy = maxlevel_;
+        if (curlevel <= maxlevelcopy)
+            templock.unlock();
+        tableint currObj = enterpoint_node_;
+        tableint enterpoint_copy = enterpoint_node_;
+
+        if (curlevel) {
+            linkLists_[cur_c] = (char *) malloc(size_links_per_element_ * curlevel + 1);
+            if (linkLists_[cur_c] == nullptr)
+                throw std::runtime_error("Not enough memory: addPoint failed to allocate linklist");
+            memset(linkLists_[cur_c], 0, size_links_per_element_ * curlevel + 1);
+        }
+
+        if ((signed)currObj != -1) {
+            if (curlevel < maxlevelcopy) {
+                dist_t curdist = fstdistfunc_(data_point, getDataByInternalId(currObj), dist_func_param_);
+                for (int level = maxlevelcopy; level > curlevel; level--) {
+                    bool changed = true;
+                    while (changed) {
+                        changed = false;
+                        unsigned int *data;
+                        std::unique_lock<std::mutex> lock(link_list_locks_[currObj]);
+                        data = get_linklist(currObj, level);
+                        int size = getListCount(data);
+                        tableint *datal = (tableint *) (data + 1);
+                        for (int i = 0; i < size; i++) {
+                            tableint cand = datal[i];
+                            if (cand < 0 || cand > max_elements_)
+                                throw std::runtime_error("cand error");
+                            dist_t d = fstdistfunc_(data_point, getDataByInternalId(cand), dist_func_param_);
+                            if (d < curdist) {
+                                curdist = d;
+                                currObj = cand;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            bool epDeleted = isMarkedDeleted(enterpoint_copy);
+            for (int level = std::min(curlevel, maxlevelcopy); level >= 0; level--) {
+                if (level > maxlevelcopy || level < 0)
+                    throw std::runtime_error("Level error");
+
+                std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates =
+                    searchBaseLayer(currObj, data_point, level);
+                if (epDeleted) {
+                    top_candidates.emplace(fstdistfunc_(data_point, getDataByInternalId(enterpoint_copy), dist_func_param_), enterpoint_copy);
+                    if (top_candidates.size() > ef_construction_)
+                        top_candidates.pop();
+                }
+                currObj = mutuallyConnectNewElement(data_point, cur_c, top_candidates, level, false);
+            }
+        } else {
+            // First node in the graph.
+            enterpoint_node_ = cur_c;
+            maxlevel_ = curlevel;
+        }
+
+        if (curlevel > maxlevelcopy) {
+            enterpoint_node_ = cur_c;
+            maxlevel_ = curlevel;
+        }
+    }
+
+
     tableint addPoint(const void *data_point, labeltype label, const std::vector<std::vector<int>>& attr_data, int level) {
-        
+
         tableint cur_c = 0;
         {
             // Checking if the element with the same label already exists
@@ -6574,7 +7379,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     unmarkDeletedInternal(existingInternalId);
                 }
                 add_attr_to_point(existingInternalId, attr_data);
-                update_node_ft(existingInternalId);  // rebuild node FT after attr change
+                if (!edge_level_ft_) {
+                    update_node_ft(existingInternalId);  // rebuild node FT after attr change
+                }
                 updatePoint(data_point, existingInternalId, 1.0);
 
                 return existingInternalId;
@@ -6593,22 +7400,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
         add_attr_to_point(cur_c, attr_data);
-        // Node-level FT: hash own attributes into FT right after attrs are set
-        update_node_ft(cur_c);
-        // int curlevel = getRandomLevel(mult_);
-        // if (level > 0)
-        //     curlevel = level;
+        // Node-level FT: hash own attributes into FT right after attrs are set.
+        // Edge-mode skips (storage aliases edge slot 0 and would be overwritten
+        // by mutuallyConnect below; reading it during search is gated off).
+        if (!edge_level_ft_) {
+            update_node_ft(cur_c);
+        }
         assert(level == 0 || level == 1);
         int curlevel = level;
 
         element_levels_[cur_c] = curlevel;
-
-        std::unique_lock <std::mutex> templock(global);
-        int maxlevelcopy = maxlevel_;
-        if (curlevel <= maxlevelcopy)
-            templock.unlock();
-        tableint currObj = enterpoint_node_;
-        tableint enterpoint_copy = enterpoint_node_;
 
         memset(data_level0_memory_ + cur_c * size_data_per_element_ + offsetLevel0_, 0, nbr_size_per_element);
 
@@ -6616,71 +7417,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         memcpy(getExternalLabeLp(cur_c), &label, sizeof(labeltype));
         memcpy(getDataByInternalId(cur_c), data_point, data_size_);
 
-        if (curlevel) {
-            linkLists_[cur_c] = (char *) malloc(size_links_per_element_ * curlevel + 1);
-            if (linkLists_[cur_c] == nullptr)
-                throw std::runtime_error("Not enough memory: addPoint failed to allocate linklist");
-            memset(linkLists_[cur_c], 0, size_links_per_element_ * curlevel + 1);
-        }
-
-        if ((signed)currObj != -1) {
-            if (curlevel < maxlevelcopy) {
-                dist_t curdist = fstdistfunc_(data_point, getDataByInternalId(currObj), dist_func_param_);
-                for (int level = maxlevelcopy; level > curlevel; level--) {
-                    bool changed = true;
-                    while (changed) {
-                        changed = false;
-                        unsigned int *data;
-                        std::unique_lock <std::mutex> lock(link_list_locks_[currObj]);
-                        data = get_linklist(currObj, level);
-                        int size = getListCount(data);
-
-                        tableint *datal = (tableint *) (data + 1);
-                        for (int i = 0; i < size; i++) {
-                            tableint cand = datal[i];
-                            if (cand < 0 || cand > max_elements_)
-                                throw std::runtime_error("cand error");
-                            dist_t d = fstdistfunc_(data_point, getDataByInternalId(cand), dist_func_param_);
-                            if (d < curdist) {
-                                curdist = d;
-                                currObj = cand;
-                                changed = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            bool epDeleted = isMarkedDeleted(enterpoint_copy);
-            for (int level = std::min(curlevel, maxlevelcopy); level >= 0; level--) {
-                if (level > maxlevelcopy || level < 0)  // possible?
-                    throw std::runtime_error("Level error");
-
-                std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates = searchBaseLayer(
-                        currObj, data_point, level);
-                if (epDeleted) {
-                    top_candidates.emplace(fstdistfunc_(data_point, getDataByInternalId(enterpoint_copy), dist_func_param_), enterpoint_copy);
-                    if (top_candidates.size() > ef_construction_)
-                        top_candidates.pop();
-                }
-                currObj = mutuallyConnectNewElement(data_point, cur_c, top_candidates, level, false);
-            }
-        } else {
-            // Do nothing for the first element
-            enterpoint_node_ = 0;
-            maxlevel_ = curlevel;
-        }
-
-        // Releasing lock for the maximum level
-        if (curlevel > maxlevelcopy) {
-            enterpoint_node_ = cur_c;
-            maxlevel_ = curlevel;
-        }
-        // std::cout << "construct nbr ft time: " << update_ft_time << std::endl;
-
-        // if (cur_element_count == max_elements_) {
-        //     maybe_print_build_stats();
-        // }
+        connectIntoGraph(data_point, cur_c, curlevel);
 
         return cur_c;
     }
@@ -7092,8 +7829,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // std::vector<tableint> top_vector = copy_to_vector(top_layer_candidates);
 
         // search on base layer
-        // bool bare_bone_search = !num_deleted_ && !isIdAllowed;
-        bool bare_bone_search = true;
+        // When deletions exist, must disable bare_bone_search so deleted ids
+        // are filtered out of results (see hybridSearchBaseLayerST).
+        bool bare_bone_search = (num_deleted_.load(std::memory_order_relaxed) == 0);
         
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
         vl_type *visited_array = vl->mass;
@@ -7298,7 +8036,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_ * 2);
 
-        bool bare_bone_search = true;
+        bool bare_bone_search = (num_deleted_.load(std::memory_order_relaxed) == 0);
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
 
         if (bare_bone_search) {

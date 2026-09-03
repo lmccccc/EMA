@@ -5,6 +5,7 @@
 #include "hnswlib.h"
 #include <thread>
 #include <atomic>
+#include <queue>
 #include <stdlib.h>
 #include <assert.h>
 
@@ -226,6 +227,11 @@ class Index {
             appr_alg->set_ft_routing_min_deg(threshold);
     }
 
+    void set_ft_routing_backfill_tail(bool from_tail){
+        if(appr_alg)
+            appr_alg->set_ft_routing_backfill_tail(from_tail);
+    }
+
     void set_min_deg(double threshold){
         set_ft_routing_min_deg(threshold);
     }
@@ -359,6 +365,113 @@ class Index {
         auto buf = nbrs.mutable_unchecked<1>();
         for (unsigned int i = 0; i < size; i++) buf(i) = data[i];
         return nbrs;
+    }
+
+    // Diagnose entry point and per-layer alive/dead structure.
+    // orig_N = number of "original" internal ids (those < orig_N considered "original",
+    //          >= orig_N considered "new" inserts). Pass 0 to disable that distinction.
+    // Returns dict with: enterpoint, ep_deleted, ep_level, maxlevel,
+    //   per_layer: list of dicts {layer, total, alive, dead, new_alive, new_dead,
+    //                              reachable_alive, reachable_new_alive,
+    //                              avg_deg_alive, avg_dead_frac_in_nbrs}
+    py::dict entry_point_diag(unsigned int orig_N) {
+        if (!appr_alg) throw std::runtime_error("Index not initialized");
+        auto* alg = appr_alg;
+        size_t N = alg->cur_element_count;
+        int maxlevel = alg->maxlevel_;
+        hnswlib::tableint ep = alg->enterpoint_node_;
+
+        py::dict out;
+        out["enterpoint"] = (unsigned int)ep;
+        out["ep_deleted"] = (ep < N) ? alg->isMarkedDeleted(ep) : true;
+        out["ep_level"] = (ep < N) ? (int)alg->element_levels_[ep] : -1;
+        out["maxlevel"] = maxlevel;
+        out["N"] = (unsigned int)N;
+        out["orig_N"] = orig_N;
+
+        py::list per_layer;
+        for (int layer = 0; layer <= maxlevel; layer++) {
+            size_t total = 0, alive = 0, dead = 0;
+            size_t new_alive = 0, new_dead = 0;
+            for (hnswlib::tableint i = 0; i < (hnswlib::tableint)N; i++) {
+                if ((int)alg->element_levels_[i] < layer) continue;
+                total++;
+                bool is_dead = alg->isMarkedDeleted(i);
+                bool is_new = (orig_N > 0 && i >= orig_N);
+                if (is_dead) {
+                    dead++;
+                    if (is_new) new_dead++;
+                } else {
+                    alive++;
+                    if (is_new) new_alive++;
+                }
+            }
+
+            // BFS over alive nodes at this layer, starting from ep (or any alive node at layer)
+            std::vector<char> visited(N, 0);
+            std::queue<hnswlib::tableint> q;
+            hnswlib::tableint start = ep;
+            if (start >= N || (int)alg->element_levels_[start] < layer || alg->isMarkedDeleted(start)) {
+                // pick first alive node at this layer
+                start = (hnswlib::tableint)N;
+                for (hnswlib::tableint i = 0; i < (hnswlib::tableint)N; i++) {
+                    if ((int)alg->element_levels_[i] >= layer && !alg->isMarkedDeleted(i)) {
+                        start = i;
+                        break;
+                    }
+                }
+            }
+            size_t reachable_alive = 0, reachable_new_alive = 0;
+            size_t deg_sum = 0, deg_count = 0;
+            size_t dead_in_nbrs_sum = 0, nbrs_total_sum = 0;
+            if (start < N) {
+                q.push(start);
+                visited[start] = 1;
+                while (!q.empty()) {
+                    hnswlib::tableint u = q.front(); q.pop();
+                    reachable_alive++;
+                    if (orig_N > 0 && u >= orig_N) reachable_new_alive++;
+
+                    unsigned int* ll;
+                    if (layer == 0) {
+                        ll = (unsigned int*)alg->get_linklist0(u);
+                    } else {
+                        ll = (unsigned int*)alg->get_linklist(u, layer);
+                    }
+                    if (!ll) continue;
+                    unsigned short size = alg->getListCount((hnswlib::linklistsizeint*)ll);
+                    unsigned int* data = (unsigned int*)((char*)ll + sizeof(hnswlib::linklistsizeint));
+                    deg_sum += size;
+                    deg_count++;
+                    for (unsigned short k = 0; k < size; k++) {
+                        hnswlib::tableint v = data[k];
+                        if (v >= N) continue;
+                        nbrs_total_sum++;
+                        if (alg->isMarkedDeleted(v)) dead_in_nbrs_sum++;
+                        if (!visited[v] && !alg->isMarkedDeleted(v) &&
+                            (int)alg->element_levels_[v] >= layer) {
+                            visited[v] = 1;
+                            q.push(v);
+                        }
+                    }
+                }
+            }
+
+            py::dict li;
+            li["layer"] = layer;
+            li["total"] = total;
+            li["alive"] = alive;
+            li["dead"] = dead;
+            li["new_alive"] = new_alive;
+            li["new_dead"] = new_dead;
+            li["reachable_alive"] = reachable_alive;
+            li["reachable_new_alive"] = reachable_new_alive;
+            li["avg_deg"] = deg_count > 0 ? (double)deg_sum / deg_count : 0.0;
+            li["dead_frac_in_nbrs"] = nbrs_total_sum > 0 ? (double)dead_in_nbrs_sum / nbrs_total_sum : 0.0;
+            per_layer.append(li);
+        }
+        out["per_layer"] = per_layer;
+        return out;
     }
 
     // Return popcount of each node's FT, shape (n, num_attrs)
@@ -514,7 +627,7 @@ class Index {
             int start = 0;
             if (!ep_added) {
                 size_t id = ids.size() ? ids.at(0) : (cur_l);
-                int level = levels.at(0);
+                int level = levels.size() ? levels.at(0) : 0;
                 float* vector_data = (float*)items.data(0);
                 std::vector<float> norm_array(dim);
                 if (normalize) {
@@ -1398,6 +1511,36 @@ class Index {
     }
 
 
+    // Parallel batch mark-deleted. markDelete already takes per-label-op +
+    // per-node link list locks, and num_deleted_/deleted_elements are guarded
+    // (atomic + dedicated mutex), so concurrent calls are safe.
+    size_t batchMarkDeleted(py::array_t<hnswlib::labeltype> labels, int num_threads) {
+        if (!index_inited)
+            throw std::runtime_error("Index not inited");
+        auto lb = labels.request();
+        if (lb.ndim != 1)
+            throw std::runtime_error("batch_mark_deleted: labels must be 1-D");
+        size_t n = (size_t)lb.shape[0];
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = 1;
+            #endif
+        }
+        const hnswlib::labeltype* lp = (const hnswlib::labeltype*)lb.ptr;
+        std::atomic<size_t> ok{0};
+        #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 1024)
+        for (size_t i = 0; i < n; i++) {
+            try {
+                appr_alg->markDelete(lp[i]);
+                ok.fetch_add(1);
+            } catch (...) {}
+        }
+        return ok.load();
+    }
+
+
     void unmarkDeleted(size_t label) {
         appr_alg->unmarkDelete(label);
     }
@@ -1458,6 +1601,175 @@ class Index {
 
     size_t rebuildGraph() {
         return appr_alg->rebuildGraph();
+    }
+
+    // ---------------- FreshDiskANN-style patching API ----------------
+    size_t batchedPatchDeletes(int num_threads) {
+        return appr_alg->batchedPatchDeletes(num_threads);
+    }
+
+    std::string maintainDeletes(int num_threads) {
+        return appr_alg->maintainDeletes(num_threads);
+    }
+
+    size_t getDirtyCount() const {
+        return appr_alg->getDirtyCount();
+    }
+
+    double getDeletedRatio() const {
+        return appr_alg->getDeletedRatio();
+    }
+
+    void setMaintenanceThresholds(double patch_ratio, double rebuild_ratio, size_t patch_min_new) {
+        appr_alg->setMaintenanceThresholds(patch_ratio, rebuild_ratio, patch_min_new);
+    }
+    // ---------------------------------------------------------------
+
+    bool auxStructuresInvalidated() const {
+        return appr_alg->aux_structures_invalidated();
+    }
+
+    // Update the vector at `label` in-place. Original-style 2-hop neighbour
+    // reprune with FT-aware bookkeeping. Throws if label not found or marked-deleted.
+    void updatePoint(py::object label_obj, py::object input, float update_neighbor_probability) {
+        if (!index_inited)
+            throw std::runtime_error("Index not inited");
+
+        hnswlib::labeltype label = label_obj.cast<hnswlib::labeltype>();
+
+        py::array_t<dist_t, py::array::c_style | py::array::forcecast> arr(input);
+        auto buffer = arr.request();
+        if (buffer.ndim != 1 && !(buffer.ndim == 2 && buffer.shape[0] == 1))
+            throw std::runtime_error("update_point: vector must be 1-D (or 2-D with shape [1, dim])");
+        size_t expected_dim = appr_alg->data_size_ / sizeof(dist_t);
+        size_t got_dim = (buffer.ndim == 1) ? buffer.shape[0] : buffer.shape[1];
+        if ((size_t)got_dim != expected_dim)
+            throw std::runtime_error("update_point: vector dim mismatch");
+
+        if (normalize) {
+            std::vector<float> norm_buf(expected_dim);
+            normalize_vector((float*)arr.data(0), norm_buf.data());
+            appr_alg->updatePointByLabel((const void*)norm_buf.data(), label, update_neighbor_probability);
+        } else {
+            appr_alg->updatePointByLabel((const void*)arr.data(0), label, update_neighbor_probability);
+        }
+    }
+
+    // Update only the attributes of `label` in place. Vector and edges unchanged.
+    // FT bookkeeping: self.attr region rewritten; incoming-edge edge_ft slots
+    // OR new attr bits (preserving dominated). See updateAttrByLabel for details.
+    void updateAttr(py::object label_obj, const std::vector<std::vector<int>>& new_attr) {
+        if (!index_inited)
+            throw std::runtime_error("Index not inited");
+        hnswlib::labeltype label = label_obj.cast<hnswlib::labeltype>();
+        appr_alg->updateAttrByLabel(label, new_attr);
+    }
+
+    // Batch attribute update (OMP-parallel).
+    // labels: 1-D array of N labels.
+    // new_attrs: list of N attr objects (each = list of attr_size_per_item_ lists of category ids).
+    size_t batchUpdateAttr(py::array_t<hnswlib::labeltype> labels,
+                           const std::vector<std::vector<std::vector<int>>>& new_attrs,
+                           int num_threads) {
+        if (!index_inited)
+            throw std::runtime_error("Index not inited");
+        auto lb = labels.request();
+        if (lb.ndim != 1)
+            throw std::runtime_error("batch_update_attr: labels must be 1-D");
+        size_t n = (size_t)lb.shape[0];
+        if (new_attrs.size() != n)
+            throw std::runtime_error("batch_update_attr: attrs.size() != labels.size()");
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = 1;
+            #endif
+        }
+        const hnswlib::labeltype* lp = (const hnswlib::labeltype*)lb.ptr;
+        std::vector<hnswlib::labeltype> label_vec(n);
+        for (size_t i = 0; i < n; i++) {
+            label_vec[i] = lp[i];
+        }
+        return appr_alg->batchUpdateAttrByLabel(
+            label_vec, new_attrs, num_threads);
+    }
+
+    // Combined atomic update: vector + attribute together.
+    // Order: write attr first (cheap; FT regions on self + 1-hop in-edges),
+    // then update_point (heavy; uses updated FT/attr while re-pruning edges).
+    void updatePointAttr(py::object label_obj, py::object vec_obj,
+                         const std::vector<std::vector<int>>& new_attr,
+                         float update_neighbor_probability) {
+        if (!index_inited)
+            throw std::runtime_error("Index not inited");
+        hnswlib::labeltype label = label_obj.cast<hnswlib::labeltype>();
+        py::array_t<dist_t, py::array::c_style | py::array::forcecast> arr(vec_obj);
+        auto buffer = arr.request();
+        if (buffer.ndim != 1 && !(buffer.ndim == 2 && buffer.shape[0] == 1))
+            throw std::runtime_error("update_point_attr: vector must be 1-D");
+        size_t expected_dim = appr_alg->data_size_ / sizeof(dist_t);
+        size_t got_dim = (buffer.ndim == 1) ? buffer.shape[0] : buffer.shape[1];
+        if ((size_t)got_dim != expected_dim)
+            throw std::runtime_error("update_point_attr: vector dim mismatch");
+
+        appr_alg->updateAttrByLabel(label, new_attr);
+        if (normalize) {
+            std::vector<float> norm_buf(expected_dim);
+            normalize_vector((float*)arr.data(0), norm_buf.data());
+            appr_alg->updatePointByLabel((const void*)norm_buf.data(), label, update_neighbor_probability);
+        } else {
+            appr_alg->updatePointByLabel((const void*)arr.data(0), label, update_neighbor_probability);
+        }
+    }
+
+    // Batch combined update (OMP-parallel).
+    size_t batchUpdatePointAttr(py::array_t<hnswlib::labeltype> labels,
+                                py::array_t<dist_t, py::array::c_style | py::array::forcecast> vecs,
+                                const std::vector<std::vector<std::vector<int>>>& new_attrs,
+                                float update_neighbor_probability,
+                                int num_threads) {
+        if (!index_inited)
+            throw std::runtime_error("Index not inited");
+        auto lb = labels.request();
+        auto vb = vecs.request();
+        if (lb.ndim != 1)
+            throw std::runtime_error("batch_update_point_attr: labels must be 1-D");
+        if (vb.ndim != 2)
+            throw std::runtime_error("batch_update_point_attr: vecs must be 2-D");
+        size_t n = (size_t)lb.shape[0];
+        if ((size_t)vb.shape[0] != n)
+            throw std::runtime_error("batch_update_point_attr: vecs rows != labels");
+        size_t expected_dim = appr_alg->data_size_ / sizeof(dist_t);
+        if ((size_t)vb.shape[1] != expected_dim)
+            throw std::runtime_error("batch_update_point_attr: vec dim mismatch");
+        if (new_attrs.size() != n)
+            throw std::runtime_error("batch_update_point_attr: attrs.size() != labels.size()");
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = 1;
+            #endif
+        }
+        const hnswlib::labeltype* lp = (const hnswlib::labeltype*)lb.ptr;
+        const dist_t* vp = (const dist_t*)vb.ptr;
+        std::atomic<size_t> ok{0};
+        #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 64)
+        for (size_t i = 0; i < n; i++) {
+            try {
+                appr_alg->updateAttrByLabel(lp[i], new_attrs[i]);
+                if (normalize) {
+                    std::vector<float> norm_buf(expected_dim);
+                    normalize_vector((float*)(vp + i * expected_dim), norm_buf.data());
+                    appr_alg->updatePointByLabel((const void*)norm_buf.data(), lp[i], update_neighbor_probability);
+                } else {
+                    appr_alg->updatePointByLabel((const void*)(vp + i * expected_dim), lp[i], update_neighbor_probability);
+                }
+                ok.fetch_add(1);
+            } catch (...) {}
+        }
+        return ok.load();
     }
 };
 
@@ -2018,6 +2330,38 @@ class NSWIndex {
     }
 
 
+    // Parallel batch mark-deleted. markDelete already takes per-label-op +
+    // per-node link list locks, and num_deleted_/deleted_elements are guarded
+    // (atomic + dedicated mutex), so concurrent calls are safe.
+    // Returns number of successfully marked labels (failures are swallowed, e.g.
+    // label-not-found or already-deleted).
+    size_t batchMarkDeleted(py::array_t<hnswlib::labeltype> labels, int num_threads) {
+        if (!index_inited)
+            throw std::runtime_error("Index not inited");
+        auto lb = labels.request();
+        if (lb.ndim != 1)
+            throw std::runtime_error("batch_mark_deleted: labels must be 1-D");
+        size_t n = (size_t)lb.shape[0];
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = 1;
+            #endif
+        }
+        const hnswlib::labeltype* lp = (const hnswlib::labeltype*)lb.ptr;
+        std::atomic<size_t> ok{0};
+        #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 1024)
+        for (size_t i = 0; i < n; i++) {
+            try {
+                appr_alg->markDelete(lp[i]);
+                ok.fetch_add(1);
+            } catch (...) { /* swallow; already-deleted or label-not-found */ }
+        }
+        return ok.load();
+    }
+
+
     void unmarkDeleted(size_t label) {
         appr_alg->unmarkDelete(label);
     }
@@ -2288,6 +2632,7 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("set_thresholds", &Index<float>::set_thresholds, py::arg("threshold_1"), py::arg("threshold_2"), py::arg("threshold_3"))
         .def("set_ft_routing_flag", &Index<float>::set_ft_routing_flag, py::arg("flag"))
         .def("set_ft_routing_min_deg", &Index<float>::set_ft_routing_min_deg, py::arg("min_deg"))
+        .def("set_ft_routing_backfill_tail", &Index<float>::set_ft_routing_backfill_tail, py::arg("from_tail"))
         .def("set_two_hop_flag", &Index<float>::set_ft_routing_flag, py::arg("two_hop"))  // deprecated alias
         .def("set_two_hop_threshold", &Index<float>::set_ft_routing_min_deg, py::arg("two_hop_threshold"))  // deprecated alias
         .def("set_min_deg", &Index<float>::set_min_deg, py::arg("min_deg"))
@@ -2295,6 +2640,7 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("reset_ft_stats", &Index<float>::reset_ft_stats)
         .def("get_degrees", &Index<float>::get_degrees)
         .def("get_neighbors", &Index<float>::get_neighbors, py::arg("node_id"))
+        .def("entry_point_diag", &Index<float>::entry_point_diag, py::arg("orig_N") = 0)
         .def("get_ft_bit_counts", &Index<float>::get_ft_bit_counts)
         .def("get_edge_ft_bit_stats", &Index<float>::get_edge_ft_bit_stats)
         .def("augment_ft_neighbors", &Index<float>::augment_ft_neighbors,
@@ -2345,6 +2691,8 @@ PYBIND11_PLUGIN(hashannlib) {
             py::arg("allow_replace_deleted") = false,
             py::arg("dynamic") = false)
         .def("mark_deleted", &Index<float>::markDeleted, py::arg("label"))
+        .def("batch_mark_deleted", &Index<float>::batchMarkDeleted,
+             py::arg("labels"), py::arg("num_threads") = -1)
         .def("unmark_deleted", &Index<float>::unmarkDeleted, py::arg("label"))
         .def("resize_index", &Index<float>::resizeIndex, py::arg("new_size"))
         .def("get_max_elements", &Index<float>::getMaxElements)
@@ -2357,6 +2705,28 @@ PYBIND11_PLUGIN(hashannlib) {
         .def("repair_node", &Index<float>::repairNode, py::arg("internal_id"))
         .def("repair_candidate_nodes", &Index<float>::repairCandidateNodes)
         .def("rebuild_graph", &Index<float>::rebuildGraph)
+        .def("batched_patch_deletes", &Index<float>::batchedPatchDeletes, py::arg("num_threads") = -1)
+        .def("maintain_deletes", &Index<float>::maintainDeletes, py::arg("num_threads") = -1)
+        .def("get_dirty_count", &Index<float>::getDirtyCount)
+        .def("get_deleted_ratio", &Index<float>::getDeletedRatio)
+        .def("set_maintenance_thresholds", &Index<float>::setMaintenanceThresholds,
+             py::arg("patch_ratio") = 0.20, py::arg("rebuild_ratio") = 0.50,
+             py::arg("patch_min_new") = 100000)
+        .def("aux_structures_invalidated", &Index<float>::auxStructuresInvalidated)
+        .def("update_point", &Index<float>::updatePoint,
+             py::arg("label"), py::arg("vector"),
+             py::arg("update_neighbor_probability") = 1.0f)
+        .def("update_attr", &Index<float>::updateAttr,
+             py::arg("label"), py::arg("attr"))
+        .def("update_point_attr", &Index<float>::updatePointAttr,
+             py::arg("label"), py::arg("vector"), py::arg("attr"),
+             py::arg("update_neighbor_probability") = 1.0f)
+        .def("batch_update_attr", &Index<float>::batchUpdateAttr,
+             py::arg("labels"), py::arg("attrs"), py::arg("num_threads") = -1)
+        .def("batch_update_point_attr", &Index<float>::batchUpdatePointAttr,
+             py::arg("labels"), py::arg("vecs"), py::arg("attrs"),
+             py::arg("update_neighbor_probability") = 1.0f,
+             py::arg("num_threads") = -1)
         .def_readonly("space", &Index<float>::space_name)
         .def_readonly("dim", &Index<float>::dim)
         .def_readwrite("num_threads", &Index<float>::num_threads_default)
@@ -2431,6 +2801,8 @@ PYBIND11_PLUGIN(hashannlib) {
             py::arg("max_elements") = 0,
             py::arg("allow_replace_deleted") = false)
         .def("mark_deleted", &NSWIndex<float>::markDeleted, py::arg("label"))
+        .def("batch_mark_deleted", &NSWIndex<float>::batchMarkDeleted,
+             py::arg("labels"), py::arg("num_threads") = -1)
         .def("unmark_deleted", &NSWIndex<float>::unmarkDeleted, py::arg("label"))
         .def("resize_index", &NSWIndex<float>::resizeIndex, py::arg("new_size"))
         .def("get_max_elements", &NSWIndex<float>::getMaxElements)

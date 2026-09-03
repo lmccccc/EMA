@@ -32,12 +32,12 @@ index.set_num_threads(1)
 index.set_ft_routing_flag(True)
 index.set_ft_routing_min_deg(16)
 
-for sel_name, sel_file in [('[0.1,9]', '1%'), ('[0.177,7]', '5%'), ('[0.75,2]', '60%')]:
-    preds = json.load(open(label_root + f'predicate_arbi_0_1_{sel_name}.json'))
-    gt = json.load(open(label_root + f'gt_arbi_0_1_{sel_name}.json'))
-    
+for predicate_str, sel_label in [('[0.1,9]', '1%'), ('[0.177,7]', '5%'), ('[0.75,2]', '60%')]:
+    preds = json.load(open(label_root + f'predicate_arbi_0_1_{predicate_str}.json'))
+    gt = json.load(open(label_root + f'gt_arbi_0_1_{predicate_str}.json'))
+
     print(f"\n{'='*60}")
-    print(f"Selectivity: {sel_file} ({sel_name})")
+    print(f"Selectivity: {sel_label} (predicate={predicate_str})")
     print(f"{'='*60}")
     
     for ef in [10, 50, 200]:

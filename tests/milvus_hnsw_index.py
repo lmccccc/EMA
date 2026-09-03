@@ -382,6 +382,39 @@ if __name__ == "__main__":
     queries, raw_predicate, query_gt = load_query_data(args.query_file, args.predicate_file, args.gt_file, args.N, args.query_size, args.K)
     
 
+    # ---- DNF auto-detect: convert 3D legacy [attr][vals] into 4D [term][attr][vals] ----
+    # raw_predicate may be:
+    #   3D legacy:  raw_predicate[i][attr][value_idx]
+    #   4D DNF:     raw_predicate[i][term][attr][value_idx]
+    def _depth(x):
+        d = 0
+        while isinstance(x, list) and len(x) > 0:
+            x = x[0]; d += 1
+        return d
+    sample_depth = _depth(raw_predicate[0]) if len(raw_predicate) > 0 else 0
+    is_dnf = (sample_depth >= 3)  # term × attr × vals → depth 3 from query[i]
+    if not is_dnf:
+        raw_predicate = [[q] for q in raw_predicate]  # wrap as single-term DNF
+    print(f"[predicate] format detected: {'4D DNF' if is_dnf else '3D legacy (wrapped as single-term DNF)'}")
+
+    def build_term_expr(term):
+        """Build the AND-conjunction for one DNF term. Returns '' if term is universal."""
+        parts = []
+        for j, attr_t in enumerate(attr_type_list):
+            if j >= len(term):
+                continue
+            vals = term[j]
+            if vals is None or len(vals) == 0:
+                continue  # don't-care attr in this term
+            if attr_t == 0:
+                # numerical: [low, high]
+                parts.append(f"{vals[0]} <= attr_{j} <= {vals[1]}")
+            else:
+                # categorical: set containment (metadata array ⊇ predicate values)
+                for v in vals:
+                    parts.append(f"array_contains(attr_{j}, {v})")
+        return " and ".join(parts)
+
     efs_list = ast.literal_eval(args.ef_search)
     result = []
     for efs in efs_list:
@@ -392,22 +425,20 @@ if __name__ == "__main__":
         positive_size = 0
         time_one_batch = 0
         for i in range(args.query_size):
-            # if(i % 100 == 0):
-            #     print("batch ", i)
-            q_cnt = 0
-            exp = ""
-            for j in range(len(attr_type_list)):
-                if attr_type_list[j] == 0:
-                    if j != 0:
-                        exp += " and "
-                    exp += f"{raw_predicate[i][j][0]} <= attr_{j} <= {raw_predicate[i][j][1]}"
-                else:
-                    for k in range(len(raw_predicate[i][j])):
-                        if j != 0 or k != 0:
-                            exp += " and "
-                        exp += f"array_contains(attr_{j}, {raw_predicate[i][j][k]})"
-            # qr = [i for i in range(qrange[i][0], qrange[i][1] + 1)]
-            # exp = "label in " + str(qr)
+            term_exprs = []
+            universal = False
+            for term in raw_predicate[i]:
+                te = build_term_expr(term)
+                if te == "":
+                    universal = True
+                    break
+                term_exprs.append(f"({te})")
+            if universal or len(term_exprs) == 0:
+                exp = ""  # no filter == match all
+            elif len(term_exprs) == 1:
+                exp = term_exprs[0][1:-1]  # strip outer parens for the single-term case
+            else:
+                exp = " or ".join(term_exprs)
             s_params = {"metric_type": args.metric, "params": {"ef": efs}}
             start = time.time()
             res = client.search(

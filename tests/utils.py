@@ -31,7 +31,9 @@ def load_data(dataset_file, query_file, attr_file, qrange_file, gt_file, N, Nq, 
     if(".fvecs" in dataset_file):
         data = fvecs_read(dataset_file)
         print(f"data shape: {data.shape}")
-        assert data.shape[0] == N
+        assert data.shape[0] >= N
+        if data.shape[0] > N:
+            data = data[:N]
     else:
         print("error: dataset file format not supported")
         sys.exit(-1)
@@ -46,7 +48,9 @@ def load_data(dataset_file, query_file, attr_file, qrange_file, gt_file, N, Nq, 
         sys.exit(-1)
     if(".json" in attr_file):
         attr = read_multy_attr(attr_file)
-        assert len(attr) == N
+        assert len(attr) >= N
+        if len(attr) > N:
+            attr = attr[:N]
     else:
         print("error: attribution file format not supported")
         sys.exit(-1)
@@ -141,6 +145,12 @@ def arg_init():
         help="Data size",
     )
     parser.add_argument(
+        "--max_elements",
+        type=int,
+        default=0,
+        help="Capacity for HNSW (>=N). 0 means use N. Used for dynamic experiments that add new elements past the initial N.",
+    )
+    parser.add_argument(
         "--threads",
         type=int,
         default=1,
@@ -204,6 +214,10 @@ def arg_init():
     parser.add_argument(
         "--ft_routing_min_deg", type=int, required=False, default=0,
         help="Min routing degree: backfill non-FT-passing neighbors when FT-passing < this"
+    )
+    parser.add_argument(
+        "--ft_routing_backfill_tail", type=str, required=False, default="false",
+        help="If 'true', pick backfill from TAIL of not_nbrs; else HEAD (default)"
     )
 
 

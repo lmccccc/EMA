@@ -46,6 +46,7 @@ class HashANN:
         self.index_method = params.get("name", "HNSW")
         self.d = params.get("dim", None)
         self.N = params.get("N", None)
+        self.max_elements = params.get("max_elements", None) or self.N
         self.metric = params.get("metric", "l2")
 
     def build_index(self, params, base_scalars, attr, attr_type_list, index_save_path, threads: int, name: str = "HNSW"):
@@ -78,7 +79,7 @@ class HashANN:
         print("base scalar shape:", base_scalars.shape, " layer shape:", layers.shape)
 
         self.index = hashannlib.Index(space=self.metric, dim=params["dim"])
-        self.index.init_index(max_elements=self.N, 
+        self.index.init_index(max_elements=self.max_elements, 
                               top_elements=centroid_size, 
                               ef_construction=params["ef_construction"], 
                               M=params["M"], 
@@ -101,9 +102,20 @@ class HashANN:
         print("attr type list:", attr_type_list)
         print("attr size:", len(attr), " attr example:", attr[0:5])
 
+        # initAttrMapping iterates 0..max_elements_ in C++ (reads attr[i] for
+        # all i < max_elements_), so when max_elements > len(attr) we must
+        # pad with a valid sentinel attr so we don't read garbage.
+        if len(attr) < self.max_elements:
+            pad_unit = attr[0]
+            pad = [pad_unit] * (self.max_elements - len(attr))
+            attr_padded = list(attr) + pad
+            print(f"padding attr {len(attr)} -> {self.max_elements} for initAttrMapping")
+        else:
+            attr_padded = attr
+
         # generate Counting hash table
         # self.index.addEpIds(closest_ids.astype(np.uint32).tolist()) # add entry point ids to list, used for partitioning, not used. 
-        self.index.initAttrMapping(attr)                                # generate counting_hash_table_mapping (codebook)
+        self.index.initAttrMapping(attr_padded)                                # generate counting_hash_table_mapping (codebook)
         print("generate attr mapping done, time:", time.time() - start)
         # add data points into index
         self.index.add_items(base_scalars, attr, levels=layers)           # add items
@@ -207,6 +219,12 @@ class HashANN:
             layers = data['layers']
             closest_ids = data['closest_ids']
             id2bucket = data['id2bucket']
+            if len(layers) > self.N:
+                print(f"truncating cached clustering: {len(layers)} -> {self.N}")
+                layers = layers[:self.N]
+                id2bucket = id2bucket[:self.N]
+            elif len(layers) < self.N:
+                raise RuntimeError(f"cached clustering size {len(layers)} < N {self.N}; remove {save_file} and rebuild")
             print("clustering loaded")
             return centroid_size, layers, closest_ids, id2bucket
 

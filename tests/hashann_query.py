@@ -118,7 +118,9 @@ if __name__ == "__main__":
         print("set marker flag:", args.use_ft.lower() == 'true')
         index.set_ft_routing_flag(True)
         index.set_ft_routing_min_deg(args.ft_routing_min_deg)
-        print("index ef_search:", efs, " ef_top:", args.ef_top, " ft_routing_min_deg:", args.ft_routing_min_deg)
+        index.set_ft_routing_backfill_tail(args.ft_routing_backfill_tail.lower() == 'true')
+        print("index ef_search:", efs, " ef_top:", args.ef_top, " ft_routing_min_deg:", args.ft_routing_min_deg,
+              " backfill_tail:", args.ft_routing_backfill_tail.lower() == 'true')
         # flatten_predicate = index.predicateTranslate(raw_predicate)
         # print("predicate translated")
         # ft_predicate = index.predicateToFT(raw_predicate)
@@ -140,32 +142,67 @@ if __name__ == "__main__":
         _query_gt = [query_gt[i] for i in target_id]
         # print("query predicate:", raw_predicate[target_id])
 
-        # warm up
-        if dnf_mode:
-            _, _ = index.hybrid_knn_query_dnf(
-                _queries[:min(3, len(_queries))],
-                _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
-        elif has_stats_api:
-            index.hybrid_knn_query_with_stats(
-                _queries[:min(3, len(_queries))],
-                _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
-        else:
-            _, _ = index.hybrid_knn_query(
-                _queries[:min(3, len(_queries))],
-                _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
+        # warm up (best-effort; failure is OK, we'll handle in main query loop)
+        try:
+            if dnf_mode:
+                _, _ = index.hybrid_knn_query_dnf(
+                    _queries[:min(3, len(_queries))],
+                    _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
+            elif has_stats_api:
+                index.hybrid_knn_query_with_stats(
+                    _queries[:min(3, len(_queries))],
+                    _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
+            else:
+                _, _ = index.hybrid_knn_query(
+                    _queries[:min(3, len(_queries))],
+                    _raw_predicate[:min(3, len(_raw_predicate))], k=args.K)
+        except RuntimeError as e:
+            print(f"[warn] warmup at ef={efs} failed ({e}); continuing to per-query fallback")
+
+        SENTINEL = np.iinfo(np.uint64).max
+        def _per_query_dnf(qs, ps):
+            out_ids = np.full((len(qs), args.K), SENTINEL, dtype=np.uint64)
+            out_d = np.zeros((len(qs), args.K), dtype=np.float32)
+            for i in range(len(qs)):
+                try:
+                    sub_ids, sub_d = index.hybrid_knn_query_dnf(qs[i:i+1], ps[i:i+1], k=args.K)
+                    out_ids[i, :sub_ids.shape[1]] = sub_ids[0]
+                    out_d[i, :sub_d.shape[1]] = sub_d[0]
+                except RuntimeError:
+                    pass  # leave row as sentinel
+            return out_ids, out_d
+        def _per_query_legacy(qs, ps):
+            out_ids = np.full((len(qs), args.K), SENTINEL, dtype=np.uint64)
+            out_d = np.zeros((len(qs), args.K), dtype=np.float32)
+            for i in range(len(qs)):
+                try:
+                    sub_ids, sub_d = index.hybrid_knn_query(qs[i:i+1], ps[i:i+1], k=args.K)
+                    out_ids[i, :sub_ids.shape[1]] = sub_ids[0]
+                    out_d[i, :sub_d.shape[1]] = sub_d[0]
+                except RuntimeError:
+                    pass
+            return out_ids, out_d
 
         start = time.time()
-        if dnf_mode:
-            ids, distances = index.hybrid_knn_query_dnf(
-                _queries, _raw_predicate, k=args.K)
-            cmps = -1.0
-        elif has_stats_api:
-            ids, distances, distance_counts, hops = index.hybrid_knn_query_with_stats(
-                _queries, _raw_predicate, k=args.K
-            )
-            cmps = float(np.mean(distance_counts))
-        else:
-            ids, distances = index.hybrid_knn_query(_queries, _raw_predicate, k=args.K)
+        try:
+            if dnf_mode:
+                ids, distances = index.hybrid_knn_query_dnf(
+                    _queries, _raw_predicate, k=args.K)
+                cmps = -1.0
+            elif has_stats_api:
+                ids, distances, distance_counts, hops = index.hybrid_knn_query_with_stats(
+                    _queries, _raw_predicate, k=args.K
+                )
+                cmps = float(np.mean(distance_counts))
+            else:
+                ids, distances = index.hybrid_knn_query(_queries, _raw_predicate, k=args.K)
+                cmps = -1.0
+        except RuntimeError as e:
+            print(f"[warn] batch ef={efs} threw ({e}); falling back to per-query mode")
+            if dnf_mode:
+                ids, distances = _per_query_dnf(_queries, _raw_predicate)
+            else:
+                ids, distances = _per_query_legacy(_queries, _raw_predicate)
             cmps = -1.0
         end = time.time()
         qps = len(target_id)/(end-start)
@@ -180,8 +217,11 @@ if __name__ == "__main__":
         for i in range(len(target_id)):
             gt = _query_gt[i]
             res = ids[i]
-            # Filter out padding (-1) from results when ef < k
-            res_valid = res[res >= 0] if hasattr(res, '__len__') else res
+            # Filter sentinel padding (UINT64_MAX from per-query fallback) and ids out of range
+            if hasattr(res, '__len__'):
+                res_valid = res[(res != np.iinfo(np.uint64).max) & (res < args.N)]
+            else:
+                res_valid = res
             correct = np.isin(gt, res_valid)
             correct_sum += np.sum(correct)
             recall_list.append(np.sum(correct)/len(gt))
@@ -220,7 +260,7 @@ if __name__ == "__main__":
 
         recall = correct_sum / (len(target_id) * args.K)
         print(f"ef search: {efs}, recall: {recall:.4f}")
-        result.append([efs, recall, qps, cmps])
+        result.append([int(efs), float(recall), float(qps), float(cmps)])
         # if recall >= 0.97:
         #     break
     

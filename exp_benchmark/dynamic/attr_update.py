@@ -76,6 +76,9 @@ def main():
             cnt = idx.batch_update_attr(ids, new_attrs,
                                         num_threads=args.threads_update)
             up_time = time.time() - t0
+            if cnt != len(ids):
+                raise RuntimeError(
+                    f"batch_update_attr updated {cnt}/{len(ids)} points")
             print(f"[A r{r}] batch_update_attr ok={cnt} in {up_time:.1f}s")
             for j, lid in enumerate(ids):
                 attrs_eff[int(lid)] = new_attrs[j]

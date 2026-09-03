@@ -40,11 +40,18 @@ if start_idx is None:
     sys.exit(2)
 
 
+import re
+_NPF_RE = re.compile(r"np\.float\d*\(\s*([^)]*?)\s*\)")
+
+def _strip_np_wrappers(s):
+    """Strip numpy scalar wrappers like np.float64(0.95) -> 0.95."""
+    return _NPF_RE.sub(r"\1", s)
+
 def _extract_result_rows(section_lines):
     """Extract rows like [efs, recall, qps] or [efs, recall, qps, cmps]."""
     rows = []
     for line in section_lines:
-        s = line.strip()
+        s = _strip_np_wrappers(line.strip())
         if not (s.startswith("[") and s.endswith("]")):
             continue
 

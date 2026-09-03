@@ -68,7 +68,16 @@ def recall_at_k(pred_ids, gt_ids, k):
 
 
 def run_query_sweep(idx, queries, predicate_per_q, gt, k, ef_list,
-                    num_threads=1, repeats=3, tag=""):
+                    num_threads=1, repeats=3, tag="",
+                    internal_to_logical=None):
+    """Run an ef-sweep and measure recall+qps.
+
+    If `internal_to_logical` is provided (dict: internal_id -> logical_id),
+    returned ids are translated before recall computation. This is required
+    when the index has been modified by add_items at NEW internal ids (e.g.
+    vector+attr updates) so that ground truth (which uses logical ids) is
+    comparable.
+    """
     results = []
     for ef in ef_list:
         idx.set_ef(int(ef))
@@ -86,7 +95,14 @@ def run_query_sweep(idx, queries, predicate_per_q, gt, k, ef_list,
         elapsed = min(timings)
         Q = queries.shape[0]
         qps = Q / elapsed
-        r = recall_at_k(last_pred, gt, k)
+        if internal_to_logical is not None:
+            translated = np.empty_like(last_pred)
+            for i in range(Q):
+                for j in range(k):
+                    translated[i, j] = internal_to_logical.get(int(last_pred[i, j]), -1)
+            r = recall_at_k(translated, gt, k)
+        else:
+            r = recall_at_k(last_pred, gt, k)
         print(f"  [{tag}] ef={ef:5d}  recall@{k}={r:.4f}  qps={qps:.1f}  elapsed={elapsed:.2f}s")
         results.append({"ef": int(ef), "recall": float(r), "qps": float(qps),
                         "elapsed_s": float(elapsed), "queries": int(Q),

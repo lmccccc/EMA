@@ -25,7 +25,7 @@ if __name__ == "__main__":
     # data_path query_path attr_path qrange_path gt_path N n_query_to_use k
     nq = args.n_query_to_use
     attr_type_list = ast.literal_eval(args.attr_type_list)
-    params = {"M": args.M, "ef_construction": args.efConstruction, "metric": args.metric.lower(), "dim": args.dim, "N": args.N, "ef_search_list": args.ef_search, "ft_bits": args.ft_bits, "edge_level_ft": args.edge_level_ft}
+    params = {"M": args.M, "ef_construction": args.efConstruction, "metric": args.metric.lower(), "dim": args.dim, "N": args.N, "max_elements": args.max_elements if args.max_elements else args.N, "ef_search_list": args.ef_search, "ft_bits": args.ft_bits, "edge_level_ft": args.edge_level_ft}
     data, queries, attr, query_filter_ranges, query_gt = load_data(args.data_path, args.query_path, args.attr_path, args.qrange_path, args.gt_path, args.N, nq, args.K)
     hash_ann.init_params(params)
     # print("thread: ", args.threads)

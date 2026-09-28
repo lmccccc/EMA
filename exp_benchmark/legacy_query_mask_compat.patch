@@ -1,0 +1,23 @@
+diff --git a/hnswlib/hnswlib/hnswalg.h b/hnswlib/hnswlib/hnswalg.h
+--- a/hnswlib/hnswlib/hnswalg.h
++++ b/hnswlib/hnswlib/hnswalg.h
+@@ -2227,7 +2227,8 @@
+                     int low_slot = lower_bound(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), low);
+                     low_slot = low_slot < 0 ? 0 : low_slot;
+                     int high_slot = lower_bound(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), high);
+-                    for (int val = low_slot; val < high_slot; ++val){
++                    // Saved legacy Markers include the bucket containing the inclusive upper bound.
++                    for (int val = low_slot; val <= high_slot; ++val){
+                         int pos = val >> 3;
+                         int bit = val & 7;
+                         if (pos < ft_bytes_){
+@@ -2345,7 +2346,8 @@
+                         int hi_slot = lower_bound(
+                             &counting_hash_table_mapping[i][0],
+                             counting_hash_table_mapping[i].size(), hi);
+-                        for (int v = lo_slot; v < hi_slot; ++v) {
++                        // Match the inclusive range used by the exact predicate and legacy encoding.
++                        for (int v = lo_slot; v <= hi_slot; ++v) {
+                             int pos = v >> 3, bit = v & 7;
+                             if (pos < ft_bytes_) ft_buf[pos] |= (1 << bit);
+                         }

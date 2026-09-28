@@ -1,0 +1,3625 @@
+{
+  "schema": "canonical-dynamic-recall-revision-v1",
+  "operation": "delete",
+  "stage": 0,
+  "progress": 0,
+  "state": {
+    "occupied": 10000000,
+    "deleted": 0,
+    "live": 10000000
+  },
+  "query": {
+    "space": "l2",
+    "dimension": 128,
+    "query_count": 1000,
+    "k": 10,
+    "attr_type": [
+      0,
+      1
+    ],
+    "M": 40,
+    "ef_construction": 300,
+    "ft_bits_per_attribute": 128,
+    "edge_ft": true,
+    "thresholds": [
+      0.0001,
+      0.0001,
+      0.0001
+    ],
+    "ef_top": 1,
+    "ft_flag": true,
+    "ft_routing_flag": true,
+    "ft_routing_min_deg": 8,
+    "ft_routing_backfill_tail": false,
+    "threads_query": 1,
+    "target_recall": 0.95,
+    "api": "hybrid_knn_query_dnf",
+    "predicate": "PER QUERY: ((inclusive numeric range AND label9) OR label12)"
+  },
+  "native": {
+    "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hashannlib.cpython-312-x86_64-linux-gnu.so",
+    "bytes": 20941808,
+    "mtime_ns": 1789247554304578322,
+    "sha256": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e"
+  },
+  "checkpoint": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/attempts/stage-5-33edcc9de1e54661bf3f3d960a6192ca/checkpoint.index",
+    "bytes": 34162075588,
+    "mtime_ns": 1789300307549171305,
+    "sha256": "d6cb81b0f067597d24b0120de8d95ae4c53cb21a8322c4f5c71edd990114154f"
+  },
+  "ground_truth": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-0-6891755c7a824eea921d1265b4e174c3/ground-truth.npz",
+    "bytes": 289294,
+    "mtime_ns": 1789300719378147981,
+    "sha256": "c3a3369a8648ac8c7b17ebc23b6263c0180c20cbb2e5e44a8012a6952fbc547d"
+  },
+  "source_results": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-0-6891755c7a824eea921d1265b4e174c3/results.json",
+    "bytes": 159868,
+    "mtime_ns": 1789300780923187147,
+    "sha256": "2a2bc5115d4efadd2dd200528accb61f596370649fdfc9d8f789d9edd2d3d147"
+  },
+  "source_stage": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-0-6891755c7a824eea921d1265b4e174c3/stage.json",
+    "bytes": 19809,
+    "mtime_ns": 1789300815279766972,
+    "sha256": "23e86c8a467338d2f0bfd6f5071b467ecba949604daa15bf9deac6a340707511"
+  },
+  "source_query_prefix_identical": true,
+  "mutations_executed": false,
+  "maintenance_reused": true,
+  "mutation": null,
+  "ground_truth_details": {
+    "method": "disjoint live label12 UNION (live label9 EXCLUDING label12 in inclusive range)",
+    "backend": "FAISS IndexFlatL2 + verified SearchParameters/IDSelectorRange",
+    "faiss_version": "1.15.0",
+    "threads": 32,
+    "branch_b_live": 700596,
+    "branch_a_live_before_range": 929588,
+    "range_boundary": "searchsorted(low,left), searchsorted(high,right)",
+    "tie_policy": "valid exact top-k; candidate ties ordered by external ID; no claim of global ID tie-break",
+    "insufficient_results": "labels=-1, distances=+inf; matching_counts records the actual cardinality",
+    "build_wall_s": 1.456896973773837,
+    "total_wall_s": 6.332937611266971,
+    "labels_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75",
+    "distances_sha256": "5dc03ab179cbda8d08f36b67dc9003be9326179eb64ca62944372fd215f5bfb7",
+    "source_rows": 10000000,
+    "live": 10000000,
+    "occupied": 10000000,
+    "matching_live_min": 978433,
+    "matching_live_mean": 979325.947,
+    "matching_live_max": 980599,
+    "matching_live_sum": 979325947,
+    "selectivity_denominator": "live IDs, NOT original occupied count",
+    "selectivity_live_min": 0.0978433,
+    "selectivity_live_mean": 0.0979325947,
+    "selectivity_live_max": 0.0980599,
+    "matching_over_occupied_mean": 0.0979325947,
+    "matching_counts_sha256": "e3c03de0dc1f86ad575ecd3ddd361d551a204e38fa30eb0b0fc4f6ecd4e8db9b",
+    "canonical_validation": {
+      "validated_all_queries": 1000,
+      "canonical_retained": true,
+      "distance_comparison": "exact equality, float64 direct squared L2 versus exhaustive Flat distances",
+      "boundary_tie_rows": [],
+      "order_only_rows": [],
+      "canonical_labels_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75",
+      "independent_exact_labels_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+    },
+    "used_labels_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75",
+    "trace": {
+      "operation": "delete",
+      "version": "default_rng-12345-permutation-10M-v1",
+      "progress": 0,
+      "occupied": 10000000,
+      "deleted": 0,
+      "live": 10000000,
+      "source_row_equals_external_label": true,
+      "replacement": "complete original vector AND original mixed attributes of row initial+logical_slot",
+      "id_space_for_recall": "external source-row labels; logical recall additionally checked for point_update",
+      "permutation_sha256": "ad71165820148868ea655be3fe91efea9d9e9184542373fdfc8d5c280b0e3baa",
+      "active_source_rows_sha256": "4b8ebcd9ac749e47320e331885fddccdf1e8a50906341e0eb9f21fd247502cee",
+      "logical_to_external_sha256": "0379cc26255dc5d3c5f6fed1bb77030b4fed376c554eceb6059b5812b63f425c"
+    }
+  },
+  "calibrations": {
+    "initial": {
+      "name": "initial",
+      "points": [
+        {
+          "ef": 10,
+          "recall": 0.7047,
+          "labels_sha256": "7d7ee9a351c91ec291e82467632fcf55462bebeeb8d79b36fc012558741c8c34",
+          "distances_sha256": "78fd235abcd76810e68da415e78d72c77396c898b06fa37235c0a3026a3394d8"
+        },
+        {
+          "ef": 11,
+          "recall": 0.7245,
+          "labels_sha256": "d5f37a0060ef122874936ec5536dae6cd12ac47c240d47e848c958e60d026a53",
+          "distances_sha256": "30692f9312e4c9e2ec45ffabfe0efcc7754aab09a888c568a01176ad156d37ac"
+        },
+        {
+          "ef": 12,
+          "recall": 0.7426,
+          "labels_sha256": "8aa4ffd4b20ae2de6a497c24c3a00af17aa5cb7479b3a0ff42e22cc1e417503e",
+          "distances_sha256": "d40eac690d91e012236cd4fee4a01d83c7885b823d2286d195f38060d3067305"
+        },
+        {
+          "ef": 13,
+          "recall": 0.7592,
+          "labels_sha256": "a57e0b9639799bb1b8e7187b24c6d5ed23b0a26f8af62431728a80dafa8ddacc",
+          "distances_sha256": "d4a7de0c88a091b2f605a2f892146aacb9ca07f7e640950c9a40fb832dceba9d"
+        },
+        {
+          "ef": 14,
+          "recall": 0.7757,
+          "labels_sha256": "8b178a9a705a63c61d992e1a4526796d409edd94488d3ba7f79e62145e568bd5",
+          "distances_sha256": "d19cbe1d0c6849feb4801021f2ec6e650ffa4d2a9c18469fb890fd8ce9f785bd"
+        },
+        {
+          "ef": 15,
+          "recall": 0.7917,
+          "labels_sha256": "1817ad60cde7c40594433e50c63ce35724b06e88b9137850942d0f1305c14659",
+          "distances_sha256": "eb7afae5b7e7ca0af9e02266499e4f4f9a2c3fe1e422fe495ed10d4261b30f8f"
+        },
+        {
+          "ef": 16,
+          "recall": 0.8045,
+          "labels_sha256": "e6ff1b0be185b2c33f9831fd80f4f31797714ece68ae62c83299365dd9d5ae15",
+          "distances_sha256": "40250316ee4f047b3de1acbdc40da87c882f282cc4889df522827aa9aae44eb2"
+        },
+        {
+          "ef": 17,
+          "recall": 0.8181,
+          "labels_sha256": "e036ded5ba3c845bdb64255a20052e9ab99a643a0550aa145299e299661304d4",
+          "distances_sha256": "74f08c06160c65c0e0b0671e506d97d3304676c3d7e6e49fdf15072317a40669"
+        },
+        {
+          "ef": 18,
+          "recall": 0.8288,
+          "labels_sha256": "6ded8a65a80c6991d5531cdc2e93e33f8d992f7a030e570faebcd9f68de13bfb",
+          "distances_sha256": "8df828e2a70750f1f55434098d0471d0b232a7bd9f6b32ac2e537b4df107043d"
+        },
+        {
+          "ef": 19,
+          "recall": 0.8372,
+          "labels_sha256": "d7c964cfa10906fa56a2932174c3a9396bd06fa458234cdb6d0e9208fed5167c",
+          "distances_sha256": "5909bd046a5d0d4e2918425d3da1c15e5a38bba62799c395a6ad94e72b9466e4"
+        },
+        {
+          "ef": 20,
+          "recall": 0.8465,
+          "labels_sha256": "f662d9d0c89f3dc5150c7c92d978f0f4230ce59a3af99d7ccbecbed07dc77630",
+          "distances_sha256": "a8c0317f357ca3c6bfb8f76a77b1378f9d9d7489f2147e40c81a961530d8a1b5"
+        },
+        {
+          "ef": 21,
+          "recall": 0.8547,
+          "labels_sha256": "59e4fb6b51bfcc4b4e0dcabf799a974d6cf3223237517178ccff0f3fc3197a04",
+          "distances_sha256": "e820757a44ef3f6f22dd675366477fb96238f0f81fb56de85daf17593117a9ed"
+        },
+        {
+          "ef": 22,
+          "recall": 0.8608,
+          "labels_sha256": "2d768117d915b932608b4776aa0da331b241c9e3a285219019a8a9cc00f99dd4",
+          "distances_sha256": "2f0466baa4fac41dfd03f7b230ec4f281cb19955ae2d10960af81663d5ba8c9c"
+        },
+        {
+          "ef": 23,
+          "recall": 0.8681,
+          "labels_sha256": "853772aca907f2303dd1bfe6c34777e8bb9ca4b6722fdfff30824f5e5ad8db06",
+          "distances_sha256": "2d1b082ff348a065c1c064bd65db60e6bdae533173e4e81a180f6d818d61aade"
+        },
+        {
+          "ef": 24,
+          "recall": 0.8741,
+          "labels_sha256": "26ca27fdb13e4726265f8bbcb1bd05079aaf53c359e34f6937aad2d657f82c43",
+          "distances_sha256": "58d8187ffd9b995feced24d98b30b24870ee63eadd2caaa93927a51f37298605"
+        },
+        {
+          "ef": 25,
+          "recall": 0.8814,
+          "labels_sha256": "e1e7eb464ea70a07fb1335a836fea7002ae20c96e8758d3928e2c169329a6b59",
+          "distances_sha256": "d4201c62af8b1946a632218111768a8b4338e064cc7bc5af0b7fb018c520dc58"
+        },
+        {
+          "ef": 26,
+          "recall": 0.886,
+          "labels_sha256": "fcdd566462e20451e510271511e5dfef0b5308108a153f7624be390e2f401646",
+          "distances_sha256": "9acdc5ca5bc8ef2b106694941b4ac35ec090c626475b6d1289bbaa4480c3152a"
+        },
+        {
+          "ef": 27,
+          "recall": 0.8929,
+          "labels_sha256": "38dfb80a7b657ce6608fb8393ac6f9d49cad150a31fcdbd96f76f408d6691bd7",
+          "distances_sha256": "6d5e915f333ec3d864d03db9608ea91449a6945eb9047fc2eff4b245ad03f461"
+        },
+        {
+          "ef": 28,
+          "recall": 0.8973,
+          "labels_sha256": "af2ae88ef34a90d702f0ed3e945a549febd47c814e570e2f0c361f06416ebe52",
+          "distances_sha256": "09a8595e98eb037a175b6de93a3e1bbc5ee2844fd809d35aeb7789686fda2648"
+        },
+        {
+          "ef": 29,
+          "recall": 0.9009,
+          "labels_sha256": "9d1528c65180d8b23cf97b3e60c07027110bd4e89acfee643a026ad89c9b4f73",
+          "distances_sha256": "b1eeba5536fcce6b60c3cfd8df5c5afa5203b4ce150366a95f345e8b879ae2a2"
+        },
+        {
+          "ef": 30,
+          "recall": 0.9044,
+          "labels_sha256": "a04fadd70485baad12278732058d90002790969427a2a1ba769095003a18b4bb",
+          "distances_sha256": "985274bff61851a96b70bd8d6c20863741b74c5759ad13ff21ffd11ad4fb44ac"
+        },
+        {
+          "ef": 31,
+          "recall": 0.9074,
+          "labels_sha256": "0d70b567d73bd6a78aa18ee2deff3dde56d1cb3af576e92d6693063bf7d4872e",
+          "distances_sha256": "cb6ce6cb720965ab9bf230ef28b140ca51ea8c7efefb4816d74967a3f73b3582"
+        },
+        {
+          "ef": 32,
+          "recall": 0.9112,
+          "labels_sha256": "555436b0e0c5b5dcabf83e33734d2364fb2f49a17f4572e64798684f7cf64c49",
+          "distances_sha256": "02b98dec46b86b79ec8de30c798aa7a722a20ee614ad1a1e9b2be13e6ab7e466"
+        },
+        {
+          "ef": 33,
+          "recall": 0.9146,
+          "labels_sha256": "445a4663d962402d78bd5356b61a1f2b39fbfbce1ad0c1f29dc9c251e4da60a6",
+          "distances_sha256": "780598a9601954b2e39bdaf391ab0a60af275d7b39830ea3f654b67b8e061a18"
+        },
+        {
+          "ef": 34,
+          "recall": 0.9181,
+          "labels_sha256": "b72b467526c99a238336fca36c39bf5ee42d2e07ed4359efa07321198d01915c",
+          "distances_sha256": "38c501be5ff317cf85622353376b1daec0a9c8f5b512a47849311316af0b494b"
+        },
+        {
+          "ef": 35,
+          "recall": 0.9208,
+          "labels_sha256": "1633b57fc7c933f68bd86dca78f50263c4911e331e3a7ad7a117e627976cc53a",
+          "distances_sha256": "bc738f7278c7234cd9fc8474afaaa9ec3e1f8623568c9478be42425f648eb4b3"
+        },
+        {
+          "ef": 36,
+          "recall": 0.9244,
+          "labels_sha256": "f95835a97a4542df2708925f1dbfa430efbbc81780172d85572aee5956705aae",
+          "distances_sha256": "808a2db61b2dadfb87f7cae7d776bebf346669bf65b47d18c71f4d33b27bab7c"
+        },
+        {
+          "ef": 37,
+          "recall": 0.9266,
+          "labels_sha256": "dd235089af21a16f4d523879f5c48fdc324367d768837d4d601c9b3821040171",
+          "distances_sha256": "05567734ccd1c803a3c875f1ae3c538fb4483ea121f1caa789fa90abc3c63dec"
+        },
+        {
+          "ef": 38,
+          "recall": 0.9296,
+          "labels_sha256": "0c1c9d8272f93de645b18d9e5538ddcda60d597b9f6c5a45ec2904f1ff26a372",
+          "distances_sha256": "f03a3268f3f72053a7cbde109a83e3f3515f7c044733e5537d8158caac0869e4"
+        },
+        {
+          "ef": 39,
+          "recall": 0.9329,
+          "labels_sha256": "2ddb471c26fbb8ea412be1a6e134b562fd6c4397808617579a0c54fc16c13c44",
+          "distances_sha256": "36168facb12ded5c207a010ca6b84af785880894966888f3e77e4ea9fa747a79"
+        },
+        {
+          "ef": 40,
+          "recall": 0.9359,
+          "labels_sha256": "8fc2d51a8644f31ce02203bb0fb5f7a1f0a273b8101daca6e4b3694acc3bb6ad",
+          "distances_sha256": "7ebe9efa55f9460a66f2961026d863214b5f0870ce6f6a6c1a3c5ced6d97a05b"
+        },
+        {
+          "ef": 41,
+          "recall": 0.9376,
+          "labels_sha256": "b910171438828af2bb72c556af61f9d3e881eed16bc9a03b16ed289ecf36958f",
+          "distances_sha256": "08d4d2c73b60fc12d94f6787ad23cfa936e355e6b02ff38e9849e0b266109163"
+        },
+        {
+          "ef": 42,
+          "recall": 0.9397,
+          "labels_sha256": "36130836d978897ffe8c29c889aff62564d37e89eee1b7a4c884f7bf4d76fe32",
+          "distances_sha256": "dc21def2d65222ebe4f30b56bb4e232d5810c06174d4a24e924a7e323b0ff620"
+        },
+        {
+          "ef": 43,
+          "recall": 0.9415,
+          "labels_sha256": "61c075dd50b14aee9a98493a5af558da4016d5f4f58103acdf0907671f5ac717",
+          "distances_sha256": "bd84e7d7255fe6da7039b77b1607cc925bb9f1e4dc4d97d49d1ef53034d55abd"
+        },
+        {
+          "ef": 44,
+          "recall": 0.9438,
+          "labels_sha256": "6414ae3283c8e1a941212616d9895ec5e95be638f097b2264fdbe6477d94e4c3",
+          "distances_sha256": "3bf5cc99267cbbe2cd5938d009bbc49a21840cdbecf17806daa4384713b20d27"
+        },
+        {
+          "ef": 45,
+          "recall": 0.9456,
+          "labels_sha256": "977304672ae873bb800a680604e3e218b913ad0c86b6ad426a3aec724639a663",
+          "distances_sha256": "0a5447fc7c117f9ce50015e6d2471974e16c54776816db5ca9141683fc255fc6"
+        },
+        {
+          "ef": 46,
+          "recall": 0.9467,
+          "labels_sha256": "ce78c8eef781aa7c3b54b2714337cb5db7c3569d14030fa99a154659d2a803e8",
+          "distances_sha256": "71049d2e1d888773c1bceba930749a331a89db4c8b0d3682594952f26bcfc78c"
+        },
+        {
+          "ef": 47,
+          "recall": 0.9481,
+          "labels_sha256": "54e0806fd1b4025faf1b8f73e98e06be3707ce2bb8efcc0f97c8a98e1554d195",
+          "distances_sha256": "b41f82ba52d074e496c6e69b2f38125643578a23e7f2dca61afa1f4d6934f9bc"
+        },
+        {
+          "ef": 48,
+          "recall": 0.9497,
+          "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+          "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+          "untimed_ft_work_counters": {
+            "ft_passed_total": 2698719,
+            "ft_false_positives": 304404,
+            "ft_true_positives": 2394315,
+            "ft_fp_rate": 0.1127957375332519,
+            "predicate_checked": 442259,
+            "predicate_fp_rate": 0.688293511268284,
+            "total_neighbors": 11267981,
+            "ft_rejection_rate": 0.7604966675041429
+          }
+        },
+        {
+          "ef": 49,
+          "recall": 0.9522,
+          "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+          "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+          "untimed_ft_work_counters": {
+            "ft_passed_total": 2764257,
+            "ft_false_positives": 310627,
+            "ft_true_positives": 2453630,
+            "ft_fp_rate": 0.11237269183002883,
+            "predicate_checked": 450889,
+            "predicate_fp_rate": 0.6889212200785559,
+            "total_neighbors": 11542463,
+            "ft_rejection_rate": 0.7605141121093479
+          }
+        }
+      ],
+      "target_recall": 0.95,
+      "selection": "first qualifying integer ef, ascending from k, recall ONLY",
+      "initial_static_dynamic_identical": false
+    },
+    "current": {
+      "name": "current",
+      "points": [
+        {
+          "ef": 10,
+          "recall": 0.7047,
+          "labels_sha256": "7d7ee9a351c91ec291e82467632fcf55462bebeeb8d79b36fc012558741c8c34",
+          "distances_sha256": "78fd235abcd76810e68da415e78d72c77396c898b06fa37235c0a3026a3394d8"
+        },
+        {
+          "ef": 11,
+          "recall": 0.7245,
+          "labels_sha256": "d5f37a0060ef122874936ec5536dae6cd12ac47c240d47e848c958e60d026a53",
+          "distances_sha256": "30692f9312e4c9e2ec45ffabfe0efcc7754aab09a888c568a01176ad156d37ac"
+        },
+        {
+          "ef": 12,
+          "recall": 0.7426,
+          "labels_sha256": "8aa4ffd4b20ae2de6a497c24c3a00af17aa5cb7479b3a0ff42e22cc1e417503e",
+          "distances_sha256": "d40eac690d91e012236cd4fee4a01d83c7885b823d2286d195f38060d3067305"
+        },
+        {
+          "ef": 13,
+          "recall": 0.7592,
+          "labels_sha256": "a57e0b9639799bb1b8e7187b24c6d5ed23b0a26f8af62431728a80dafa8ddacc",
+          "distances_sha256": "d4a7de0c88a091b2f605a2f892146aacb9ca07f7e640950c9a40fb832dceba9d"
+        },
+        {
+          "ef": 14,
+          "recall": 0.7757,
+          "labels_sha256": "8b178a9a705a63c61d992e1a4526796d409edd94488d3ba7f79e62145e568bd5",
+          "distances_sha256": "d19cbe1d0c6849feb4801021f2ec6e650ffa4d2a9c18469fb890fd8ce9f785bd"
+        },
+        {
+          "ef": 15,
+          "recall": 0.7917,
+          "labels_sha256": "1817ad60cde7c40594433e50c63ce35724b06e88b9137850942d0f1305c14659",
+          "distances_sha256": "eb7afae5b7e7ca0af9e02266499e4f4f9a2c3fe1e422fe495ed10d4261b30f8f"
+        },
+        {
+          "ef": 16,
+          "recall": 0.8045,
+          "labels_sha256": "e6ff1b0be185b2c33f9831fd80f4f31797714ece68ae62c83299365dd9d5ae15",
+          "distances_sha256": "40250316ee4f047b3de1acbdc40da87c882f282cc4889df522827aa9aae44eb2"
+        },
+        {
+          "ef": 17,
+          "recall": 0.8181,
+          "labels_sha256": "e036ded5ba3c845bdb64255a20052e9ab99a643a0550aa145299e299661304d4",
+          "distances_sha256": "74f08c06160c65c0e0b0671e506d97d3304676c3d7e6e49fdf15072317a40669"
+        },
+        {
+          "ef": 18,
+          "recall": 0.8288,
+          "labels_sha256": "6ded8a65a80c6991d5531cdc2e93e33f8d992f7a030e570faebcd9f68de13bfb",
+          "distances_sha256": "8df828e2a70750f1f55434098d0471d0b232a7bd9f6b32ac2e537b4df107043d"
+        },
+        {
+          "ef": 19,
+          "recall": 0.8372,
+          "labels_sha256": "d7c964cfa10906fa56a2932174c3a9396bd06fa458234cdb6d0e9208fed5167c",
+          "distances_sha256": "5909bd046a5d0d4e2918425d3da1c15e5a38bba62799c395a6ad94e72b9466e4"
+        },
+        {
+          "ef": 20,
+          "recall": 0.8465,
+          "labels_sha256": "f662d9d0c89f3dc5150c7c92d978f0f4230ce59a3af99d7ccbecbed07dc77630",
+          "distances_sha256": "a8c0317f357ca3c6bfb8f76a77b1378f9d9d7489f2147e40c81a961530d8a1b5"
+        },
+        {
+          "ef": 21,
+          "recall": 0.8547,
+          "labels_sha256": "59e4fb6b51bfcc4b4e0dcabf799a974d6cf3223237517178ccff0f3fc3197a04",
+          "distances_sha256": "e820757a44ef3f6f22dd675366477fb96238f0f81fb56de85daf17593117a9ed"
+        },
+        {
+          "ef": 22,
+          "recall": 0.8608,
+          "labels_sha256": "2d768117d915b932608b4776aa0da331b241c9e3a285219019a8a9cc00f99dd4",
+          "distances_sha256": "2f0466baa4fac41dfd03f7b230ec4f281cb19955ae2d10960af81663d5ba8c9c"
+        },
+        {
+          "ef": 23,
+          "recall": 0.8681,
+          "labels_sha256": "853772aca907f2303dd1bfe6c34777e8bb9ca4b6722fdfff30824f5e5ad8db06",
+          "distances_sha256": "2d1b082ff348a065c1c064bd65db60e6bdae533173e4e81a180f6d818d61aade"
+        },
+        {
+          "ef": 24,
+          "recall": 0.8741,
+          "labels_sha256": "26ca27fdb13e4726265f8bbcb1bd05079aaf53c359e34f6937aad2d657f82c43",
+          "distances_sha256": "58d8187ffd9b995feced24d98b30b24870ee63eadd2caaa93927a51f37298605"
+        },
+        {
+          "ef": 25,
+          "recall": 0.8814,
+          "labels_sha256": "e1e7eb464ea70a07fb1335a836fea7002ae20c96e8758d3928e2c169329a6b59",
+          "distances_sha256": "d4201c62af8b1946a632218111768a8b4338e064cc7bc5af0b7fb018c520dc58"
+        },
+        {
+          "ef": 26,
+          "recall": 0.886,
+          "labels_sha256": "fcdd566462e20451e510271511e5dfef0b5308108a153f7624be390e2f401646",
+          "distances_sha256": "9acdc5ca5bc8ef2b106694941b4ac35ec090c626475b6d1289bbaa4480c3152a"
+        },
+        {
+          "ef": 27,
+          "recall": 0.8929,
+          "labels_sha256": "38dfb80a7b657ce6608fb8393ac6f9d49cad150a31fcdbd96f76f408d6691bd7",
+          "distances_sha256": "6d5e915f333ec3d864d03db9608ea91449a6945eb9047fc2eff4b245ad03f461"
+        },
+        {
+          "ef": 28,
+          "recall": 0.8973,
+          "labels_sha256": "af2ae88ef34a90d702f0ed3e945a549febd47c814e570e2f0c361f06416ebe52",
+          "distances_sha256": "09a8595e98eb037a175b6de93a3e1bbc5ee2844fd809d35aeb7789686fda2648"
+        },
+        {
+          "ef": 29,
+          "recall": 0.9009,
+          "labels_sha256": "9d1528c65180d8b23cf97b3e60c07027110bd4e89acfee643a026ad89c9b4f73",
+          "distances_sha256": "b1eeba5536fcce6b60c3cfd8df5c5afa5203b4ce150366a95f345e8b879ae2a2"
+        },
+        {
+          "ef": 30,
+          "recall": 0.9044,
+          "labels_sha256": "a04fadd70485baad12278732058d90002790969427a2a1ba769095003a18b4bb",
+          "distances_sha256": "985274bff61851a96b70bd8d6c20863741b74c5759ad13ff21ffd11ad4fb44ac"
+        },
+        {
+          "ef": 31,
+          "recall": 0.9074,
+          "labels_sha256": "0d70b567d73bd6a78aa18ee2deff3dde56d1cb3af576e92d6693063bf7d4872e",
+          "distances_sha256": "cb6ce6cb720965ab9bf230ef28b140ca51ea8c7efefb4816d74967a3f73b3582"
+        },
+        {
+          "ef": 32,
+          "recall": 0.9112,
+          "labels_sha256": "555436b0e0c5b5dcabf83e33734d2364fb2f49a17f4572e64798684f7cf64c49",
+          "distances_sha256": "02b98dec46b86b79ec8de30c798aa7a722a20ee614ad1a1e9b2be13e6ab7e466"
+        },
+        {
+          "ef": 33,
+          "recall": 0.9146,
+          "labels_sha256": "445a4663d962402d78bd5356b61a1f2b39fbfbce1ad0c1f29dc9c251e4da60a6",
+          "distances_sha256": "780598a9601954b2e39bdaf391ab0a60af275d7b39830ea3f654b67b8e061a18"
+        },
+        {
+          "ef": 34,
+          "recall": 0.9181,
+          "labels_sha256": "b72b467526c99a238336fca36c39bf5ee42d2e07ed4359efa07321198d01915c",
+          "distances_sha256": "38c501be5ff317cf85622353376b1daec0a9c8f5b512a47849311316af0b494b"
+        },
+        {
+          "ef": 35,
+          "recall": 0.9208,
+          "labels_sha256": "1633b57fc7c933f68bd86dca78f50263c4911e331e3a7ad7a117e627976cc53a",
+          "distances_sha256": "bc738f7278c7234cd9fc8474afaaa9ec3e1f8623568c9478be42425f648eb4b3"
+        },
+        {
+          "ef": 36,
+          "recall": 0.9244,
+          "labels_sha256": "f95835a97a4542df2708925f1dbfa430efbbc81780172d85572aee5956705aae",
+          "distances_sha256": "808a2db61b2dadfb87f7cae7d776bebf346669bf65b47d18c71f4d33b27bab7c"
+        },
+        {
+          "ef": 37,
+          "recall": 0.9266,
+          "labels_sha256": "dd235089af21a16f4d523879f5c48fdc324367d768837d4d601c9b3821040171",
+          "distances_sha256": "05567734ccd1c803a3c875f1ae3c538fb4483ea121f1caa789fa90abc3c63dec"
+        },
+        {
+          "ef": 38,
+          "recall": 0.9296,
+          "labels_sha256": "0c1c9d8272f93de645b18d9e5538ddcda60d597b9f6c5a45ec2904f1ff26a372",
+          "distances_sha256": "f03a3268f3f72053a7cbde109a83e3f3515f7c044733e5537d8158caac0869e4"
+        },
+        {
+          "ef": 39,
+          "recall": 0.9329,
+          "labels_sha256": "2ddb471c26fbb8ea412be1a6e134b562fd6c4397808617579a0c54fc16c13c44",
+          "distances_sha256": "36168facb12ded5c207a010ca6b84af785880894966888f3e77e4ea9fa747a79"
+        },
+        {
+          "ef": 40,
+          "recall": 0.9359,
+          "labels_sha256": "8fc2d51a8644f31ce02203bb0fb5f7a1f0a273b8101daca6e4b3694acc3bb6ad",
+          "distances_sha256": "7ebe9efa55f9460a66f2961026d863214b5f0870ce6f6a6c1a3c5ced6d97a05b"
+        },
+        {
+          "ef": 41,
+          "recall": 0.9376,
+          "labels_sha256": "b910171438828af2bb72c556af61f9d3e881eed16bc9a03b16ed289ecf36958f",
+          "distances_sha256": "08d4d2c73b60fc12d94f6787ad23cfa936e355e6b02ff38e9849e0b266109163"
+        },
+        {
+          "ef": 42,
+          "recall": 0.9397,
+          "labels_sha256": "36130836d978897ffe8c29c889aff62564d37e89eee1b7a4c884f7bf4d76fe32",
+          "distances_sha256": "dc21def2d65222ebe4f30b56bb4e232d5810c06174d4a24e924a7e323b0ff620"
+        },
+        {
+          "ef": 43,
+          "recall": 0.9415,
+          "labels_sha256": "61c075dd50b14aee9a98493a5af558da4016d5f4f58103acdf0907671f5ac717",
+          "distances_sha256": "bd84e7d7255fe6da7039b77b1607cc925bb9f1e4dc4d97d49d1ef53034d55abd"
+        },
+        {
+          "ef": 44,
+          "recall": 0.9438,
+          "labels_sha256": "6414ae3283c8e1a941212616d9895ec5e95be638f097b2264fdbe6477d94e4c3",
+          "distances_sha256": "3bf5cc99267cbbe2cd5938d009bbc49a21840cdbecf17806daa4384713b20d27"
+        },
+        {
+          "ef": 45,
+          "recall": 0.9456,
+          "labels_sha256": "977304672ae873bb800a680604e3e218b913ad0c86b6ad426a3aec724639a663",
+          "distances_sha256": "0a5447fc7c117f9ce50015e6d2471974e16c54776816db5ca9141683fc255fc6"
+        },
+        {
+          "ef": 46,
+          "recall": 0.9467,
+          "labels_sha256": "ce78c8eef781aa7c3b54b2714337cb5db7c3569d14030fa99a154659d2a803e8",
+          "distances_sha256": "71049d2e1d888773c1bceba930749a331a89db4c8b0d3682594952f26bcfc78c"
+        },
+        {
+          "ef": 47,
+          "recall": 0.9481,
+          "labels_sha256": "54e0806fd1b4025faf1b8f73e98e06be3707ce2bb8efcc0f97c8a98e1554d195",
+          "distances_sha256": "b41f82ba52d074e496c6e69b2f38125643578a23e7f2dca61afa1f4d6934f9bc"
+        },
+        {
+          "ef": 48,
+          "recall": 0.9497,
+          "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+          "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+          "untimed_ft_work_counters": {
+            "ft_passed_total": 2698719,
+            "ft_false_positives": 304404,
+            "ft_true_positives": 2394315,
+            "ft_fp_rate": 0.1127957375332519,
+            "predicate_checked": 442259,
+            "predicate_fp_rate": 0.688293511268284,
+            "total_neighbors": 11267981,
+            "ft_rejection_rate": 0.7604966675041429
+          }
+        },
+        {
+          "ef": 49,
+          "recall": 0.9522,
+          "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+          "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+          "untimed_ft_work_counters": {
+            "ft_passed_total": 2764257,
+            "ft_false_positives": 310627,
+            "ft_true_positives": 2453630,
+            "ft_fp_rate": 0.11237269183002883,
+            "predicate_checked": 450889,
+            "predicate_fp_rate": 0.6889212200785559,
+            "total_neighbors": 11542463,
+            "ft_rejection_rate": 0.7605141121093479
+          }
+        }
+      ],
+      "target_recall": 0.95,
+      "selection": "first qualifying integer ef, ascending from k, recall ONLY",
+      "initial_static_dynamic_identical": true
+    }
+  },
+  "timing": {
+    "status": "complete",
+    "attempts": [
+      {
+        "number": 0,
+        "core": 24,
+        "selection_pair_loads": {
+          "8": 1.0,
+          "16": 1.0,
+          "24": 0.050203527815468114
+        },
+        "samples": {
+          "initial_ef48": [
+            {
+              "wall_s": 0.763025663793087,
+              "thread_cpu_s": 0.7629417910000029,
+              "process_cpu_s": 0.7629459660000748,
+              "thread_cpu_wall_ratio": 0.9998900786735441,
+              "thread_rusage": {
+                "user_cpu_s": 0.7634390000000622,
+                "system_cpu_s": 0.0001650000000097407,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7630709999999681,
+                "system_cpu_s": 4.200000000764703e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122537915,
+                  893541174
+                ],
+                "88": [
+                  1122538570,
+                  919527622
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122537991,
+                  893541174
+                ],
+                "88": [
+                  1122538647,
+                  919527697
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.025974025974025976
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 0,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "initial_ef48",
+              "qps": 1310.5719079341143,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7699108999222517,
+              "thread_cpu_s": 0.7698843859999442,
+              "process_cpu_s": 0.769887848000053,
+              "thread_cpu_wall_ratio": 0.9999655623497341,
+              "thread_rusage": {
+                "user_cpu_s": 0.7702790000000732,
+                "system_cpu_s": 0.00010900000000901855,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 0
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7700340000000097,
+                "system_cpu_s": 2.8999999983625457e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 0
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122539034,
+                  893541194
+                ],
+                "88": [
+                  1122539688,
+                  919528719
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122539111,
+                  893541194
+                ],
+                "88": [
+                  1122539764,
+                  919528794
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013157894736842105
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 1,
+              "order": [
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48"
+              ],
+              "case": "initial_ef48",
+              "qps": 1298.8515945169545,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.77028588950634,
+              "thread_cpu_s": 0.7702026939999769,
+              "process_cpu_s": 0.7702061979999826,
+              "thread_cpu_wall_ratio": 0.9998919939888599,
+              "thread_rusage": {
+                "user_cpu_s": 0.7704230000000507,
+                "system_cpu_s": 0.0001560000000040418,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7702740000000858,
+                "system_cpu_s": 0.00010699999998564635,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122539503,
+                  893541195
+                ],
+                "88": [
+                  1122540156,
+                  919529180
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122539580,
+                  893541195
+                ],
+                "88": [
+                  1122540233,
+                  919529255
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.025974025974025976
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 2,
+              "order": [
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49"
+              ],
+              "case": "initial_ef48",
+              "qps": 1298.2192892574974,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7564257085323334,
+              "thread_cpu_s": 0.7563803049999933,
+              "process_cpu_s": 0.7563839120000466,
+              "thread_cpu_wall_ratio": 0.9999399762173232,
+              "thread_rusage": {
+                "user_cpu_s": 0.7569619999999304,
+                "system_cpu_s": 4.9999999873762135e-06,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7565510000000586,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3299909
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122539984,
+                  893541202
+                ],
+                "88": [
+                  1122540637,
+                  919529652
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122540060,
+                  893541202
+                ],
+                "88": [
+                  1122540713,
+                  919529726
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.02631578947368421
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 3,
+              "order": [
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48"
+              ],
+              "case": "initial_ef48",
+              "qps": 1322.006892045308,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7660740353167057,
+              "thread_cpu_s": 0.7659932239999989,
+              "process_cpu_s": 0.7659965230000125,
+              "thread_cpu_wall_ratio": 0.999894512393083,
+              "thread_rusage": {
+                "user_cpu_s": 0.7670309999999745,
+                "system_cpu_s": 2.6999999988674972e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7661749999999756,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122540465,
+                  893541211
+                ],
+                "88": [
+                  1122541117,
+                  919530123
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122540542,
+                  893541211
+                ],
+                "88": [
+                  1122541193,
+                  919530198
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013157894736842105
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 4,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "initial_ef48",
+              "qps": 1305.3568635655247,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7550867963582277,
+              "thread_cpu_s": 0.7550530529999833,
+              "process_cpu_s": 0.7550565060000736,
+              "thread_cpu_wall_ratio": 0.9999553119477029,
+              "thread_rusage": {
+                "user_cpu_s": 0.756038999999987,
+                "system_cpu_s": 2.8000000014571924e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7552319999999781,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3290080
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122541571,
+                  893541222
+                ],
+                "88": [
+                  1122542221,
+                  919531211
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122541646,
+                  893541222
+                ],
+                "88": [
+                  1122542296,
+                  919531285
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013333333333333334
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 5,
+              "order": [
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48"
+              ],
+              "case": "initial_ef48",
+              "qps": 1324.3510611269921,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7576578035950661,
+              "thread_cpu_s": 0.7576267169999937,
+              "process_cpu_s": 0.7576301789999889,
+              "thread_cpu_wall_ratio": 0.9999589701380691,
+              "thread_rusage": {
+                "user_cpu_s": 0.7579600000000255,
+                "system_cpu_s": 3.0000000208474376e-06,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7577989999999772,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122542040,
+                  893541223
+                ],
+                "88": [
+                  1122542689,
+                  919531671
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122542116,
+                  893541223
+                ],
+                "88": [
+                  1122542764,
+                  919531746
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.0
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 6,
+              "order": [
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49"
+              ],
+              "case": "initial_ef48",
+              "qps": 1319.8570584966283,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7530301883816719,
+              "thread_cpu_s": 0.75289573200007,
+              "process_cpu_s": 0.7528991759998007,
+              "thread_cpu_wall_ratio": 0.9998214462266236,
+              "thread_rusage": {
+                "user_cpu_s": 0.7531030000000101,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 3
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7530659999999898,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 3
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3041505
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122542511,
+                  893541225
+                ],
+                "88": [
+                  1122543159,
+                  919532137
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122542586,
+                  893541225
+                ],
+                "88": [
+                  1122543237,
+                  919532211
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.05128205128205128
+              },
+              "rejection_reasons": [
+                "SMT sibling busy or missing utilization interval"
+              ],
+              "clean": false,
+              "repeat": 7,
+              "order": [
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48"
+              ],
+              "case": "initial_ef48",
+              "qps": 1327.9680090237657,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7575802262872458,
+              "thread_cpu_s": 0.7575204669999493,
+              "process_cpu_s": 0.7575244490001296,
+              "thread_cpu_wall_ratio": 0.9999211182060688,
+              "thread_rusage": {
+                "user_cpu_s": 0.7580709999999726,
+                "system_cpu_s": 3.799999998932435e-05,
+                "minor_faults": 1,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7576999999999998,
+                "system_cpu_s": 0.0,
+                "minor_faults": 1,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3302852
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122542985,
+                  893541232
+                ],
+                "88": [
+                  1122543635,
+                  919532604
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122543062,
+                  893541232
+                ],
+                "88": [
+                  1122543711,
+                  919532678
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.02631578947368421
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 8,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "initial_ef48",
+              "qps": 1319.9922137630317,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            }
+          ],
+          "initial_ef49": [
+            {
+              "wall_s": 0.7838156800717115,
+              "thread_cpu_s": 0.7837397920000058,
+              "process_cpu_s": 0.7837432420000141,
+              "thread_cpu_wall_ratio": 0.9999031812278891,
+              "thread_rusage": {
+                "user_cpu_s": 0.7839950000000044,
+                "system_cpu_s": 1.7000000013922545e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7839089999999942,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300089
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122538077,
+                  893541179
+                ],
+                "88": [
+                  1122538731,
+                  919527780
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122538156,
+                  893541179
+                ],
+                "88": [
+                  1122538810,
+                  919527858
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.012658227848101266
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 0,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "initial_ef49",
+              "qps": 1275.8101495347858,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7755429483950138,
+              "thread_cpu_s": 0.7755056499999,
+              "process_cpu_s": 0.7755090460000247,
+              "thread_cpu_wall_ratio": 0.9999519067316762,
+              "thread_rusage": {
+                "user_cpu_s": 0.7755099999999402,
+                "system_cpu_s": 0.00018799999998009298,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7754939999999806,
+                "system_cpu_s": 0.00018199999999524152,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122538557,
+                  893541186
+                ],
+                "88": [
+                  1122539211,
+                  919528250
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122538635,
+                  893541186
+                ],
+                "88": [
+                  1122539288,
+                  919528326
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.012987012987012988
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 1,
+              "order": [
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48"
+              ],
+              "case": "initial_ef49",
+              "qps": 1289.4192411516347,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7786240242421627,
+              "thread_cpu_s": 0.7785289639999746,
+              "process_cpu_s": 0.7785320639999327,
+              "thread_cpu_wall_ratio": 0.9998779125235949,
+              "thread_rusage": {
+                "user_cpu_s": 0.779034999999908,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.778765999999905,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3299967,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122539662,
+                  893541195
+                ],
+                "88": [
+                  1122540315,
+                  919529336
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122539740,
+                  893541195
+                ],
+                "88": [
+                  1122540393,
+                  919529413
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.01282051282051282
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 2,
+              "order": [
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49"
+              ],
+              "case": "initial_ef49",
+              "qps": 1284.3169088871914,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7856289763003588,
+              "thread_cpu_s": 0.7855915549999963,
+              "process_cpu_s": 0.7855949099999862,
+              "thread_cpu_wall_ratio": 0.9999523677187434,
+              "thread_rusage": {
+                "user_cpu_s": 0.7859540000000607,
+                "system_cpu_s": 1.9999999949504854e-06,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7857710000000679,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122540142,
+                  893541202
+                ],
+                "88": [
+                  1122540793,
+                  919529806
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122540221,
+                  893541202
+                ],
+                "88": [
+                  1122540871,
+                  919529883
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.01282051282051282
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 3,
+              "order": [
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48"
+              ],
+              "case": "initial_ef49",
+              "qps": 1272.8654748824893,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.769667012616992,
+              "thread_cpu_s": 0.7696285279999984,
+              "process_cpu_s": 0.769632005999938,
+              "thread_cpu_wall_ratio": 0.9999499983546615,
+              "thread_rusage": {
+                "user_cpu_s": 0.7701350000000957,
+                "system_cpu_s": 5.999999999062311e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7697970000000396,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122540628,
+                  893541216
+                ],
+                "88": [
+                  1122541279,
+                  919530282
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122540705,
+                  893541216
+                ],
+                "88": [
+                  1122541356,
+                  919530359
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.0
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 4,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "initial_ef49",
+              "qps": 1299.26316654762,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7719011679291725,
+              "thread_cpu_s": 0.7718287000000146,
+              "process_cpu_s": 0.7718327189999172,
+              "thread_cpu_wall_ratio": 0.9999061176065424,
+              "thread_rusage": {
+                "user_cpu_s": 0.7723469999999679,
+                "system_cpu_s": 0.00012799999998946987,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7719899999999598,
+                "system_cpu_s": 1.2999999995599865e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3299955
+              },
+              "frequencies_after_khz": {
+                "24": 3014143,
+                "88": 3300071
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122541096,
+                  893541216
+                ],
+                "88": [
+                  1122541747,
+                  919530746
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122541173,
+                  893541216
+                ],
+                "88": [
+                  1122541826,
+                  919530822
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.0379746835443038
+              },
+              "rejection_reasons": [
+                "frequency outside configured interval or unavailable"
+              ],
+              "clean": false,
+              "repeat": 5,
+              "order": [
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48"
+              ],
+              "case": "initial_ef49",
+              "qps": 1295.5026388711944,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7693978529423475,
+              "thread_cpu_s": 0.7693645909999987,
+              "process_cpu_s": 0.7693683649999912,
+              "thread_cpu_wall_ratio": 0.9999567688651305,
+              "thread_rusage": {
+                "user_cpu_s": 0.7695889999999963,
+                "system_cpu_s": 0.0002020000000015898,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7693930000000364,
+                "system_cpu_s": 0.00014100000001349144,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122542199,
+                  893541225
+                ],
+                "88": [
+                  1122542847,
+                  919531829
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122542276,
+                  893541225
+                ],
+                "88": [
+                  1122542924,
+                  919531906
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.0
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 6,
+              "order": [
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49"
+              ],
+              "case": "initial_ef49",
+              "qps": 1299.7176898476891,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7696087937802076,
+              "thread_cpu_s": 0.7695272010000735,
+              "process_cpu_s": 0.7695306030000211,
+              "thread_cpu_wall_ratio": 0.9998939814867066,
+              "thread_rusage": {
+                "user_cpu_s": 0.7702560000000176,
+                "system_cpu_s": 9.700000001089393e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.769698999999946,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300293
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122542668,
+                  893541226
+                ],
+                "88": [
+                  1122543318,
+                  919532291
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122542745,
+                  893541226
+                ],
+                "88": [
+                  1122543394,
+                  919532367
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.0
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 7,
+              "order": [
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48"
+              ],
+              "case": "initial_ef49",
+              "qps": 1299.3614523141607,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7809539716690779,
+              "thread_cpu_s": 0.7808665450002081,
+              "process_cpu_s": 0.7808701559999918,
+              "thread_cpu_wall_ratio": 0.9998880514447185,
+              "thread_rusage": {
+                "user_cpu_s": 0.781097999999929,
+                "system_cpu_s": 4.80000000209202e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7810140000000274,
+                "system_cpu_s": 2.1000000003823516e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3296213
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122543149,
+                  893541238
+                ],
+                "88": [
+                  1122543797,
+                  919532763
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122543228,
+                  893541238
+                ],
+                "88": [
+                  1122543876,
+                  919532840
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.02531645569620253
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 8,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "initial_ef49",
+              "qps": 1280.4851966662907,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            }
+          ],
+          "current_ef48": [
+            {
+              "wall_s": 0.7612579315900803,
+              "thread_cpu_s": 0.7612319359999447,
+              "process_cpu_s": 0.7612350939999715,
+              "thread_cpu_wall_ratio": 0.9999658517973253,
+              "thread_rusage": {
+                "user_cpu_s": 0.7612449999999171,
+                "system_cpu_s": 7.80000000020209e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 0
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7613370000000259,
+                "system_cpu_s": 6.8999999996322e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 0
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3299891
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300032
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122538238,
+                  893541183
+                ],
+                "88": [
+                  1122538892,
+                  919527938
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122538314,
+                  893541183
+                ],
+                "88": [
+                  1122538968,
+                  919528013
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013157894736842105
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 0,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "current_ef48",
+              "qps": 1313.6152130608957,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7633144278079271,
+              "thread_cpu_s": 0.7632433060000494,
+              "process_cpu_s": 0.7632470190000049,
+              "thread_cpu_wall_ratio": 0.9999068250182537,
+              "thread_rusage": {
+                "user_cpu_s": 0.763339999999971,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7634180000000015,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300042
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122538713,
+                  893541186
+                ],
+                "88": [
+                  1122539366,
+                  919528403
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122538789,
+                  893541186
+                ],
+                "88": [
+                  1122539443,
+                  919528478
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.025974025974025976
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 1,
+              "order": [
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48"
+              ],
+              "case": "current_ef48",
+              "qps": 1310.076114861057,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7610129546374083,
+              "thread_cpu_s": 0.7609781180000255,
+              "process_cpu_s": 0.7609815649999518,
+              "thread_cpu_wall_ratio": 0.9999542233319807,
+              "thread_rusage": {
+                "user_cpu_s": 0.7620170000000144,
+                "system_cpu_s": 2.2999999998774e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7611539999999195,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3302725
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122539191,
+                  893541194
+                ],
+                "88": [
+                  1122539845,
+                  919528872
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122539267,
+                  893541194
+                ],
+                "88": [
+                  1122539921,
+                  919528947
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013157894736842105
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 2,
+              "order": [
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49"
+              ],
+              "case": "current_ef48",
+              "qps": 1314.0380776782695,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7639000955969095,
+              "thread_cpu_s": 0.7638161549999722,
+              "process_cpu_s": 0.7638195559999303,
+              "thread_cpu_wall_ratio": 0.9998901157397138,
+              "thread_rusage": {
+                "user_cpu_s": 0.764124000000038,
+                "system_cpu_s": 5.699999999819738e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7639779999999519,
+                "system_cpu_s": 8.999999977277184e-06,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300109
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122540301,
+                  893541203
+                ],
+                "88": [
+                  1122540953,
+                  919529962
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122540377,
+                  893541203
+                ],
+                "88": [
+                  1122541029,
+                  919530037
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013157894736842105
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 3,
+              "order": [
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48"
+              ],
+              "case": "current_ef48",
+              "qps": 1309.071704224101,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7569320220500231,
+              "thread_cpu_s": 0.7568773350000129,
+              "process_cpu_s": 0.7568808239999498,
+              "thread_cpu_wall_ratio": 0.999927751702376,
+              "thread_rusage": {
+                "user_cpu_s": 0.7571410000000469,
+                "system_cpu_s": 6.19999999855736e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7570240000000013,
+                "system_cpu_s": 2.2999999998774e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122540783,
+                  893541216
+                ],
+                "88": [
+                  1122541434,
+                  919530437
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122540858,
+                  893541216
+                ],
+                "88": [
+                  1122541510,
+                  919530512
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013157894736842105
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 4,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "current_ef48",
+              "qps": 1321.1225986868255,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7603302095085382,
+              "thread_cpu_s": 0.7602511029999732,
+              "process_cpu_s": 0.7602553360000002,
+              "thread_cpu_wall_ratio": 0.9998959576936761,
+              "thread_rusage": {
+                "user_cpu_s": 0.7611670000000004,
+                "system_cpu_s": 6.8999999996322e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7604460000000017,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3281451
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122541251,
+                  893541216
+                ],
+                "88": [
+                  1122541904,
+                  919530899
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122541327,
+                  893541216
+                ],
+                "88": [
+                  1122541979,
+                  919530973
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013333333333333334
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 5,
+              "order": [
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48"
+              ],
+              "case": "current_ef48",
+              "qps": 1315.2180296063461,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7528418842703104,
+              "thread_cpu_s": 0.7528054979999297,
+              "process_cpu_s": 0.7528089819999195,
+              "thread_cpu_wall_ratio": 0.9999516681110058,
+              "thread_rusage": {
+                "user_cpu_s": 0.7534019999999373,
+                "system_cpu_s": 0.00014399999997749546,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7529690000000073,
+                "system_cpu_s": 4.9999999873762135e-06,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "frequencies_after_khz": {
+                "24": 3299967,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122541725,
+                  893541222
+                ],
+                "88": [
+                  1122542374,
+                  919531362
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122541800,
+                  893541222
+                ],
+                "88": [
+                  1122542449,
+                  919531436
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013333333333333334
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 6,
+              "order": [
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49"
+              ],
+              "case": "current_ef48",
+              "qps": 1328.3001662018935,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7597617954015732,
+              "thread_cpu_s": 0.7597202419999576,
+              "process_cpu_s": 0.7597239530000479,
+              "thread_cpu_wall_ratio": 0.9999453073293931,
+              "thread_rusage": {
+                "user_cpu_s": 0.7603040000000192,
+                "system_cpu_s": 0.00011200000000144428,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7598889999999301,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122542824,
+                  893541227
+                ],
+                "88": [
+                  1122543475,
+                  919532446
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122542900,
+                  893541227
+                ],
+                "88": [
+                  1122543550,
+                  919532520
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.013333333333333334
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 7,
+              "order": [
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48"
+              ],
+              "case": "current_ef48",
+              "qps": 1316.2020070665023,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7621446866542101,
+              "thread_cpu_s": 0.7619989629999964,
+              "process_cpu_s": 0.7620023970000602,
+              "thread_cpu_wall_ratio": 0.9998087979136173,
+              "thread_rusage": {
+                "user_cpu_s": 0.7621070000000145,
+                "system_cpu_s": 4.999999998744897e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 3
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7621209999999792,
+                "system_cpu_s": 5.3999999977349944e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 3
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3299924
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122543307,
+                  893541238
+                ],
+                "88": [
+                  1122543954,
+                  919532917
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122543383,
+                  893541238
+                ],
+                "88": [
+                  1122544031,
+                  919532992
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.025974025974025976
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 8,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "current_ef48",
+              "qps": 1312.0868222410195,
+              "labels_sha256": "ad000ff78445d77c6d0075aefea122b7af6fc7ef44da092923bcc77690882c87",
+              "distances_sha256": "ff0d20a6791b213c46ceff5ad35fd7a2ac4e17957f6bc01fc46c3ff0ca8ac2e9",
+              "ef": 48,
+              "recall": 0.9497,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            }
+          ],
+          "current_ef49": [
+            {
+              "wall_s": 0.7799089141190052,
+              "thread_cpu_s": 0.7798560889999635,
+              "process_cpu_s": 0.7798598859999402,
+              "thread_cpu_wall_ratio": 0.9999322675788347,
+              "thread_rusage": {
+                "user_cpu_s": 0.780159000000026,
+                "system_cpu_s": 7.10000000196942e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 3
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7800090000000637,
+                "system_cpu_s": 2.200000000129876e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 3
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300044
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122538396,
+                  893541184
+                ],
+                "88": [
+                  1122539048,
+                  919528092
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122538474,
+                  893541184
+                ],
+                "88": [
+                  1122539128,
+                  919528169
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.0375
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 0,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "current_ef49",
+              "qps": 1282.2010133447602,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7803867645561695,
+              "thread_cpu_s": 0.7803040830000327,
+              "process_cpu_s": 0.7803078480000067,
+              "thread_cpu_wall_ratio": 0.9998940505402039,
+              "thread_rusage": {
+                "user_cpu_s": 0.7810339999999769,
+                "system_cpu_s": 2.9000000012047167e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7804740000000265,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122538874,
+                  893541191
+                ],
+                "88": [
+                  1122539528,
+                  919528561
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122538952,
+                  893541191
+                ],
+                "88": [
+                  1122539604,
+                  919528637
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.0
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 1,
+              "order": [
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48"
+              ],
+              "case": "current_ef49",
+              "qps": 1281.4158894259713,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.766732357442379,
+              "thread_cpu_s": 0.7666575460000331,
+              "process_cpu_s": 0.7666609440000229,
+              "thread_cpu_wall_ratio": 0.9999024282181133,
+              "thread_rusage": {
+                "user_cpu_s": 0.7674240000000054,
+                "system_cpu_s": 0.00015700000000151704,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7668280000000323,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122539346,
+                  893541194
+                ],
+                "88": [
+                  1122540000,
+                  919529025
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122539423,
+                  893541194
+                ],
+                "88": [
+                  1122540077,
+                  919529101
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.012987012987012988
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 2,
+              "order": [
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49"
+              ],
+              "case": "current_ef49",
+              "qps": 1304.236074418121,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7769928798079491,
+              "thread_cpu_s": 0.7769677909999473,
+              "process_cpu_s": 0.776971241999945,
+              "thread_cpu_wall_ratio": 0.99996771037592,
+              "thread_rusage": {
+                "user_cpu_s": 0.777121999999963,
+                "system_cpu_s": 5.699999999819738e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 0
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7770910000000413,
+                "system_cpu_s": 4.6999999995023245e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 0
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122539828,
+                  893541202
+                ],
+                "88": [
+                  1122540479,
+                  919529498
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122539905,
+                  893541202
+                ],
+                "88": [
+                  1122540557,
+                  919529574
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.02564102564102564
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 3,
+              "order": [
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48"
+              ],
+              "case": "current_ef49",
+              "qps": 1287.0130807983364,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7741035278886557,
+              "thread_cpu_s": 0.774069410999914,
+              "process_cpu_s": 0.7740726939999831,
+              "thread_cpu_wall_ratio": 0.9999559272274153,
+              "thread_rusage": {
+                "user_cpu_s": 0.7742319999999836,
+                "system_cpu_s": 9.099999999762076e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7741699999999128,
+                "system_cpu_s": 6.999999999379725e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300033,
+                "88": 3300000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300741
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122540938,
+                  893541216
+                ],
+                "88": [
+                  1122541589,
+                  919530590
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122541016,
+                  893541216
+                ],
+                "88": [
+                  1122541666,
+                  919530666
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.012987012987012988
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 4,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "current_ef49",
+              "qps": 1291.81687458197,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7801908794790506,
+              "thread_cpu_s": 0.7801568339999676,
+              "process_cpu_s": 0.7801602270000103,
+              "thread_cpu_wall_ratio": 0.9999563626287123,
+              "thread_rusage": {
+                "user_cpu_s": 0.7811979999999039,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7803400000000238,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122541413,
+                  893541221
+                ],
+                "88": [
+                  1122542063,
+                  919531056
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122541491,
+                  893541221
+                ],
+                "88": [
+                  1122542142,
+                  919531133
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.02531645569620253
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 5,
+              "order": [
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48"
+              ],
+              "case": "current_ef49",
+              "qps": 1281.7376187064895,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7787184789776802,
+              "thread_cpu_s": 0.7786448770000334,
+              "process_cpu_s": 0.7786482960000285,
+              "thread_cpu_wall_ratio": 0.9999054832013959,
+              "thread_rusage": {
+                "user_cpu_s": 0.7794280000000526,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7788170000000036,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 800000
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3300000
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122541880,
+                  893541222
+                ],
+                "88": [
+                  1122542530,
+                  919531516
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122541959,
+                  893541222
+                ],
+                "88": [
+                  1122542609,
+                  919531592
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.0379746835443038
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 6,
+              "order": [
+                "current_ef48",
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49"
+              ],
+              "case": "current_ef49",
+              "qps": 1284.1611275397283,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7676001470535994,
+              "thread_cpu_s": 0.7675071950000074,
+              "process_cpu_s": 0.767510970000103,
+              "thread_cpu_wall_ratio": 0.9998789056334229,
+              "thread_rusage": {
+                "user_cpu_s": 0.766913000000045,
+                "system_cpu_s": 0.0009879999999782285,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.766742000000022,
+                "system_cpu_s": 0.0009340000000008786,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 2
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3299852
+              },
+              "frequencies_after_khz": {
+                "24": 3300000,
+                "88": 3299923
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122542355,
+                  893541225
+                ],
+                "88": [
+                  1122543004,
+                  919531985
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122542432,
+                  893541225
+                ],
+                "88": [
+                  1122543081,
+                  919532060
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.025974025974025976
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 7,
+              "order": [
+                "current_ef49",
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48"
+              ],
+              "case": "current_ef49",
+              "qps": 1302.761605555259,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            },
+            {
+              "wall_s": 0.7785769123584032,
+              "thread_cpu_s": 0.7785044730001118,
+              "process_cpu_s": 0.7785080330002074,
+              "thread_cpu_wall_ratio": 0.9999069592777007,
+              "thread_rusage": {
+                "user_cpu_s": 0.7791959999999563,
+                "system_cpu_s": 7.80000000020209e-05,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_rusage": {
+                "user_cpu_s": 0.7786720000000287,
+                "system_cpu_s": 0.0,
+                "minor_faults": 0,
+                "major_faults": 0,
+                "voluntary_switches": 0,
+                "involuntary_switches": 1
+              },
+              "process_peak_rss_kib": 74826412,
+              "actual_cpu_before": 24,
+              "actual_cpu_after": 24,
+              "affinity_after": [
+                24
+              ],
+              "frequencies_before_khz": {
+                "24": 3300000,
+                "88": 3300042
+              },
+              "frequencies_after_khz": {
+                "24": 3299966,
+                "88": 3300705
+              },
+              "cpu_ticks_before": {
+                "24": [
+                  1122543463,
+                  893541238
+                ],
+                "88": [
+                  1122544111,
+                  919533071
+                ]
+              },
+              "cpu_ticks_after": {
+                "24": [
+                  1122543541,
+                  893541238
+                ],
+                "88": [
+                  1122544189,
+                  919533148
+                ]
+              },
+              "core_busy_fraction": 1.0,
+              "sibling_busy_fractions": {
+                "88": 0.01282051282051282
+              },
+              "rejection_reasons": [],
+              "clean": true,
+              "repeat": 8,
+              "order": [
+                "initial_ef48",
+                "initial_ef49",
+                "current_ef48",
+                "current_ef49"
+              ],
+              "case": "current_ef49",
+              "qps": 1284.3946232246724,
+              "labels_sha256": "f9d2a42e2c70db462d195905934b11c293ba1399a36e197b41c5fa4825652df9",
+              "distances_sha256": "0a26d6396af918eed629efcd68c0df14f175c80aaec0177cf7f31937334f14de",
+              "ef": 49,
+              "recall": 0.9522,
+              "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+              "ground_truth_sha256": "7edf663f95dbd9cf945bf2ec046d8beed0414d637a125694f4874076f44d6d75"
+            }
+          ]
+        },
+        "accepted_rounds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          8
+        ],
+        "clean": true,
+        "median_qps": {
+          "initial_ef48": 1310.5719079341143,
+          "initial_ef49": 1284.3169088871914,
+          "current_ef48": 1313.6152130608957,
+          "current_ef49": 1284.3946232246724
+        }
+      }
+    ],
+    "accepted_attempt": 0,
+    "limits": {
+      "sibling_busy_max": 0.05,
+      "thread_cpu_wall_min": 0.98,
+      "frequency_khz": [
+        3267000,
+        3333000
+      ],
+      "major_faults_max": 0,
+      "clean_rounds": 7,
+      "max_rounds_per_core": 21,
+      "max_cores": 3
+    },
+    "numa_before": {
+      "anonymous_mapping_kib": {
+        "N0": 69606908
+      },
+      "anonymous_policies_kib": {
+        "bind:0": 69606908
+      },
+      "file_mapping_kib": {
+        "N0": 22936,
+        "N1": 5041076
+      },
+      "policies_kib": {
+        "bind:0": 74670920
+      },
+      "default_memory_policy": {
+        "mode": 2,
+        "nodes": [
+          0
+        ]
+      },
+      "thread_affinities": {
+        "1592102": [
+          8
+        ]
+      },
+      "threads_exited_during_snapshot": []
+    },
+    "summary": {
+      "initial": {
+        "target_recall": 0.95,
+        "qps95": 1307.421308048484,
+        "observed_qps": 1284.3169088871914,
+        "selected_ef": 49,
+        "selected_recall": 0.9522,
+        "actual_curve": [
+          [
+            48,
+            0.9497,
+            1310.5719079341143
+          ],
+          [
+            49,
+            0.9522,
+            1284.3169088871914
+          ]
+        ],
+        "recall_status": "target95",
+        "method": "adjacent_integer_ef_linear_interpolation"
+      },
+      "current": {
+        "target_recall": 0.95,
+        "qps95": 1310.1087422805494,
+        "observed_qps": 1284.3946232246724,
+        "selected_ef": 49,
+        "selected_recall": 0.9522,
+        "actual_curve": [
+          [
+            48,
+            0.9497,
+            1313.6152130608957
+          ],
+          [
+            49,
+            0.9522,
+            1284.3946232246724
+          ]
+        ],
+        "recall_status": "target95",
+        "method": "adjacent_integer_ef_linear_interpolation"
+      }
+    },
+    "official_timing": true,
+    "target_recall": 0.95,
+    "qps95_change_fraction": 0.0020555227419971622,
+    "numa_after": {
+      "anonymous_mapping_kib": {
+        "N0": 69607108
+      },
+      "anonymous_policies_kib": {
+        "bind:0": 69607108
+      },
+      "file_mapping_kib": {
+        "N0": 22936,
+        "N1": 5041076
+      },
+      "policies_kib": {
+        "bind:0": 74671120
+      },
+      "default_memory_policy": {
+        "mode": 2,
+        "nodes": [
+          0
+        ]
+      },
+      "thread_affinities": {
+        "1592102": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ]
+      },
+      "threads_exited_during_snapshot": []
+    }
+  },
+  "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75"
+}

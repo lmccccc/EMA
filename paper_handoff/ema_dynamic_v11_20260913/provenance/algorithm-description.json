@@ -1,0 +1,682 @@
+{
+  "description": "Retained V11 source-grounded algorithm prose and pseudocode.",
+  "native_sha256": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+  "document": "DELETE_STRATEGY.md",
+  "document_sha256": "54062ab1791c3fcb9a01aa6e5b850423f512355304ecdab56da8c16468eb11fe",
+  "initial_draft_sha256": "1f462066b1efc6d61a8c029f3b4bdb7b452e58e1ac029275ff2edcfd697bb7a0",
+  "final_document_adaptations": [
+    "Folder-relative citation paths and final document title.",
+    "Explicit external-serialization usage assumption, not an enforced global API lock.",
+    "Verified paper point-update orchestration and diagnostic-getter citations."
+  ],
+  "pseudocode_procedures": [
+    "CLEAN_OLD_MARKER",
+    "RECOVER_RECORDS",
+    "BATCH_DELETE",
+    "DELETE_POINT",
+    "ROW_TRANSACTION"
+  ],
+  "validated_citation_ranges": [
+    {
+      "path": "source_reference/hnswlib/python_bindings/bindings.cpp",
+      "start": 1496,
+      "end": 1551
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7262,
+      "end": 7292
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7314,
+      "end": 7354
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7036,
+      "end": 7188
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7314,
+      "end": 7354
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/parallel_for.h",
+      "start": 25,
+      "end": 54
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/space_l2.h",
+      "start": 6,
+      "end": 19
+    },
+    {
+      "path": "source_reference/hnswlib/python_bindings/bindings.cpp",
+      "start": 97,
+      "end": 105
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5787,
+      "end": 5793
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/deletion_cache.h",
+      "start": 10,
+      "end": 79
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 637,
+      "end": 645
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 3540,
+      "end": 3563
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5365,
+      "end": 5375
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5920,
+      "end": 5940
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6325,
+      "end": 6338
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5302,
+      "end": 5317
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5337,
+      "end": 5358
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6307,
+      "end": 6334
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6464,
+      "end": 6481
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 624,
+      "end": 628
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 1098,
+      "end": 1186
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 1326,
+      "end": 1487
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6021,
+      "end": 6068
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 1109,
+      "end": 1176
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 1371,
+      "end": 1409
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 1458,
+      "end": 1482
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6027,
+      "end": 6068
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5724,
+      "end": 5784
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7069,
+      "end": 7080
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6681,
+      "end": 6704
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7082,
+      "end": 7120
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6555,
+      "end": 6570
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6694,
+      "end": 6748
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7109,
+      "end": 7154
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 75,
+      "end": 76
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 616,
+      "end": 626
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6299,
+      "end": 6313
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 3679,
+      "end": 3719
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 502,
+      "end": 520
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 3598,
+      "end": 3653
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 3721,
+      "end": 3740
+    },
+    {
+      "path": "source_reference/hnswlib/python_bindings/bindings.cpp",
+      "start": 278,
+      "end": 286
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 3701,
+      "end": 3740
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6284,
+      "end": 6313
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6285,
+      "end": 6297
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6325,
+      "end": 6340
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6371,
+      "end": 6397
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6648,
+      "end": 6670
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7136,
+      "end": 7140
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5838,
+      "end": 5874
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5876,
+      "end": 5925
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5924,
+      "end": 5944
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 1399,
+      "end": 1409
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5830,
+      "end": 5837
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5845,
+      "end": 5851
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5885,
+      "end": 5891
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6842,
+      "end": 6847
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7071,
+      "end": 7079
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6315,
+      "end": 6353
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6176,
+      "end": 6196
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6230,
+      "end": 6269
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6355,
+      "end": 6397
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6401,
+      "end": 6431
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6399,
+      "end": 6440
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5924,
+      "end": 5944
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6329,
+      "end": 6334
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6230,
+      "end": 6269
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6408,
+      "end": 6440
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7036,
+      "end": 7188
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7314,
+      "end": 7354
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6071,
+      "end": 6173
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6555,
+      "end": 6570
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7112,
+      "end": 7154
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7295,
+      "end": 7338
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6648,
+      "end": 6757
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6760,
+      "end": 6855
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/parallel_for.h",
+      "start": 11,
+      "end": 54
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7036,
+      "end": 7051
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7340,
+      "end": 7349
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/deletion_publication_gate.h",
+      "start": 3,
+      "end": 17
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6572,
+      "end": 6598
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6808,
+      "end": 6854
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7039,
+      "end": 7046
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6494,
+      "end": 6522
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6572,
+      "end": 6611
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7157,
+      "end": 7179
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6627,
+      "end": 6645
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6715,
+      "end": 6732
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6780,
+      "end": 6798
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6826,
+      "end": 6854
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6485,
+      "end": 6492
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6613,
+      "end": 6625
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6946,
+      "end": 7007
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6659,
+      "end": 6666
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6858,
+      "end": 6943
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6967,
+      "end": 7032
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7110,
+      "end": 7113
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7181,
+      "end": 7188
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7205,
+      "end": 7260
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7345,
+      "end": 7353
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5749,
+      "end": 5815
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6198,
+      "end": 6271
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6408,
+      "end": 6440
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/deletion_cache.h",
+      "start": 10,
+      "end": 79
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5924,
+      "end": 5944
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6381,
+      "end": 6397
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6407,
+      "end": 6422
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6555,
+      "end": 6570
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6689,
+      "end": 6732
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7190,
+      "end": 7260
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7262,
+      "end": 7292
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 8461,
+      "end": 8477
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6021,
+      "end": 6068
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5924,
+      "end": 5944
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6946,
+      "end": 7033
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7223,
+      "end": 7260
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5658,
+      "end": 5692
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5787,
+      "end": 5793
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 5928,
+      "end": 5928
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6419,
+      "end": 6419
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6448,
+      "end": 6448
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 6993,
+      "end": 7031
+    },
+    {
+      "path": "source_reference/hnswlib/python_bindings/bindings.cpp",
+      "start": 1513,
+      "end": 1550
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7314,
+      "end": 7354
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "start": 7702,
+      "end": 7724
+    },
+    {
+      "path": "source_reference/hnswlib/python_bindings/bindings.cpp",
+      "start": 1616,
+      "end": 1663
+    },
+    {
+      "path": "source_reference/hnswlib/python_bindings/bindings.cpp",
+      "start": 1670,
+      "end": 1734
+    },
+    {
+      "path": "source_reference/hnswlib/python_bindings/bindings.cpp",
+      "start": 2760,
+      "end": 2773
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/runner.py",
+      "start": 351,
+      "end": 388
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/protocol.py",
+      "start": 143,
+      "end": 220
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/runtime.py",
+      "start": 526,
+      "end": 550
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/runner.py",
+      "start": 351,
+      "end": 388
+    }
+  ],
+  "source_or_experiment_changed": false
+}

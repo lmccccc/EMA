@@ -1,0 +1,22 @@
+{
+  "points": [
+    {
+      "ef": 10,
+      "recall": 0.8762,
+      "labels_sha256": "a00995548a4b2698ab4a2d444393f5157757e00d86386694d0ae86cb638eee77",
+      "distances_sha256": "d7eb63de7965a2fda476e63bd5b2341ff02e1236912052a908cd5f547f827235"
+    },
+    {
+      "ef": 11,
+      "recall": 0.8923,
+      "labels_sha256": "cfea1f38adf29faf650780321a355b8d39c9b309d163474a371eb8781e701fe2",
+      "distances_sha256": "08c25377a1eb4cd9ce3d469810fd8e61bd7aa7c3c8c2a005edd0d8d7c9392184"
+    },
+    {
+      "ef": 12,
+      "recall": 0.904,
+      "labels_sha256": "0d97efdf528075386784865a690c998db9e6090d6d61acc88b445df3c977b729",
+      "distances_sha256": "e7bf02c309424ae2ea81cc04bf1450dc3a1cc9029ed96dea715dd9b311295970"
+    }
+  ]
+}

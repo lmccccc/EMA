@@ -1,0 +1,64 @@
+{
+  "phase": "deleted_before_optional_add",
+  "counters": {
+    "requested": 1000000,
+    "marked": 1000000,
+    "search_candidates": 303584700,
+    "search_expanded": 305739390,
+    "incoming_edges_repaired": 42642273,
+    "outgoing_edges_added": 87387677,
+    "rewired_nodes": 73166388,
+    "pruned_edges": 92383778,
+    "scrubbed_edges": 503157,
+    "candidate_sources": 298998576,
+    "empty_marker_rows": 59238571,
+    "matched_edges": 237471845,
+    "cleared_bits": 21721808,
+    "support_checks": 7718697212,
+    "parallel_preparations": 0,
+    "reused_preparations": 0,
+    "recomputed_preparations": 0,
+    "parallel_points": 1000000,
+    "max_active_points": 32,
+    "parallel_deletions": 1000000,
+    "peak_parallel_deletions": 32,
+    "incoming_handoffs": 64721,
+    "distance_cache_hits": 3984538416,
+    "distance_cache_misses": 18065731350,
+    "rng_witness_reuses": 14374781,
+    "cleanup_bound_reused_rows": 298886648,
+    "cleanup_bound_stale_rows": 111928,
+    "deferred_incoming_handoffs": 11950,
+    "deferred_incoming_repairs": 11950,
+    "deferred_retired_source_repairs": 0,
+    "ignored_completed_ghosts": 11158542,
+    "deferred_overlapping_edges": 11950,
+    "deferred_pending_requests": 0,
+    "deferred_retired_source_requests": 0,
+    "deferred_intermediate_rows": 0,
+    "publication_retired_targets": 123
+  },
+  "phases": {
+    "delete": {
+      "wall_s": 367.72897203452885,
+      "thread_cpu_s": 0.8589563870000347,
+      "process_cpu_s": 7041.045886282998,
+      "process_rusage": {
+        "user_cpu_s": 7004.879795000001,
+        "system_cpu_s": 36.16612400000122,
+        "minor_faults": 39148,
+        "major_faults": 0,
+        "voluntary_switches": 1080625,
+        "involuntary_switches": 523538
+      },
+      "thread_rusage": {
+        "user_cpu_s": 0.7854079999999612,
+        "system_cpu_s": 0.07358399999998255,
+        "minor_faults": 39092,
+        "major_faults": 0,
+        "voluntary_switches": 8,
+        "involuntary_switches": 26
+      }
+    }
+  }
+}

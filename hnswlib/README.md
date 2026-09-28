@@ -1,6 +1,18 @@
 # Hnswlib - fast approximate nearest neighbor search
 Header-only C++ HNSW implementation with python bindings, insertions and updates.
 
+This EMA fork additionally implements synchronous in-place `delete_items`.
+Deletion and insertion share `hnswlib/parallel_for.h`: each dynamically scheduled
+deletion task completes a point's search, graph repair, and Marker work. Source
+rows are locked through read/modify/write, overlapping retirements exchange
+incoming repair requests, and batch-end scrubbing finishes before return.
+The one-thread path preserves ordered deletion. Native `ef_construction` is the
+sole deletion width; replacements use the first 50 result positions and at most
+three nearest candidates per endpoint. Per-point immutable masks and a bounded,
+lazy ordered-distance cache are reused without reducing those budgets.
+See [the EMA deletion documentation](../README.md#synchronous-in-place-deletion)
+for concurrency, Marker ownership, diagnostics, and persistence guarantees.
+
 **NEWS:**
 
 **version 0.8.0** 

@@ -10,15 +10,12 @@ dataset="${dataset:-Redcaps_4M}"
 OUTDIR="logs/min_deg_sweep"
 mkdir -p "$OUTDIR"
 
-MD_VALS=("${MD_VALS:-0 5 8 15 20 30 40 80}")
-if [ -z "${MD_VALS:-}" ]; then
-    MD_VALS=(0 5 8 15 20 30 40 80)
-fi
+read -r -a MD_VALUES <<< "${MD_VALS:-0 5 8 15 20 30 40 80}"
 
 # Build once.
 dataset="$dataset" ./build_index.sh
 
-for md in "${MD_VALS[@]}"; do
+for md in "${MD_VALUES[@]}"; do
     echo "==== min_deg=$md ===="
     for entry in "${EMA_SEL6[@]}"; do
         IFS='|' read -r target name spec <<< "$entry"

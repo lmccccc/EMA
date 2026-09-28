@@ -1,0 +1,64 @@
+{
+  "phase": "deleted_before_optional_add",
+  "counters": {
+    "requested": 1000000,
+    "marked": 1000000,
+    "search_candidates": 305207100,
+    "search_expanded": 307542487,
+    "incoming_edges_repaired": 46980834,
+    "outgoing_edges_added": 90024637,
+    "rewired_nodes": 76888859,
+    "pruned_edges": 81799058,
+    "scrubbed_edges": 444573,
+    "candidate_sources": 298998311,
+    "empty_marker_rows": 68026731,
+    "matched_edges": 229278178,
+    "cleared_bits": 19709839,
+    "support_checks": 5913182099,
+    "parallel_preparations": 0,
+    "reused_preparations": 0,
+    "recomputed_preparations": 0,
+    "parallel_points": 1000000,
+    "max_active_points": 32,
+    "parallel_deletions": 1000000,
+    "peak_parallel_deletions": 32,
+    "incoming_handoffs": 88510,
+    "distance_cache_hits": 3765816210,
+    "distance_cache_misses": 15727882804,
+    "rng_witness_reuses": 12809590,
+    "cleanup_bound_reused_rows": 298857428,
+    "cleanup_bound_stale_rows": 140883,
+    "deferred_incoming_handoffs": 17360,
+    "deferred_incoming_repairs": 17360,
+    "deferred_retired_source_repairs": 0,
+    "ignored_completed_ghosts": 13124955,
+    "deferred_overlapping_edges": 17360,
+    "deferred_pending_requests": 0,
+    "deferred_retired_source_requests": 0,
+    "deferred_intermediate_rows": 0,
+    "publication_retired_targets": 120
+  },
+  "phases": {
+    "delete": {
+      "wall_s": 343.4553703516722,
+      "thread_cpu_s": 0.19349524600011136,
+      "process_cpu_s": 6659.772280589008,
+      "process_rusage": {
+        "user_cpu_s": 6624.049353000009,
+        "system_cpu_s": 35.72296599999936,
+        "minor_faults": 1903,
+        "major_faults": 0,
+        "voluntary_switches": 1174809,
+        "involuntary_switches": 419147
+      },
+      "thread_rusage": {
+        "user_cpu_s": 0.19248100000004342,
+        "system_cpu_s": 0.0010660000000370928,
+        "minor_faults": 28,
+        "major_faults": 0,
+        "voluntary_switches": 6,
+        "involuntary_switches": 2
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "points": [
+    {
+      "ef": 10,
+      "recall": 0.8395,
+      "labels_sha256": "263f65a496deb1a78cdca0785e971bbc658aee9ee43b0cd9391b395f8b5987d8",
+      "distances_sha256": "a5bc7612e78fbd1637b3e199dcd209116a4abaa1fd52b5c482fd7e19a5c3bee4"
+    },
+    {
+      "ef": 11,
+      "recall": 0.8539,
+      "labels_sha256": "b61553bdd0f1523156248acc3727f4b1d352f78f91312b04a2e7b137614266bc",
+      "distances_sha256": "bbf5b4783bfd9e42d56cdbad8368935866a73ea7f6d64d3f5dc805ac92f718e1"
+    },
+    {
+      "ef": 12,
+      "recall": 0.8682,
+      "labels_sha256": "7e169c60ad74f01416f91a7c791283101283636bced6c28c5f2c61162fd61be2",
+      "distances_sha256": "be1eb533e8c622d45207cd0777c56e99cdee4351c1f2aa91052b689b0f3c3a9d"
+    },
+    {
+      "ef": 13,
+      "recall": 0.8801,
+      "labels_sha256": "9f188d78970dfc469cc8578d9eb94aa7ae2b34337fd2330b7ea677ddba5e7980",
+      "distances_sha256": "c9d8e077b1a9afd736bdc7d3b5d1ab9603cf0d110793e6833fb59fac18ddcd06"
+    },
+    {
+      "ef": 14,
+      "recall": 0.89,
+      "labels_sha256": "3970163e0af91b1f60cd3ea05a91eaffcaa34b1d9149cf831659b53f76873f18",
+      "distances_sha256": "f43f380172f6c2d3020b6e701ccd03c65253ce01c0b093d454374d948b2603bd"
+    },
+    {
+      "ef": 15,
+      "recall": 0.8989,
+      "labels_sha256": "474b0d33560e4cb39a4272c939b1a0fcf7fab6d9c4f0fa67d0e98df782f767be",
+      "distances_sha256": "6c6c1222bed0d29e0eb237b50f5015ff763a1f9b507b53a176bc4c1e2cbcb1e2"
+    },
+    {
+      "ef": 16,
+      "recall": 0.9066,
+      "labels_sha256": "54e083ebcd26fbc1fd44b19eaf889e696a2267e5a13f876954d446a7084c543c",
+      "distances_sha256": "38219b6876589649666155dee7eba5c506373dff32fe6a0d8208d1e5d92cfea1"
+    }
+  ]
+}

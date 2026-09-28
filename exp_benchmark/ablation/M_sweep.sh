@@ -11,12 +11,9 @@ dataset="${dataset:-Redcaps_4M}"
 OUTDIR="logs/M_sweep"
 mkdir -p "$OUTDIR"
 
-M_VALS=("${M_VALS:-16 32 40 64}")
-if [ -z "${M_VALS:-}" ]; then
-    M_VALS=(16 32 40 64)
-fi
+read -r -a M_VALUES <<< "${M_VALS:-16 32 40 64}"
 
-for Mv in "${M_VALS[@]}"; do
+for Mv in "${M_VALUES[@]}"; do
     echo "==== M=$Mv ===="
     dataset="$dataset" M="$Mv" ./build_index.sh
 

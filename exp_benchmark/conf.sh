@@ -27,7 +27,7 @@ threads="${threads:-32}"
 ft_bits="${ft_bits:-128}"
 edge_level_ft="${edge_level_ft:-true}"
 use_ft="${use_ft:-true}"
-ft_routing_min_deg="${ft_routing_min_deg:-8}"
+ft_routing_min_deg="${ft_routing_min_deg:-16}"
 
 # Attribute generation defaults (used by attr_generator.sh).
 categorical_attr_max_cardinality="${categorical_attr_max_cardinality:-21}"
@@ -110,6 +110,10 @@ hashann_root="${index_root}/hashann/"
 hashann_index_root="${hashann_root}index/"
 edge_ft_suffix=""
 [ "$edge_level_ft" = "true" ] && edge_ft_suffix="_edgeFT"
-hashann_index_file="${hashann_index_root}index_${M}_${ef_construction}_${attr_index_type}_${ft_bits}${edge_ft_suffix}"
+numeric_marker_suffix=""
+case "$attr_type" in
+    *0*) numeric_marker_suffix="_nb2" ;;
+esac
+hashann_index_file="${hashann_index_root}index_${M}_${ef_construction}_${attr_index_type}_${ft_bits}${edge_ft_suffix}${numeric_marker_suffix}_mo2_do1"
 
 mkdir -p "$hashann_index_root" "$label_root"

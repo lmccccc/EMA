@@ -1,0 +1,64 @@
+{
+  "phase": "deleted_before_optional_add",
+  "counters": {
+    "requested": 1000000,
+    "marked": 1000000,
+    "search_candidates": 305055900,
+    "search_expanded": 307361099,
+    "incoming_edges_repaired": 46539962,
+    "outgoing_edges_added": 89896589,
+    "rewired_nodes": 76425034,
+    "pruned_edges": 81823480,
+    "scrubbed_edges": 431002,
+    "candidate_sources": 298998310,
+    "empty_marker_rows": 68931314,
+    "matched_edges": 228389375,
+    "cleared_bits": 19403891,
+    "support_checks": 5705435078,
+    "parallel_preparations": 0,
+    "reused_preparations": 0,
+    "recomputed_preparations": 0,
+    "parallel_points": 1000000,
+    "max_active_points": 32,
+    "parallel_deletions": 1000000,
+    "peak_parallel_deletions": 32,
+    "incoming_handoffs": 86512,
+    "distance_cache_hits": 3712409842,
+    "distance_cache_misses": 15445692674,
+    "rng_witness_reuses": 12765181,
+    "cleanup_bound_reused_rows": 298856943,
+    "cleanup_bound_stale_rows": 141367,
+    "deferred_incoming_handoffs": 16855,
+    "deferred_incoming_repairs": 16855,
+    "deferred_retired_source_repairs": 0,
+    "ignored_completed_ghosts": 12738351,
+    "deferred_overlapping_edges": 16852,
+    "deferred_pending_requests": 3,
+    "deferred_retired_source_requests": 0,
+    "deferred_intermediate_rows": 0,
+    "publication_retired_targets": 106
+  },
+  "phases": {
+    "delete": {
+      "wall_s": 341.1382024567574,
+      "thread_cpu_s": 0.1876933739999913,
+      "process_cpu_s": 6613.627834159997,
+      "process_rusage": {
+        "user_cpu_s": 6577.879285000003,
+        "system_cpu_s": 35.74858300000051,
+        "minor_faults": 1253,
+        "major_faults": 0,
+        "voluntary_switches": 1151918,
+        "involuntary_switches": 402785
+      },
+      "thread_rusage": {
+        "user_cpu_s": 0.186294000000089,
+        "system_cpu_s": 0.0014360000000124273,
+        "minor_faults": 28,
+        "major_faults": 0,
+        "voluntary_switches": 4,
+        "involuntary_switches": 3
+      }
+    }
+  }
+}

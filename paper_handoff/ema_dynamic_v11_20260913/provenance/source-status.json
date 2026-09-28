@@ -1,0 +1,125 @@
+{
+  "native_sha256": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+  "repository_branch": "edge-ft-128bit-recovery",
+  "repository_HEAD": "28e07e33cb2dd4e7c173ca1030e6c5bbd7f4f7bb",
+  "uncommitted_worktree_status": [
+    " D exp_benchmark/dynamic/attr_update.py",
+    " D exp_benchmark/dynamic/attr_update.sh",
+    " M exp_benchmark/dynamic/delete.py",
+    " M exp_benchmark/dynamic/delete.sh",
+    " D exp_benchmark/dynamic/delete_patch.py",
+    " D exp_benchmark/dynamic/delete_patch.sh",
+    " M exp_benchmark/dynamic/incremental.py",
+    " M exp_benchmark/dynamic/insert.sh",
+    " M exp_benchmark/dynamic/point_update.py",
+    " M exp_benchmark/dynamic/point_update.sh",
+    " M exp_benchmark/dynamic/point_update_build.sh",
+    " D exp_benchmark/dynamic/update_common.py",
+    " M hnswlib/hnswlib/hnswalg.h",
+    " M hnswlib/python_bindings/bindings.cpp",
+    " M hnswlib/setup.py",
+    "?? exp_benchmark/dynamic/README.md",
+    "?? exp_benchmark/dynamic/__init__.py",
+    "?? exp_benchmark/dynamic/aggregate.py",
+    "?? exp_benchmark/dynamic/canary.py",
+    "?? exp_benchmark/dynamic/gt.py",
+    "?? exp_benchmark/dynamic/measurement.py",
+    "?? exp_benchmark/dynamic/pipeline.py",
+    "?? exp_benchmark/dynamic/protocol.py",
+    "?? exp_benchmark/dynamic/reproduce.sh",
+    "?? exp_benchmark/dynamic/runner.py",
+    "?? exp_benchmark/dynamic/runtime.py",
+    "?? exp_benchmark/tests/.gitignore",
+    "?? exp_benchmark/tests/test_dynamic_pipeline.py",
+    "?? hnswlib/hnswlib/deletion_cache.h",
+    "?? hnswlib/hnswlib/deletion_publication_gate.h",
+    "?? hnswlib/hnswlib/parallel_for.h"
+  ],
+  "source_reference": [
+    {
+      "path": "source_reference/hnswlib/hnswlib/hnswalg.h",
+      "sha256": "7de1d2edcaee93c098712db21f9ccd797cf4620e8386798fa2bef3842e9cf9b2"
+    },
+    {
+      "path": "source_reference/hnswlib/python_bindings/bindings.cpp",
+      "sha256": "4b208544cab570e4e79eb53dac0a569d1f1df938d637825402195b03b4d14a20"
+    },
+    {
+      "path": "source_reference/hnswlib/setup.py",
+      "sha256": "080a1a9f0d9ee1dd561fe05d572c79c47924112b09305e961b4340c307e0e669"
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/parallel_for.h",
+      "sha256": "f2fe12aa1d1072933473444cdec8706fce82f75cafee4fb710aec5d0c5f6125f"
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/deletion_cache.h",
+      "sha256": "53591c83fb62a0eb42a7348ca946a5df0325e4e7e357f8ec6d0dca00005ad6bb"
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/deletion_publication_gate.h",
+      "sha256": "3dd4b5eaf205163f624d49abcd6bc244dcd321d73269272fbad9e676c7c1a325"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/__init__.py",
+      "sha256": "1c9a653414ba3cf343acf17fa22dbc02b75a5ef7c984969b9e5a178f6964e5cd"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/aggregate.py",
+      "sha256": "1a702ace5a272dd4e73988a5f4e814de7c8f48a838c4455b0531f49fddfb012d"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/canary.py",
+      "sha256": "3994495492fe5d1bedcf93713a1a0aafd58acf3433028231eccfd9fdbda43ae1"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/delete.py",
+      "sha256": "e37f4c1668a281b77403cc55c3e200fc8f98684ed9e5137856e9b5619e509dc1"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/gt.py",
+      "sha256": "5072f38d0fa42299e4df91ba728624e920584985a33db69332328fa91fdcc6f3"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/incremental.py",
+      "sha256": "9ec57239f928998ae9bc035b4fdf2aa02f487ee3fbe24869d23baf361cb5ac83"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/measurement.py",
+      "sha256": "8403c3e432515721200d41b550d3125e88af8ca9e5770b9b6f71cd566acbf027"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/pipeline.py",
+      "sha256": "8f246ce0ad52dff374f1c8a033f500e8706f089feac7558c706263faa75b6492"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/point_update.py",
+      "sha256": "31f3b9bfdc959a1e6aa15fa5c4664964a840cfad4fd17ccfe39898f238705513"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/protocol.py",
+      "sha256": "936a674ae5a24a2911d8cab7332d1e6bbdee7b568ae12989fa85d39ad312ae19"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/runner.py",
+      "sha256": "e33752f3eadde739c8ff9ef191df7349b1f6c27eac3d87516dfebeb946f955f6"
+    },
+    {
+      "path": "source_reference/exp_benchmark/dynamic/runtime.py",
+      "sha256": "40b1505fd71b2ff05716d00d67b020c85f23dd008420249b7fc03c0a47a31df7"
+    },
+    {
+      "path": "source_reference/exp_benchmark/aggregate.py",
+      "sha256": "3a7d785365fd4d44ececfcc7254e5b0c62d43005f30584658d3cdb992008611d"
+    },
+    {
+      "path": "source_reference/tests/hashann.py",
+      "sha256": "ad4b66aea0977f44aa81bc4ad4a790920c2fdf4e9543e523a5304e4d1f9583f0"
+    },
+    {
+      "path": "source_reference/hnswlib/hnswlib/space_l2.h",
+      "sha256": "c599d024657896412250b4fde1a95e39f8bc55cccd263f36c8948fa35779edf1"
+    }
+  ],
+  "note": "Reference subset matching the experimental native/pipeline, not a complete buildable distribution. HEAD alone does not identify V11."
+}

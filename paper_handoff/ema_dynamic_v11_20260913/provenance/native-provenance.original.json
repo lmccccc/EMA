@@ -1,0 +1,35 @@
+{
+  "role": "point-parallel-deletion-with-shared-publication",
+  "native_sha256": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+  "header_sha256": "7de1d2edcaee93c098712db21f9ccd797cf4620e8386798fa2bef3842e9cf9b2",
+  "bindings_sha256": "4b208544cab570e4e79eb53dac0a569d1f1df938d637825402195b03b4d14a20",
+  "setup_sha256": "080a1a9f0d9ee1dd561fe05d572c79c47924112b09305e961b4340c307e0e669",
+  "auxiliary_source_sha256": {
+    "hnswlib/parallel_for.h": "f2fe12aa1d1072933473444cdec8706fce82f75cafee4fb710aec5d0c5f6125f",
+    "hnswlib/deletion_cache.h": "53591c83fb62a0eb42a7348ca946a5df0325e4e7e357f8ec6d0dca00005ad6bb",
+    "hnswlib/deletion_publication_gate.h": "3dd4b5eaf205163f624d49abcd6bc244dcd321d73269272fbad9e676c7c1a325"
+  },
+  "numeric_marker_version": 2,
+  "marker_owner_version": 2,
+  "distance_order_version": 1,
+  "candidate_order": "vector-distance-only-v1",
+  "node_format_version": 9,
+  "edge_format_version": 10,
+  "serialization_version": 4,
+  "deletion_execution": "point-parallel-local-row-rebase-v1",
+  "changes_from_v10": [
+    "Independent source-row publishers take a shared C++14 standard publication gate; retirement announcement/MARK takes it exclusively.",
+    "Registry bookkeeping retains its separate mutex. Publishers release the shared gate before registry or queue work.",
+    "No proposal fence, causal boundary, Marker-transfer rule, candidate budget, geometry, serial behavior or experiment parameter changes."
+  ],
+  "compatibility": "Pre-C++14 aliases retain standard mutex/unique_lock serialization. Gate-only C++11/C++14 controls pass; full native C++11 has independently documented pre-existing generic-lambda failures.",
+  "progress_scope": "Finite synchronous point/deferred work and normal scheduler progress, not rwlock fairness or a bounded retirement latency promise.",
+  "handoff_probe_sha256": "379450810b55a95f18daa8afaaa9beff53098827797651ab542f7311f4f501c3",
+  "gate_probe_sha256": "b9f64270cab3bea6f1351e96a0c6ac7e35cd3b8658206741f734857dc30ac169",
+  "gate_compat_probe_sha256": "f384dffe292dbfd589c231ecc3787c1dd973647970068479596753dde96366b1",
+  "prior_frozen_candidate_native_sha256": "dd55322666eff6e7973f66b5a48216141995711d615b00c35f2a404e4e494ea1",
+  "source_review_pending_at_freeze": true,
+  "performance_qualified_at_freeze": false,
+  "full_replays_started_at_freeze": false,
+  "old_results_deleted_at_freeze": false
+}

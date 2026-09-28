@@ -1,0 +1,34 @@
+{
+  "points": [
+    {
+      "ef": 10,
+      "recall": 0.8565,
+      "labels_sha256": "852ad0e15df0b3a98eb7bb3d3de60cc0493005f4a3c363e096a116b6b7fe42c9",
+      "distances_sha256": "27494ed4a056f9e67f42d42e4fbe389eb4c6624f3e65f5dc573a4f2f03dcec6c"
+    },
+    {
+      "ef": 11,
+      "recall": 0.8683,
+      "labels_sha256": "13ca1a725d3ab404cfb1e265392c88dbc3048141e5786ba7b0e02114e4ab2ecf",
+      "distances_sha256": "70fd60363b7ebb5e7ddc3cbdbb6410efef5fee066e2a99b1708bf711788fdd22"
+    },
+    {
+      "ef": 12,
+      "recall": 0.8824,
+      "labels_sha256": "b2708a1b90578874c9c26f27d2f744c9ca981639af218f3948c8d9dad93a78ad",
+      "distances_sha256": "4dd63e65c7789873bb030fc54b8eb156589d641d14e96d5f14391bf0647df265"
+    },
+    {
+      "ef": 13,
+      "recall": 0.8925,
+      "labels_sha256": "53e2cd3f4f1f4ac7a18f60e61edfcbfb718d9ee1824264d571fa04875cc7dc49",
+      "distances_sha256": "7db5d2bb623b1eb26eebc0f03c68b6c555f294de02b06726c22432441bd9f2f8"
+    },
+    {
+      "ef": 14,
+      "recall": 0.9024,
+      "labels_sha256": "2db9b801bcf886e75c97be58d9d372ea27f874c916a1347d54b952ddeecc6148",
+      "distances_sha256": "fd938e7039cd23eec7ed052293d1984d673a4165d596715203e36cfa7c74c032"
+    }
+  ]
+}

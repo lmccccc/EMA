@@ -2,7 +2,7 @@
 # ft_fpr.sh — measure EMA / FT false-positive rate at multiple selectivities.
 #
 # Defaults to Redcaps_4M with the 128-bit node-FT index
-# (`index_40_300_arbi_0_1_random_128`). Override via env vars below.
+# (`index_40_300_arbi_0_1_random_128_nb2_mo2_do1`). Override via env vars below.
 #
 # Usage:
 #   bash exp_benchmark/ft_fpr.sh

@@ -1,0 +1,10 @@
+{
+  "points": [
+    {
+      "ef": 10,
+      "recall": 0.9023,
+      "labels_sha256": "ad73d378e19c6ff0ae7858ecd293bb2a44e246334a4c1e83cd56552c7ea4e6f0",
+      "distances_sha256": "713caa21a742868e651aaaa1d42c479b1bfcab8dae35be3faebc8073bc37b11b"
+    }
+  ]
+}

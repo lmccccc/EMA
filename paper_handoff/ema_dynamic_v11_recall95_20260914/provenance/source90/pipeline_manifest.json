@@ -1,0 +1,389 @@
+{
+  "schema": "sift10m-mixed-dnf-dynamic-rebuild-v4",
+  "config": {
+    "protocol": "sift10m-mixed-dnf-dynamic-rebuild-v4",
+    "mode": "official",
+    "capacity": 10000000,
+    "initial": 5000000,
+    "step": 1000000,
+    "stage_progress": [
+      0,
+      1000000,
+      2000000,
+      3000000,
+      4000000,
+      5000000
+    ],
+    "query": {
+      "space": "l2",
+      "dimension": 128,
+      "query_count": 1000,
+      "k": 10,
+      "attr_type": [
+        0,
+        1
+      ],
+      "M": 40,
+      "ef_construction": 300,
+      "ft_bits_per_attribute": 128,
+      "edge_ft": true,
+      "thresholds": [
+        0.0001,
+        0.0001,
+        0.0001
+      ],
+      "ef_top": 1,
+      "ft_flag": true,
+      "ft_routing_flag": true,
+      "ft_routing_min_deg": 8,
+      "ft_routing_backfill_tail": false,
+      "threads_query": 1,
+      "target_recall": 0.9,
+      "api": "hybrid_knn_query_dnf",
+      "predicate": "PER QUERY: ((inclusive numeric range AND label9) OR label12)"
+    },
+    "operations": [
+      "insert",
+      "delete",
+      "point_update"
+    ],
+    "query_implementation": "bounded-floor-buckets-inclusive-ranges-v2",
+    "rebuild_policy": "fix_rebuild_rerun_all",
+    "index_format": 10,
+    "numeric_marker_semantics": "bounded-floor-buckets-inclusive-ranges-v2",
+    "numeric_marker_version": 2,
+    "marker_owner_version": 2,
+    "pickle_state_version": 4,
+    "distance_order_version": 1,
+    "candidate_order": "vector-distance-only-v1",
+    "initial_prefix": null,
+    "initial_full": null,
+    "deletion_initial": "completed_insert_stage5",
+    "environment": {
+      "node": 0,
+      "update_cpus": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "allowed_cpus": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "query_candidates": [
+        8,
+        16,
+        24
+      ],
+      "siblings": {
+        "8": [
+          72
+        ],
+        "16": [
+          80
+        ],
+        "24": [
+          88
+        ]
+      },
+      "environment": {
+        "OMP_NUM_THREADS": "32",
+        "OMP_PROC_BIND": "false",
+        "OMP_WAIT_POLICY": "passive",
+        "OPENBLAS_NUM_THREADS": "1"
+      },
+      "other_environment": {
+        "OMP_PLACES": null,
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_THREAD_LIMIT": null,
+        "MKL_NUM_THREADS": null,
+        "GOMP_CPU_AFFINITY": null,
+        "KMP_AFFINITY": null,
+        "LD_PRELOAD": null
+      },
+      "host": "oj.cuhk.edu.cn",
+      "kernel": "6.8.0-111-generic",
+      "machine": "x86_64",
+      "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]"
+    },
+    "limits": {
+      "sibling_busy_max": 0.05,
+      "thread_cpu_wall_min": 0.98,
+      "frequency_khz": [
+        3267000,
+        3333000
+      ],
+      "major_faults_max": 0,
+      "clean_rounds": 7,
+      "max_rounds_per_core": 21,
+      "max_cores": 3
+    },
+    "threads_update": 32,
+    "threads_build": 32,
+    "threads_gt": 32,
+    "max_query_ef": 3000,
+    "level_seed": 1234,
+    "level_policy": {
+      "version": "production-centroid-representatives-whole-source-v1",
+      "source": "all source rows; use identical frozen slices for initial prefix and later adds",
+      "clusters": "floor(sqrt(source_count))*4",
+      "training_limit": 2560000,
+      "iterations": 25,
+      "sampling": "numpy.default_rng(level_seed).choice(N, min(N,2560000), replace=False)",
+      "representative": "nearest assigned source row per centroid; equal distances choose lowest source row",
+      "native_random_seed": 100
+    },
+    "add_chunk": 100000,
+    "trace_versions": {
+      "insert": "source-prefix-5M-to-10M-v1",
+      "delete": "default_rng-12345-permutation-10M-v1",
+      "point_update": "complete-record-consecutive-fresh-label-v1"
+    },
+    "deletion": "synchronous delete_items structural repair + complete-record Markers + distance-free scrub",
+    "point_update": "complete original source record; delete old label, then fresh add(replace_deleted=False)",
+    "slot_reuse": false,
+    "numpy_version": "2.5.3"
+  },
+  "config_sha256": "239e37052c50516fdd7787a37f98687cf2dde6a64fbe82fb5ae859a7b84696f7",
+  "dataset": {
+    "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+    "predicates_payload_sha256": "92c807088481aa571ab7df491a5fe9ac710daa871907056731b9c4ea13986ab4",
+    "numeric_payload_sha256": "ef5c4b1f9af7714470adccc732cbc4738491603a4f1851d881f0dcdca6f50a65",
+    "label9_payload_sha256": "9b253a80348b9cf03bd8855cb55557d0466a6877e8900d1e0d4800b7caeede73",
+    "label12_payload_sha256": "27689b6fe55b9907a009a345a4c39bfe8db2309d90f145427057b59510ff7344",
+    "complete_records_sha256": "84f6dc200ebd1458d98e604c727d94b0ff0ee2c630dcd37d66262b5a2ad72542",
+    "input_sha256": {
+      "base_vectors": "d3a64e449eac7b1abe20830970223d9f30f804da908ceeaebc3accac8e42b76f",
+      "queries": "4e686785082f56916a6422b120ad4c54b4110701195c17fa582391156bcb32cc",
+      "attributes": "84f6dc200ebd1458d98e604c727d94b0ff0ee2c630dcd37d66262b5a2ad72542",
+      "predicates": "84638044eaccd90f23cb94b954eda91e0cff7bd6e3a4de0b2ed24d32f7aa4ebc",
+      "canonical_gt0": "94043b7543f447e45a6e84fa4e7213e4656ddb9ea31402b402017e066f91e18c"
+    },
+    "integer_distance_domain": "all base/query coordinates integral in [0,255]; dim<=128"
+  },
+  "inputs": {
+    "base_vectors": {
+      "path": "/mnt/data/mocheng/dataset/sift10m/sift10m.fvecs",
+      "bytes": 5160000000,
+      "mtime_ns": 1736408351572248393,
+      "sha256": "d3a64e449eac7b1abe20830970223d9f30f804da908ceeaebc3accac8e42b76f"
+    },
+    "queries": {
+      "path": "/mnt/data/mocheng/dataset/sift10m/sift10m_query.fvecs",
+      "bytes": 5160000,
+      "mtime_ns": 1736408694594233661,
+      "sha256": "4e686785082f56916a6422b120ad4c54b4110701195c17fa582391156bcb32cc"
+    },
+    "attributes": {
+      "path": "/mnt/data/mocheng/dataset/sift10m/label/arbi_0_1_random/attr_arbi_0_1_random.json",
+      "bytes": 311937283,
+      "mtime_ns": 1767205594193209950,
+      "sha256": "84f6dc200ebd1458d98e604c727d94b0ff0ee2c630dcd37d66262b5a2ad72542"
+    },
+    "predicates": {
+      "path": "/mnt/data/mocheng/dataset/sift10m/label/arbi_0_1_random/predicate_dnf_or_T10.json",
+      "bytes": 36847,
+      "mtime_ns": 1778939368949678353,
+      "sha256": "84638044eaccd90f23cb94b954eda91e0cff7bd6e3a4de0b2ed24d32f7aa4ebc"
+    },
+    "canonical_gt0": {
+      "path": "/mnt/data/mocheng/dataset/sift10m/label/arbi_0_1_random/gt_dnf_or_T10.json",
+      "bytes": 468837,
+      "mtime_ns": 1778939453992122351,
+      "sha256": "94043b7543f447e45a6e84fa4e7213e4656ddb9ea31402b402017e066f91e18c"
+    }
+  },
+  "native": {
+    "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hashannlib.cpython-312-x86_64-linux-gnu.so",
+    "bytes": 20941808,
+    "mtime_ns": 1789247554304578322,
+    "sha256": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e"
+  },
+  "source": {
+    "exp_benchmark/dynamic/__init__.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/__init__.py",
+      "bytes": 81,
+      "mtime_ns": 1789190509109153012,
+      "sha256": "1c9a653414ba3cf343acf17fa22dbc02b75a5ef7c984969b9e5a178f6964e5cd"
+    },
+    "exp_benchmark/dynamic/aggregate.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/aggregate.py",
+      "bytes": 26896,
+      "mtime_ns": 1789221861643894471,
+      "sha256": "1a702ace5a272dd4e73988a5f4e814de7c8f48a838c4455b0531f49fddfb012d"
+    },
+    "exp_benchmark/dynamic/canary.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/canary.py",
+      "bytes": 14297,
+      "mtime_ns": 1789221837503743094,
+      "sha256": "3994495492fe5d1bedcf93713a1a0aafd58acf3433028231eccfd9fdbda43ae1"
+    },
+    "exp_benchmark/dynamic/delete.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/delete.py",
+      "bytes": 364,
+      "mtime_ns": 1789191348254508872,
+      "sha256": "e37f4c1668a281b77403cc55c3e200fc8f98684ed9e5137856e9b5619e509dc1"
+    },
+    "exp_benchmark/dynamic/gt.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/gt.py",
+      "bytes": 15198,
+      "mtime_ns": 1789191965392846507,
+      "sha256": "5072f38d0fa42299e4df91ba728624e920584985a33db69332328fa91fdcc6f3"
+    },
+    "exp_benchmark/dynamic/incremental.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/incremental.py",
+      "bytes": 364,
+      "mtime_ns": 1789191348242508387,
+      "sha256": "9ec57239f928998ae9bc035b4fdf2aa02f487ee3fbe24869d23baf361cb5ac83"
+    },
+    "exp_benchmark/dynamic/measurement.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/measurement.py",
+      "bytes": 8133,
+      "mtime_ns": 1789201014369736868,
+      "sha256": "8403c3e432515721200d41b550d3125e88af8ca9e5770b9b6f71cd566acbf027"
+    },
+    "exp_benchmark/dynamic/pipeline.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/pipeline.py",
+      "bytes": 25487,
+      "mtime_ns": 1789236385560421381,
+      "sha256": "8f246ce0ad52dff374f1c8a033f500e8706f089feac7558c706263faa75b6492"
+    },
+    "exp_benchmark/dynamic/point_update.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/point_update.py",
+      "bytes": 379,
+      "mtime_ns": 1789191348261509154,
+      "sha256": "31f3b9bfdc959a1e6aa15fa5c4664964a840cfad4fd17ccfe39898f238705513"
+    },
+    "exp_benchmark/dynamic/protocol.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/protocol.py",
+      "bytes": 15157,
+      "mtime_ns": 1789221837485742985,
+      "sha256": "936a674ae5a24a2911d8cab7332d1e6bbdee7b568ae12989fa85d39ad312ae19"
+    },
+    "exp_benchmark/dynamic/runner.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/runner.py",
+      "bytes": 29984,
+      "mtime_ns": 1789221861629894381,
+      "sha256": "e33752f3eadde739c8ff9ef191df7349b1f6c27eac3d87516dfebeb946f955f6"
+    },
+    "exp_benchmark/dynamic/runtime.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/dynamic/runtime.py",
+      "bytes": 35615,
+      "mtime_ns": 1789221837478742943,
+      "sha256": "40b1505fd71b2ff05716d00d67b020c85f23dd008420249b7fc03c0a47a31df7"
+    },
+    "exp_benchmark/aggregate.py": {
+      "path": "/home/mocheng/hashann/exp_benchmark/aggregate.py",
+      "bytes": 3069,
+      "mtime_ns": 1779442843027473309,
+      "sha256": "3a7d785365fd4d44ececfcc7254e5b0c62d43005f30584658d3cdb992008611d"
+    },
+    "tests/hashann.py": {
+      "path": "/home/mocheng/hashann/tests/hashann.py",
+      "bytes": 13860,
+      "mtime_ns": 1779455131608434326,
+      "sha256": "ad4b66aea0977f44aa81bc4ad4a790920c2fdf4e9543e523a5304e4d1f9583f0"
+    },
+    "native/provenance.json": {
+      "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/provenance.json",
+      "bytes": 2406,
+      "mtime_ns": 1789247923710508833,
+      "sha256": "80897a2d902f5b074d718f1219d8f8fe73f66c3515b20a2be87b2c02a1f6443c"
+    },
+    "native/hnswlib/hnswalg.h": {
+      "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/hnswalg.h",
+      "bytes": 462284,
+      "mtime_ns": 1789247431475024867,
+      "sha256": "7de1d2edcaee93c098712db21f9ccd797cf4620e8386798fa2bef3842e9cf9b2"
+    },
+    "native/python_bindings/bindings.cpp": {
+      "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/python_bindings/bindings.cpp",
+      "bytes": 125083,
+      "mtime_ns": 1789242302500381886,
+      "sha256": "4b208544cab570e4e79eb53dac0a569d1f1df938d637825402195b03b4d14a20"
+    },
+    "native/setup.py": {
+      "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/setup.py",
+      "bytes": 5090,
+      "mtime_ns": 1788964265051317912,
+      "sha256": "080a1a9f0d9ee1dd561fe05d572c79c47924112b09305e961b4340c307e0e669"
+    },
+    "native/hnswlib/parallel_for.h": {
+      "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/parallel_for.h",
+      "bytes": 1813,
+      "mtime_ns": 1789232838158439534,
+      "sha256": "f2fe12aa1d1072933473444cdec8706fce82f75cafee4fb710aec5d0c5f6125f"
+    },
+    "native/hnswlib/deletion_cache.h": {
+      "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_cache.h",
+      "bytes": 2481,
+      "mtime_ns": 1789232838161439533,
+      "sha256": "53591c83fb62a0eb42a7348ca946a5df0325e4e7e357f8ec6d0dca00005ad6bb"
+    },
+    "native/hnswlib/deletion_publication_gate.h": {
+      "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_publication_gate.h",
+      "bytes": 431,
+      "mtime_ns": 1789247431429023880,
+      "sha256": "3dd4b5eaf205163f624d49abcd6bc244dcd321d73269272fbad9e676c7c1a325"
+    }
+  }
+}

@@ -5,10 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 source ./env.sh
+threads="${threads:-1}"
 source ./conf.sh
 
-# Default to single-thread for QPS measurement (mirrors paper experiments)
-threads="${threads:-1}"
 : "${FT_ROUTING_MIN_DEG:=$ft_routing_min_deg}"
 
 if [ ! -f "$hashann_index_file" ]; then

@@ -219,6 +219,12 @@ def arg_init():
         "--ft_routing_backfill_tail", type=str, required=False, default="false",
         help="If 'true', pick backfill from TAIL of not_nbrs; else HEAD (default)"
     )
+    parser.add_argument("--query_repeats", type=int, default=3,
+                        help="Full query-batch repetitions per ef; report their median QPS")
+    parser.add_argument("--target_recall", type=float, default=None,
+                        help="Stop an increasing ef sweep at its first qualifying measured point")
+    parser.add_argument("--result_json", default=None,
+                        help="New JSON output file retaining every query timing repetition")
 
 
     args = parser.parse_args()

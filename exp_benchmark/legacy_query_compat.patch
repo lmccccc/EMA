@@ -1,0 +1,44 @@
+diff --git a/hnswlib/hnswlib/hnswalg.h b/hnswlib/hnswlib/hnswalg.h
+--- a/hnswlib/hnswlib/hnswalg.h
++++ b/hnswlib/hnswlib/hnswalg.h
+@@ -6382,6 +6382,40 @@
+         data_size_ = s->get_data_size();
+         fstdistfunc_ = s->get_dist_func();
+         dist_func_param_ = s->get_dist_func_param();
+ 
++        // Some unversioned caches already store packed edge Markers before vectors.
++        // Preserve their saved offsets; node-layout migration would misread attributes.
++        const size_t saved_links = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
++        if (ft_format_version == 1 && size_per_ft_ > 0 &&
++            ft_offset_ == saved_links && offsetData_ > saved_links &&
++            label_offset_ == offsetData_ + data_size_ &&
++            offsetAttr_ >= label_offset_ + sizeof(labeltype) &&
++            offsetAttr_ - label_offset_ - sizeof(labeltype) < sizeof(int) &&
++            offsetAttr_ + sizeof(int) * attr_size_per_item_ <= size_data_per_element_) {
++            const size_t marker_span = offsetData_ - saved_links;
++            const size_t marker_bytes = static_cast<size_t>(size_per_ft_);
++            const bool packed_node = marker_span == marker_bytes;
++            const bool packed_edge = marker_span % marker_bytes == 0 &&
++                                     marker_span / marker_bytes == maxM0_;
++            if (packed_node || packed_edge) {
++                edge_level_ft_ = packed_edge;
++                need_layout_migration = false;
++                std::cout << "Loading unversioned packed Markers without layout migration" << std::endl;
++            }
++        }
++
++        // Legacy edge caches may keep the complete Marker block after the label.
++        if (ft_format_version == 1 && size_per_ft_ > 0 &&
++            offsetData_ == saved_links && label_offset_ == offsetData_ + data_size_ &&
++            ft_offset_ == label_offset_ + sizeof(labeltype) &&
++            offsetAttr_ > ft_offset_ &&
++            (offsetAttr_ - ft_offset_) % size_per_ft_ == 0 &&
++            (offsetAttr_ - ft_offset_) / size_per_ft_ == maxM0_ &&
++            offsetAttr_ + sizeof(int) * attr_size_per_item_ <= size_data_per_element_) {
++            edge_level_ft_ = true;
++            need_layout_migration = false;
++            std::cout << "Preserving unversioned tail edge Markers and saved attribute offsets" << std::endl;
++        }
++
+         auto pos = input.tellg();
+ 

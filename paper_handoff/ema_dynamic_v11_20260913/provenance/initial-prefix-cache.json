@@ -1,0 +1,197 @@
+{
+  "status": "complete",
+  "fingerprint": {
+    "dataset": {
+      "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+      "predicates_payload_sha256": "92c807088481aa571ab7df491a5fe9ac710daa871907056731b9c4ea13986ab4",
+      "numeric_payload_sha256": "ef5c4b1f9af7714470adccc732cbc4738491603a4f1851d881f0dcdca6f50a65",
+      "label9_payload_sha256": "9b253a80348b9cf03bd8855cb55557d0466a6877e8900d1e0d4800b7caeede73",
+      "label12_payload_sha256": "27689b6fe55b9907a009a345a4c39bfe8db2309d90f145427057b59510ff7344",
+      "complete_records_sha256": "84f6dc200ebd1458d98e604c727d94b0ff0ee2c630dcd37d66262b5a2ad72542",
+      "input_sha256": {
+        "base_vectors": "d3a64e449eac7b1abe20830970223d9f30f804da908ceeaebc3accac8e42b76f",
+        "queries": "4e686785082f56916a6422b120ad4c54b4110701195c17fa582391156bcb32cc",
+        "attributes": "84f6dc200ebd1458d98e604c727d94b0ff0ee2c630dcd37d66262b5a2ad72542",
+        "predicates": "84638044eaccd90f23cb94b954eda91e0cff7bd6e3a4de0b2ed24d32f7aa4ebc",
+        "canonical_gt0": "94043b7543f447e45a6e84fa4e7213e4656ddb9ea31402b402017e066f91e18c"
+      },
+      "integer_distance_domain": "all base/query coordinates integral in [0,255]; dim<=128"
+    },
+    "native_sha256": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+    "query": {
+      "space": "l2",
+      "dimension": 128,
+      "query_count": 1000,
+      "k": 10,
+      "attr_type": [
+        0,
+        1
+      ],
+      "M": 40,
+      "ef_construction": 300,
+      "ft_bits_per_attribute": 128,
+      "edge_ft": true,
+      "thresholds": [
+        0.0001,
+        0.0001,
+        0.0001
+      ],
+      "ef_top": 1,
+      "ft_flag": true,
+      "ft_routing_flag": true,
+      "ft_routing_min_deg": 8,
+      "ft_routing_backfill_tail": false,
+      "threads_query": 1,
+      "target_recall": 0.9,
+      "api": "hybrid_knn_query_dnf",
+      "predicate": "PER QUERY: ((inclusive numeric range AND label9) OR label12)"
+    },
+    "capacity": 10000000,
+    "initial": 5000000,
+    "kind": "prefix",
+    "index_format": 10,
+    "numeric_marker_semantics": "bounded-floor-buckets-inclusive-ranges-v2",
+    "numeric_marker_version": 2,
+    "marker_owner_version": 2,
+    "pickle_state_version": 4,
+    "distance_order_version": 1,
+    "candidate_order": "vector-distance-only-v1",
+    "level_plan": {
+      "version": "production-centroid-representatives-whole-source-v1",
+      "source": "all source rows; use identical frozen slices for initial prefix and later adds",
+      "clusters": 12648,
+      "training_limit": 2560000,
+      "iterations": 25,
+      "sampling": "numpy.default_rng(level_seed).choice(N, min(N,2560000), replace=False)",
+      "representative": "nearest assigned source row per centroid; equal distances choose lowest source row",
+      "native_random_seed": 100,
+      "seed": 1234,
+      "training_ids_sha256": "4c47ed8c85477b2bdcc448438b34ebe649e21518de8de902de72b9e5c732e062",
+      "centroids_sha256": "781107fa67d8a2a685364a826e3d45cca03e4374a1795724e1824de1266bbc28",
+      "representatives_sha256": "5e23eeb01cf32ab27becac5d7e7e32bad0b7b12057a5bee7817526e6452012b4",
+      "levels_sha256": "0a8dca41a4631d861d3ff04525760ca46b9ed2cfdebb74d12bd0a96418912a81",
+      "faiss_version": "1.15.0"
+    },
+    "threads_build": 32,
+    "add_chunk": 100000,
+    "source_sha256": {
+      "exp_benchmark/dynamic/__init__.py": "1c9a653414ba3cf343acf17fa22dbc02b75a5ef7c984969b9e5a178f6964e5cd",
+      "exp_benchmark/dynamic/aggregate.py": "1a702ace5a272dd4e73988a5f4e814de7c8f48a838c4455b0531f49fddfb012d",
+      "exp_benchmark/dynamic/canary.py": "3994495492fe5d1bedcf93713a1a0aafd58acf3433028231eccfd9fdbda43ae1",
+      "exp_benchmark/dynamic/delete.py": "e37f4c1668a281b77403cc55c3e200fc8f98684ed9e5137856e9b5619e509dc1",
+      "exp_benchmark/dynamic/gt.py": "5072f38d0fa42299e4df91ba728624e920584985a33db69332328fa91fdcc6f3",
+      "exp_benchmark/dynamic/incremental.py": "9ec57239f928998ae9bc035b4fdf2aa02f487ee3fbe24869d23baf361cb5ac83",
+      "exp_benchmark/dynamic/measurement.py": "8403c3e432515721200d41b550d3125e88af8ca9e5770b9b6f71cd566acbf027",
+      "exp_benchmark/dynamic/pipeline.py": "8f246ce0ad52dff374f1c8a033f500e8706f089feac7558c706263faa75b6492",
+      "exp_benchmark/dynamic/point_update.py": "31f3b9bfdc959a1e6aa15fa5c4664964a840cfad4fd17ccfe39898f238705513",
+      "exp_benchmark/dynamic/protocol.py": "936a674ae5a24a2911d8cab7332d1e6bbdee7b568ae12989fa85d39ad312ae19",
+      "exp_benchmark/dynamic/runner.py": "e33752f3eadde739c8ff9ef191df7349b1f6c27eac3d87516dfebeb946f955f6",
+      "exp_benchmark/dynamic/runtime.py": "40b1505fd71b2ff05716d00d67b020c85f23dd008420249b7fc03c0a47a31df7",
+      "exp_benchmark/aggregate.py": "3a7d785365fd4d44ececfcc7254e5b0c62d43005f30584658d3cdb992008611d",
+      "tests/hashann.py": "ad4b66aea0977f44aa81bc4ad4a790920c2fdf4e9543e523a5304e4d1f9583f0",
+      "native/provenance.json": "80897a2d902f5b074d718f1219d8f8fe73f66c3515b20a2be87b2c02a1f6443c",
+      "native/hnswlib/hnswalg.h": "7de1d2edcaee93c098712db21f9ccd797cf4620e8386798fa2bef3842e9cf9b2",
+      "native/python_bindings/bindings.cpp": "4b208544cab570e4e79eb53dac0a569d1f1df938d637825402195b03b4d14a20",
+      "native/setup.py": "080a1a9f0d9ee1dd561fe05d572c79c47924112b09305e961b4340c307e0e669",
+      "native/hnswlib/parallel_for.h": "f2fe12aa1d1072933473444cdec8706fce82f75cafee4fb710aec5d0c5f6125f",
+      "native/hnswlib/deletion_cache.h": "53591c83fb62a0eb42a7348ca946a5df0325e4e7e357f8ec6d0dca00005ad6bb",
+      "native/hnswlib/deletion_publication_gate.h": "3dd4b5eaf205163f624d49abcd6bc244dcd321d73269272fbad9e676c7c1a325"
+    },
+    "codebook": "all source records, including every future addition; no padding"
+  },
+  "checkpoint": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/initial-prefix/build-23e60031edd64c9d83ca582f7a1580f1/prefix.index",
+    "bytes": 17081051900,
+    "mtime_ns": 1789298794918479988,
+    "sha256": "75e7bf6921d593cc2b3900228b32a622199b8ba491f6be434068a579fe70edb7"
+  },
+  "verification": {
+    "header": {
+      "offset_level0": 0,
+      "max_elements": 10000000,
+      "top_elements": 6406,
+      "count": 5000000,
+      "record_bytes": 3412,
+      "neighbor_bytes": 3404,
+      "label_offset": 3396,
+      "vector_offset": 2884,
+      "max_level": 1,
+      "entrypoint": 50,
+      "maxM": 40,
+      "maxM0": 80,
+      "M0_mul": 2,
+      "minM0": 16,
+      "M": 40,
+      "mult": 0.2710850306818168,
+      "ef_construction": 300,
+      "ft_bits": 128,
+      "cate_int_words": 1,
+      "max_cate_size": 20,
+      "attr_type": [
+        0,
+        1
+      ],
+      "attr_positions": [
+        0,
+        1
+      ],
+      "attr_words": 2,
+      "predicate_words": 3,
+      "predicate_offsets": [
+        0,
+        2
+      ],
+      "ft_offset": 324,
+      "attr_offset": 3404,
+      "neighbor_ft_offset": 324,
+      "ft_bytes_per_record": 32,
+      "format": 10,
+      "records_offset": 1316,
+      "numeric_marker_semantics": "bounded-floor-buckets-inclusive-ranges-v2",
+      "numeric_marker_version": 2,
+      "marker_owner_version": 2,
+      "distance_order_version": 1,
+      "candidate_order": "vector-distance-only-v1"
+    },
+    "records": {
+      "occupied": 5000000,
+      "marked_count": 0,
+      "live": 5000000,
+      "inline_flags_all_records_verified": true,
+      "external_label_permutation_verified": true,
+      "canonical_mixed_attributes_all_records_verified": true,
+      "vector_mapping_sample_count": 256
+    },
+    "tail": {
+      "upper_layer_records": 5000000,
+      "exact_file_boundary_verified": true
+    }
+  },
+  "initialization_and_codebook_wall_s": 22.678247343748808,
+  "initial_insert": {
+    "wall_s": 502.65053952112794,
+    "thread_cpu_s": 4.030945254000017,
+    "process_cpu_s": 10246.922555350004,
+    "process_rusage": {
+      "user_cpu_s": 10246.431845,
+      "system_cpu_s": 0.4907409999996162,
+      "minor_faults": 216681,
+      "major_faults": 0,
+      "voluntary_switches": 131761,
+      "involuntary_switches": 1542149
+    },
+    "thread_rusage": {
+      "user_cpu_s": 3.9987260000000333,
+      "system_cpu_s": 0.03225499999999215,
+      "minor_faults": 1404,
+      "major_faults": 0,
+      "voluntary_switches": 210,
+      "involuntary_switches": 68
+    }
+  },
+  "build_wall_s": 525.3287868648767,
+  "checkpoint_io_wall_s": 64.18045383691788,
+  "total_preparation_wall_s": 589.5093712229282,
+  "first_source_row": 0,
+  "past_last_source_row": 5000000
+}

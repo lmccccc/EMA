@@ -10,12 +10,9 @@ dataset="${dataset:-Redcaps_4M}"
 OUTDIR="logs/ft_bits_sweep"
 mkdir -p "$OUTDIR"
 
-FT_VALS=("${FT_VALS:-32 64 128 256}")
-if [ -z "${FT_VALS:-}" ]; then
-    FT_VALS=(32 64 128 256)
-fi
+read -r -a FT_VALUES <<< "${FT_VALS:-32 64 128 256}"
 
-for ftv in "${FT_VALS[@]}"; do
+for ftv in "${FT_VALUES[@]}"; do
     echo "==== ft_bits=$ftv ===="
     dataset="$dataset" ft_bits="$ftv" ./build_index.sh
 

@@ -1,0 +1,40 @@
+{
+  "schema": "canonical-dynamic-paper-current-v5",
+  "status": "complete",
+  "protocol": "sift10m-mixed-dnf-dynamic-rebuild-v4",
+  "paper_json": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/paper.json",
+    "bytes": 274746,
+    "mtime_ns": 1789307616361540287,
+    "sha256": "b134cce85bae8c69bec06e1ba255a038a3ddb669db6db1adb2a339de1ced6203"
+  },
+  "paper_tsv": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/paper.tsv",
+    "bytes": 11894,
+    "mtime_ns": 1789307616381540476,
+    "sha256": "e617d355bc7fa086fd66cfc38dcb0683d977895e77fc1a208e72134e2cd30510"
+  },
+  "operations": [
+    "insert",
+    "delete",
+    "point_update"
+  ],
+  "operation_native_sha256": {
+    "insert": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+    "delete": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+    "point_update": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e"
+  },
+  "query_native_sha256": {
+    "insert": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+    "delete": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+    "point_update": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e"
+  },
+  "query_implementation": "bounded-floor-buckets-inclusive-ranges-v2",
+  "rebuild_policy": "fix_rebuild_rerun_all",
+  "index_format": 10,
+  "numeric_marker_version": 2,
+  "marker_owner_version": 2,
+  "pickle_state_version": 4,
+  "distance_order_version": 1,
+  "candidate_order": "vector-distance-only-v1"
+}

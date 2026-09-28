@@ -1,0 +1,55 @@
+{
+  "status": "complete",
+  "manifest": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/pipeline-manifest.json",
+    "bytes": 13787,
+    "mtime_ns": 1789296713373064574,
+    "sha256": "af65552e6c54370df6b085b3fa003ad9cf48101d0866800a6b76298c6503cc41"
+  },
+  "operations": {
+    "insert": {
+      "status": "complete",
+      "reused": false,
+      "journal": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/journal.json",
+        "bytes": 355665,
+        "mtime_ns": 1789300492361308103,
+        "sha256": "09d031d88fe1fcdcc9f3409bc57548df85d1557e163342268d52d52256afea24"
+      }
+    },
+    "delete": {
+      "status": "complete",
+      "reused": false,
+      "journal": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/journal.json",
+        "bytes": 532240,
+        "mtime_ns": 1789303620107675226,
+        "sha256": "1497c2ab73e146b70d4b755025d4e70f83de4fe17c267cf3510d49ad246c044e"
+      }
+    },
+    "point_update": {
+      "status": "complete",
+      "reused": false,
+      "journal": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/journal.json",
+        "bytes": 556661,
+        "mtime_ns": 1789306918860870226,
+        "sha256": "fd7f3fdb9777d3ceaec3b96bb158e5bb71f8147b2fe38e0af0d9a3478b5748f0"
+      }
+    }
+  },
+  "invocations": [
+    {
+      "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/invocation-4d0aa70f0b3340479b37a8fd991a7118.json",
+      "native_canary": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/native-canary-e425060e97a64e408899126911388365/report.json",
+        "bytes": 44993,
+        "mtime_ns": 1789296670377148525,
+        "sha256": "6b3edca2afdcf42fc8ae9a2432f5341918d60bb1538c2dba08c178d15b51ad11"
+      },
+      "resume": false,
+      "through_stage": null
+    }
+  ],
+  "bootstrap_recovered": false
+}

@@ -1,0 +1,64 @@
+{
+  "phase": "deleted_before_optional_add",
+  "counters": {
+    "requested": 1000000,
+    "marked": 1000000,
+    "search_candidates": 301744800,
+    "search_expanded": 303722699,
+    "incoming_edges_repaired": 37578350,
+    "outgoing_edges_added": 92400240,
+    "rewired_nodes": 69387231,
+    "pruned_edges": 68099182,
+    "scrubbed_edges": 755196,
+    "candidate_sources": 298999163,
+    "empty_marker_rows": 93931637,
+    "matched_edges": 203389192,
+    "cleared_bits": 13102104,
+    "support_checks": 4894570213,
+    "parallel_preparations": 0,
+    "reused_preparations": 0,
+    "recomputed_preparations": 0,
+    "parallel_points": 1000000,
+    "max_active_points": 32,
+    "parallel_deletions": 1000000,
+    "peak_parallel_deletions": 32,
+    "incoming_handoffs": 31502,
+    "distance_cache_hits": 3164847205,
+    "distance_cache_misses": 13511872790,
+    "rng_witness_reuses": 8732708,
+    "cleanup_bound_reused_rows": 298939751,
+    "cleanup_bound_stale_rows": 59412,
+    "deferred_incoming_handoffs": 5819,
+    "deferred_incoming_repairs": 5819,
+    "deferred_retired_source_repairs": 0,
+    "ignored_completed_ghosts": 8401483,
+    "deferred_overlapping_edges": 5819,
+    "deferred_pending_requests": 0,
+    "deferred_retired_source_requests": 0,
+    "deferred_intermediate_rows": 0,
+    "publication_retired_targets": 43
+  },
+  "phases": {
+    "delete": {
+      "wall_s": 321.0559194441885,
+      "thread_cpu_s": 0.8465190669999174,
+      "process_cpu_s": 6195.322431285,
+      "process_rusage": {
+        "user_cpu_s": 6163.621540999993,
+        "system_cpu_s": 31.70092300000033,
+        "minor_faults": 58586,
+        "major_faults": 0,
+        "voluntary_switches": 1024516,
+        "involuntary_switches": 404861
+      },
+      "thread_rusage": {
+        "user_cpu_s": 0.7726279999999406,
+        "system_cpu_s": 0.07392700000002606,
+        "minor_faults": 39119,
+        "major_faults": 0,
+        "voluntary_switches": 4,
+        "involuntary_switches": 34
+      }
+    }
+  }
+}

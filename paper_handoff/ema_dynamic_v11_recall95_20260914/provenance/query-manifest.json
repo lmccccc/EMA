@@ -1,0 +1,726 @@
+{
+  "request": {
+    "schema": "canonical-dynamic-recall-revision-v1",
+    "source_run": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa",
+    "source_documents": {
+      "pipeline_manifest": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/pipeline-manifest.json",
+        "bytes": 13787,
+        "mtime_ns": 1789296713373064574,
+        "sha256": "af65552e6c54370df6b085b3fa003ad9cf48101d0866800a6b76298c6503cc41"
+      },
+      "paper": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/paper.json",
+        "bytes": 274746,
+        "mtime_ns": 1789307616361540287,
+        "sha256": "b134cce85bae8c69bec06e1ba255a038a3ddb669db6db1adb2a339de1ced6203"
+      },
+      "insert_manifest": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/manifest.json",
+        "bytes": 36238,
+        "mtime_ns": 1789298852675442449,
+        "sha256": "a5cf24f727c5065a62b418e90a40479c7e43f8538765c25194fd70b56368a55d"
+      },
+      "insert_journal": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/journal.json",
+        "bytes": 355665,
+        "mtime_ns": 1789300492361308103,
+        "sha256": "09d031d88fe1fcdcc9f3409bc57548df85d1557e163342268d52d52256afea24"
+      },
+      "delete_manifest": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/manifest.json",
+        "bytes": 36686,
+        "mtime_ns": 1789300650071976930,
+        "sha256": "7ee5959825558d0c98c89e95d3f86acf034c6ec25770b97c8860ff7ed126fa2c"
+      },
+      "delete_journal": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/journal.json",
+        "bytes": 532240,
+        "mtime_ns": 1789303620107675226,
+        "sha256": "1497c2ab73e146b70d4b755025d4e70f83de4fe17c267cf3510d49ad246c044e"
+      },
+      "point_update_manifest": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/manifest.json",
+        "bytes": 36244,
+        "mtime_ns": 1789303624405759462,
+        "sha256": "b89080f2f23ace9b5c89a90201d0b3bb4d1125072714395f9b4fc81e525d0fc4"
+      },
+      "point_update_journal": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/journal.json",
+        "bytes": 556661,
+        "mtime_ns": 1789306918860870226,
+        "sha256": "fd7f3fdb9777d3ceaec3b96bb158e5bb71f8147b2fe38e0af0d9a3478b5748f0"
+      }
+    },
+    "source_protocol": "sift10m-mixed-dnf-dynamic-rebuild-v4",
+    "target_protocol": "sift10m-mixed-dnf-dynamic-rebuild-v5",
+    "query": {
+      "space": "l2",
+      "dimension": 128,
+      "query_count": 1000,
+      "k": 10,
+      "attr_type": [
+        0,
+        1
+      ],
+      "M": 40,
+      "ef_construction": 300,
+      "ft_bits_per_attribute": 128,
+      "edge_ft": true,
+      "thresholds": [
+        0.0001,
+        0.0001,
+        0.0001
+      ],
+      "ef_top": 1,
+      "ft_flag": true,
+      "ft_routing_flag": true,
+      "ft_routing_min_deg": 8,
+      "ft_routing_backfill_tail": false,
+      "threads_query": 1,
+      "target_recall": 0.95,
+      "api": "hybrid_knn_query_dnf",
+      "predicate": "PER QUERY: ((inclusive numeric range AND label9) OR label12)"
+    },
+    "native": {
+      "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hashannlib.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 20941808,
+      "mtime_ns": 1789247554304578322,
+      "sha256": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e"
+    },
+    "source": {
+      "remeasure.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/remeasure.py",
+        "bytes": 27814,
+        "mtime_ns": 1789379225556049914,
+        "sha256": "c8562a1b097123f5c39ad0225e1057fab99311727c8c8f2183ae21d8f18bc412"
+      },
+      "runner.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/runner.py",
+        "bytes": 29984,
+        "mtime_ns": 1789221861629894381,
+        "sha256": "e33752f3eadde739c8ff9ef191df7349b1f6c27eac3d87516dfebeb946f955f6"
+      },
+      "protocol.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/protocol.py",
+        "bytes": 15187,
+        "mtime_ns": 1789379913948243018,
+        "sha256": "a059727349c0ff373ead17144e4081eefceb1652e7acef34494bcb6b78bab153"
+      },
+      "measurement.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/measurement.py",
+        "bytes": 9622,
+        "mtime_ns": 1789379913954243141,
+        "sha256": "9ffc80711efa085628ffe175cfd77c117cc78e0621236605662644d71a676e13"
+      },
+      "aggregate.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/aggregate.py",
+        "bytes": 28431,
+        "mtime_ns": 1789379913959243244,
+        "sha256": "3cc76e8ab532770382f300b98cd0d2b4d9e3fdda07e42f6cfe46d638a06c9b99"
+      },
+      "gt.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/gt.py",
+        "bytes": 15198,
+        "mtime_ns": 1789191965392846507,
+        "sha256": "5072f38d0fa42299e4df91ba728624e920584985a33db69332328fa91fdcc6f3"
+      },
+      "runtime.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/runtime.py",
+        "bytes": 35714,
+        "mtime_ns": 1789379913951243080,
+        "sha256": "b55d57a63b1ab46cef4f0b9f5e8b29f96ad12d80d696a9bd2b83a3315eb3a0d4"
+      }
+    },
+    "legacy_source": {
+      "/home/mocheng/hashann/exp_benchmark/dynamic/__init__.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/__init__.py",
+        "bytes": 81,
+        "mtime_ns": 1789190509109153012,
+        "sha256": "1c9a653414ba3cf343acf17fa22dbc02b75a5ef7c984969b9e5a178f6964e5cd"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/aggregate.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/aggregate.py",
+        "bytes": 26896,
+        "mtime_ns": 1789221861643894471,
+        "sha256": "1a702ace5a272dd4e73988a5f4e814de7c8f48a838c4455b0531f49fddfb012d"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/canary.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/canary.py",
+        "bytes": 14297,
+        "mtime_ns": 1789221837503743094,
+        "sha256": "3994495492fe5d1bedcf93713a1a0aafd58acf3433028231eccfd9fdbda43ae1"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/delete.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/delete.py",
+        "bytes": 364,
+        "mtime_ns": 1789191348254508872,
+        "sha256": "e37f4c1668a281b77403cc55c3e200fc8f98684ed9e5137856e9b5619e509dc1"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/gt.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/gt.py",
+        "bytes": 15198,
+        "mtime_ns": 1789191965392846507,
+        "sha256": "5072f38d0fa42299e4df91ba728624e920584985a33db69332328fa91fdcc6f3"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/incremental.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/incremental.py",
+        "bytes": 364,
+        "mtime_ns": 1789191348242508387,
+        "sha256": "9ec57239f928998ae9bc035b4fdf2aa02f487ee3fbe24869d23baf361cb5ac83"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/measurement.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/measurement.py",
+        "bytes": 8133,
+        "mtime_ns": 1789201014369736868,
+        "sha256": "8403c3e432515721200d41b550d3125e88af8ca9e5770b9b6f71cd566acbf027"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/pipeline.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/pipeline.py",
+        "bytes": 25487,
+        "mtime_ns": 1789236385560421381,
+        "sha256": "8f246ce0ad52dff374f1c8a033f500e8706f089feac7558c706263faa75b6492"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/point_update.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/point_update.py",
+        "bytes": 379,
+        "mtime_ns": 1789191348261509154,
+        "sha256": "31f3b9bfdc959a1e6aa15fa5c4664964a840cfad4fd17ccfe39898f238705513"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/protocol.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/protocol.py",
+        "bytes": 15157,
+        "mtime_ns": 1789221837485742985,
+        "sha256": "936a674ae5a24a2911d8cab7332d1e6bbdee7b568ae12989fa85d39ad312ae19"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/runner.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/runner.py",
+        "bytes": 29984,
+        "mtime_ns": 1789221861629894381,
+        "sha256": "e33752f3eadde739c8ff9ef191df7349b1f6c27eac3d87516dfebeb946f955f6"
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/runtime.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/dynamic/runtime.py",
+        "bytes": 35615,
+        "mtime_ns": 1789221837478742943,
+        "sha256": "40b1505fd71b2ff05716d00d67b020c85f23dd008420249b7fc03c0a47a31df7"
+      },
+      "/home/mocheng/hashann/exp_benchmark/aggregate.py": {
+        "path": "/home/mocheng/hashann/exp_benchmark/aggregate.py",
+        "bytes": 3069,
+        "mtime_ns": 1779442843027473309,
+        "sha256": "3a7d785365fd4d44ececfcc7254e5b0c62d43005f30584658d3cdb992008611d"
+      },
+      "/home/mocheng/hashann/tests/hashann.py": {
+        "path": "/home/mocheng/hashann/tests/hashann.py",
+        "bytes": 13860,
+        "mtime_ns": 1779455131608434326,
+        "sha256": "ad4b66aea0977f44aa81bc4ad4a790920c2fdf4e9543e523a5304e4d1f9583f0"
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/provenance.json": {
+        "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/provenance.json",
+        "bytes": 2406,
+        "mtime_ns": 1789247923710508833,
+        "sha256": "80897a2d902f5b074d718f1219d8f8fe73f66c3515b20a2be87b2c02a1f6443c"
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/hnswalg.h": {
+        "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/hnswalg.h",
+        "bytes": 462284,
+        "mtime_ns": 1789247431475024867,
+        "sha256": "7de1d2edcaee93c098712db21f9ccd797cf4620e8386798fa2bef3842e9cf9b2"
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/python_bindings/bindings.cpp": {
+        "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/python_bindings/bindings.cpp",
+        "bytes": 125083,
+        "mtime_ns": 1789242302500381886,
+        "sha256": "4b208544cab570e4e79eb53dac0a569d1f1df938d637825402195b03b4d14a20"
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/setup.py": {
+        "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/setup.py",
+        "bytes": 5090,
+        "mtime_ns": 1788964265051317912,
+        "sha256": "080a1a9f0d9ee1dd561fe05d572c79c47924112b09305e961b4340c307e0e669"
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/parallel_for.h": {
+        "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/parallel_for.h",
+        "bytes": 1813,
+        "mtime_ns": 1789232838158439534,
+        "sha256": "f2fe12aa1d1072933473444cdec8706fce82f75cafee4fb710aec5d0c5f6125f"
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_cache.h": {
+        "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_cache.h",
+        "bytes": 2481,
+        "mtime_ns": 1789232838161439533,
+        "sha256": "53591c83fb62a0eb42a7348ca946a5df0325e4e7e357f8ec6d0dca00005ad6bb"
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_publication_gate.h": {
+        "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_publication_gate.h",
+        "bytes": 431,
+        "mtime_ns": 1789247431429023880,
+        "sha256": "3dd4b5eaf205163f624d49abcd6bc244dcd321d73269272fbad9e676c7c1a325"
+      }
+    },
+    "limits": {
+      "sibling_busy_max": 0.05,
+      "thread_cpu_wall_min": 0.98,
+      "frequency_khz": [
+        3267000,
+        3333000
+      ],
+      "major_faults_max": 0,
+      "clean_rounds": 7,
+      "max_rounds_per_core": 21,
+      "max_cores": 3
+    },
+    "environment": {
+      "node": 0,
+      "update_cpus": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "allowed_cpus": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "query_candidates": [
+        8,
+        16,
+        24
+      ],
+      "siblings": {
+        "8": [
+          72
+        ],
+        "16": [
+          80
+        ],
+        "24": [
+          88
+        ]
+      },
+      "environment": {
+        "OMP_NUM_THREADS": "32",
+        "OMP_PROC_BIND": "false",
+        "OMP_WAIT_POLICY": "passive",
+        "OPENBLAS_NUM_THREADS": "1"
+      },
+      "other_environment": {
+        "OMP_PLACES": null,
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_THREAD_LIMIT": null,
+        "MKL_NUM_THREADS": null,
+        "GOMP_CPU_AFFINITY": null,
+        "KMP_AFFINITY": null,
+        "LD_PRELOAD": null
+      },
+      "host": "oj.cuhk.edu.cn",
+      "kernel": "6.8.0-111-generic",
+      "machine": "x86_64",
+      "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]"
+    },
+    "mutations_executed": false,
+    "maintenance_policy": "Reuse original native mutation timings for the exact archived graph states"
+  },
+  "source_copies": {
+    "current": {
+      "remeasure.py": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/current/remeasure.py",
+        "bytes": 27814,
+        "mtime_ns": 1789379225556049914,
+        "sha256": "c8562a1b097123f5c39ad0225e1057fab99311727c8c8f2183ae21d8f18bc412"
+      },
+      "runner.py": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/current/runner.py",
+        "bytes": 29984,
+        "mtime_ns": 1789221861629894381,
+        "sha256": "e33752f3eadde739c8ff9ef191df7349b1f6c27eac3d87516dfebeb946f955f6"
+      },
+      "protocol.py": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/current/protocol.py",
+        "bytes": 15187,
+        "mtime_ns": 1789379913948243018,
+        "sha256": "a059727349c0ff373ead17144e4081eefceb1652e7acef34494bcb6b78bab153"
+      },
+      "measurement.py": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/current/measurement.py",
+        "bytes": 9622,
+        "mtime_ns": 1789379913954243141,
+        "sha256": "9ffc80711efa085628ffe175cfd77c117cc78e0621236605662644d71a676e13"
+      },
+      "aggregate.py": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/current/aggregate.py",
+        "bytes": 28431,
+        "mtime_ns": 1789379913959243244,
+        "sha256": "3cc76e8ab532770382f300b98cd0d2b4d9e3fdda07e42f6cfe46d638a06c9b99"
+      },
+      "gt.py": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/current/gt.py",
+        "bytes": 15198,
+        "mtime_ns": 1789191965392846507,
+        "sha256": "5072f38d0fa42299e4df91ba728624e920584985a33db69332328fa91fdcc6f3"
+      },
+      "runtime.py": {
+        "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/current/runtime.py",
+        "bytes": 35714,
+        "mtime_ns": 1789379913951243080,
+        "sha256": "b55d57a63b1ab46cef4f0b9f5e8b29f96ad12d80d696a9bd2b83a3315eb3a0d4"
+      }
+    },
+    "legacy": {
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_cache.h": {
+        "original": {
+          "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_cache.h",
+          "bytes": 2481,
+          "mtime_ns": 1789232838161439533,
+          "sha256": "53591c83fb62a0eb42a7348ca946a5df0325e4e7e357f8ec6d0dca00005ad6bb"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/000-deletion_cache.h",
+          "bytes": 2481,
+          "mtime_ns": 1789232838161439533,
+          "sha256": "53591c83fb62a0eb42a7348ca946a5df0325e4e7e357f8ec6d0dca00005ad6bb"
+        }
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_publication_gate.h": {
+        "original": {
+          "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/deletion_publication_gate.h",
+          "bytes": 431,
+          "mtime_ns": 1789247431429023880,
+          "sha256": "3dd4b5eaf205163f624d49abcd6bc244dcd321d73269272fbad9e676c7c1a325"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/001-deletion_publication_gate.h",
+          "bytes": 431,
+          "mtime_ns": 1789247431429023880,
+          "sha256": "3dd4b5eaf205163f624d49abcd6bc244dcd321d73269272fbad9e676c7c1a325"
+        }
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/hnswalg.h": {
+        "original": {
+          "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/hnswalg.h",
+          "bytes": 462284,
+          "mtime_ns": 1789247431475024867,
+          "sha256": "7de1d2edcaee93c098712db21f9ccd797cf4620e8386798fa2bef3842e9cf9b2"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/002-hnswalg.h",
+          "bytes": 462284,
+          "mtime_ns": 1789247431475024867,
+          "sha256": "7de1d2edcaee93c098712db21f9ccd797cf4620e8386798fa2bef3842e9cf9b2"
+        }
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/parallel_for.h": {
+        "original": {
+          "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/hnswlib/parallel_for.h",
+          "bytes": 1813,
+          "mtime_ns": 1789232838158439534,
+          "sha256": "f2fe12aa1d1072933473444cdec8706fce82f75cafee4fb710aec5d0c5f6125f"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/003-parallel_for.h",
+          "bytes": 1813,
+          "mtime_ns": 1789232838158439534,
+          "sha256": "f2fe12aa1d1072933473444cdec8706fce82f75cafee4fb710aec5d0c5f6125f"
+        }
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/provenance.json": {
+        "original": {
+          "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/provenance.json",
+          "bytes": 2406,
+          "mtime_ns": 1789247923710508833,
+          "sha256": "80897a2d902f5b074d718f1219d8f8fe73f66c3515b20a2be87b2c02a1f6443c"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/004-provenance.json",
+          "bytes": 2406,
+          "mtime_ns": 1789247923710508833,
+          "sha256": "80897a2d902f5b074d718f1219d8f8fe73f66c3515b20a2be87b2c02a1f6443c"
+        }
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/python_bindings/bindings.cpp": {
+        "original": {
+          "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/python_bindings/bindings.cpp",
+          "bytes": 125083,
+          "mtime_ns": 1789242302500381886,
+          "sha256": "4b208544cab570e4e79eb53dac0a569d1f1df938d637825402195b03b4d14a20"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/005-bindings.cpp",
+          "bytes": 125083,
+          "mtime_ns": 1789242302500381886,
+          "sha256": "4b208544cab570e4e79eb53dac0a569d1f1df938d637825402195b03b4d14a20"
+        }
+      },
+      "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/setup.py": {
+        "original": {
+          "path": "/home/mocheng/.copilot/session-state/460a83a2-e747-453c-885e-b50f202d2f55/files/dynamic-rerun-20260910/point-parallel-v11-native/setup.py",
+          "bytes": 5090,
+          "mtime_ns": 1788964265051317912,
+          "sha256": "080a1a9f0d9ee1dd561fe05d572c79c47924112b09305e961b4340c307e0e669"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/006-setup.py",
+          "bytes": 5090,
+          "mtime_ns": 1788964265051317912,
+          "sha256": "080a1a9f0d9ee1dd561fe05d572c79c47924112b09305e961b4340c307e0e669"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/aggregate.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/aggregate.py",
+          "bytes": 3069,
+          "mtime_ns": 1779442843027473309,
+          "sha256": "3a7d785365fd4d44ececfcc7254e5b0c62d43005f30584658d3cdb992008611d"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/007-aggregate.py",
+          "bytes": 3069,
+          "mtime_ns": 1779442843027473309,
+          "sha256": "3a7d785365fd4d44ececfcc7254e5b0c62d43005f30584658d3cdb992008611d"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/__init__.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/__init__.py",
+          "bytes": 81,
+          "mtime_ns": 1789190509109153012,
+          "sha256": "1c9a653414ba3cf343acf17fa22dbc02b75a5ef7c984969b9e5a178f6964e5cd"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/008-__init__.py",
+          "bytes": 81,
+          "mtime_ns": 1789190509109153012,
+          "sha256": "1c9a653414ba3cf343acf17fa22dbc02b75a5ef7c984969b9e5a178f6964e5cd"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/aggregate.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/aggregate.py",
+          "bytes": 26896,
+          "mtime_ns": 1789221861643894471,
+          "sha256": "1a702ace5a272dd4e73988a5f4e814de7c8f48a838c4455b0531f49fddfb012d"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/009-aggregate.py",
+          "bytes": 26896,
+          "mtime_ns": 1789221861643894471,
+          "sha256": "1a702ace5a272dd4e73988a5f4e814de7c8f48a838c4455b0531f49fddfb012d"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/canary.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/canary.py",
+          "bytes": 14297,
+          "mtime_ns": 1789221837503743094,
+          "sha256": "3994495492fe5d1bedcf93713a1a0aafd58acf3433028231eccfd9fdbda43ae1"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/010-canary.py",
+          "bytes": 14297,
+          "mtime_ns": 1789221837503743094,
+          "sha256": "3994495492fe5d1bedcf93713a1a0aafd58acf3433028231eccfd9fdbda43ae1"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/delete.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/delete.py",
+          "bytes": 364,
+          "mtime_ns": 1789191348254508872,
+          "sha256": "e37f4c1668a281b77403cc55c3e200fc8f98684ed9e5137856e9b5619e509dc1"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/011-delete.py",
+          "bytes": 364,
+          "mtime_ns": 1789191348254508872,
+          "sha256": "e37f4c1668a281b77403cc55c3e200fc8f98684ed9e5137856e9b5619e509dc1"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/gt.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/gt.py",
+          "bytes": 15198,
+          "mtime_ns": 1789191965392846507,
+          "sha256": "5072f38d0fa42299e4df91ba728624e920584985a33db69332328fa91fdcc6f3"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/012-gt.py",
+          "bytes": 15198,
+          "mtime_ns": 1789191965392846507,
+          "sha256": "5072f38d0fa42299e4df91ba728624e920584985a33db69332328fa91fdcc6f3"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/incremental.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/incremental.py",
+          "bytes": 364,
+          "mtime_ns": 1789191348242508387,
+          "sha256": "9ec57239f928998ae9bc035b4fdf2aa02f487ee3fbe24869d23baf361cb5ac83"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/013-incremental.py",
+          "bytes": 364,
+          "mtime_ns": 1789191348242508387,
+          "sha256": "9ec57239f928998ae9bc035b4fdf2aa02f487ee3fbe24869d23baf361cb5ac83"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/measurement.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/measurement.py",
+          "bytes": 8133,
+          "mtime_ns": 1789201014369736868,
+          "sha256": "8403c3e432515721200d41b550d3125e88af8ca9e5770b9b6f71cd566acbf027"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/014-measurement.py",
+          "bytes": 8133,
+          "mtime_ns": 1789201014369736868,
+          "sha256": "8403c3e432515721200d41b550d3125e88af8ca9e5770b9b6f71cd566acbf027"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/pipeline.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/pipeline.py",
+          "bytes": 25487,
+          "mtime_ns": 1789236385560421381,
+          "sha256": "8f246ce0ad52dff374f1c8a033f500e8706f089feac7558c706263faa75b6492"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/015-pipeline.py",
+          "bytes": 25487,
+          "mtime_ns": 1789236385560421381,
+          "sha256": "8f246ce0ad52dff374f1c8a033f500e8706f089feac7558c706263faa75b6492"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/point_update.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/point_update.py",
+          "bytes": 379,
+          "mtime_ns": 1789191348261509154,
+          "sha256": "31f3b9bfdc959a1e6aa15fa5c4664964a840cfad4fd17ccfe39898f238705513"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/016-point_update.py",
+          "bytes": 379,
+          "mtime_ns": 1789191348261509154,
+          "sha256": "31f3b9bfdc959a1e6aa15fa5c4664964a840cfad4fd17ccfe39898f238705513"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/protocol.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/protocol.py",
+          "bytes": 15157,
+          "mtime_ns": 1789221837485742985,
+          "sha256": "936a674ae5a24a2911d8cab7332d1e6bbdee7b568ae12989fa85d39ad312ae19"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/017-protocol.py",
+          "bytes": 15157,
+          "mtime_ns": 1789221837485742985,
+          "sha256": "936a674ae5a24a2911d8cab7332d1e6bbdee7b568ae12989fa85d39ad312ae19"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/runner.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/runner.py",
+          "bytes": 29984,
+          "mtime_ns": 1789221861629894381,
+          "sha256": "e33752f3eadde739c8ff9ef191df7349b1f6c27eac3d87516dfebeb946f955f6"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/018-runner.py",
+          "bytes": 29984,
+          "mtime_ns": 1789221861629894381,
+          "sha256": "e33752f3eadde739c8ff9ef191df7349b1f6c27eac3d87516dfebeb946f955f6"
+        }
+      },
+      "/home/mocheng/hashann/exp_benchmark/dynamic/runtime.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/exp_benchmark/dynamic/runtime.py",
+          "bytes": 35615,
+          "mtime_ns": 1789221837478742943,
+          "sha256": "40b1505fd71b2ff05716d00d67b020c85f23dd008420249b7fc03c0a47a31df7"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/019-runtime.py",
+          "bytes": 35615,
+          "mtime_ns": 1789221837478742943,
+          "sha256": "40b1505fd71b2ff05716d00d67b020c85f23dd008420249b7fc03c0a47a31df7"
+        }
+      },
+      "/home/mocheng/hashann/tests/hashann.py": {
+        "original": {
+          "path": "/home/mocheng/hashann/tests/hashann.py",
+          "bytes": 13860,
+          "mtime_ns": 1779455131608434326,
+          "sha256": "ad4b66aea0977f44aa81bc4ad4a790920c2fdf4e9543e523a5304e4d1f9583f0"
+        },
+        "copy": {
+          "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa/source_reference/legacy/020-hashann.py",
+          "bytes": 13860,
+          "mtime_ns": 1779455131608434326,
+          "sha256": "ad4b66aea0977f44aa81bc4ad4a790920c2fdf4e9543e523a5304e4d1f9583f0"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,272 @@
+[
+  {
+    "operation": "insert",
+    "stage": 0,
+    "state": {
+      "occupied": 5000000,
+      "deleted": 0,
+      "live": 5000000
+    },
+    "directory": "data/raw/insert/stage-00",
+    "results": "data/raw/insert/stage-00/results.json",
+    "ground_truth": "data/raw/insert/stage-00/ground-truth.npz",
+    "calibration": "data/raw/insert/stage-00/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/attempts/stage-0-155714a3803d40fc9a9743fe9c33ed9d/results.json",
+    "results_sha256": "40e55ef4d4cf4995bb70555c3bb3a12c939224e7084d7d7eb345c28906db3700"
+  },
+  {
+    "operation": "insert",
+    "stage": 1,
+    "state": {
+      "occupied": 6000000,
+      "deleted": 0,
+      "live": 6000000
+    },
+    "directory": "data/raw/insert/stage-01",
+    "results": "data/raw/insert/stage-01/results.json",
+    "ground_truth": "data/raw/insert/stage-01/ground-truth.npz",
+    "calibration": "data/raw/insert/stage-01/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/attempts/stage-1-998fbc7794e6427193b5f17a921b7a90/results.json",
+    "results_sha256": "118f6d5965e87757fbb73a01a11af2bcc79a32c4412348e6e90aceee3e0e9bf1"
+  },
+  {
+    "operation": "insert",
+    "stage": 2,
+    "state": {
+      "occupied": 7000000,
+      "deleted": 0,
+      "live": 7000000
+    },
+    "directory": "data/raw/insert/stage-02",
+    "results": "data/raw/insert/stage-02/results.json",
+    "ground_truth": "data/raw/insert/stage-02/ground-truth.npz",
+    "calibration": "data/raw/insert/stage-02/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/attempts/stage-2-32d22ec0cf9c4f57bccb9e8ee750b855/results.json",
+    "results_sha256": "f7925871540154f2587fa4751d3821fbdef3d066806c54e86b31f0e9d84a3e5d"
+  },
+  {
+    "operation": "insert",
+    "stage": 3,
+    "state": {
+      "occupied": 8000000,
+      "deleted": 0,
+      "live": 8000000
+    },
+    "directory": "data/raw/insert/stage-03",
+    "results": "data/raw/insert/stage-03/results.json",
+    "ground_truth": "data/raw/insert/stage-03/ground-truth.npz",
+    "calibration": "data/raw/insert/stage-03/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/attempts/stage-3-023d16b8047542e4ae1aebedbf0092e5/results.json",
+    "results_sha256": "a124adcee7330bc9c73ad8359d9545a267d7225294d14ad3a3fab41bc121d95e"
+  },
+  {
+    "operation": "insert",
+    "stage": 4,
+    "state": {
+      "occupied": 9000000,
+      "deleted": 0,
+      "live": 9000000
+    },
+    "directory": "data/raw/insert/stage-04",
+    "results": "data/raw/insert/stage-04/results.json",
+    "ground_truth": "data/raw/insert/stage-04/ground-truth.npz",
+    "calibration": "data/raw/insert/stage-04/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/attempts/stage-4-82266ca25a34480aa9985d5d60b22485/results.json",
+    "results_sha256": "9099550e414d42d5c85c2a6fb7bede7e88eed16576f58a40a95894ee3f7b6d6d"
+  },
+  {
+    "operation": "insert",
+    "stage": 5,
+    "state": {
+      "occupied": 10000000,
+      "deleted": 0,
+      "live": 10000000
+    },
+    "directory": "data/raw/insert/stage-05",
+    "results": "data/raw/insert/stage-05/results.json",
+    "ground_truth": "data/raw/insert/stage-05/ground-truth.npz",
+    "calibration": "data/raw/insert/stage-05/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/insert/attempts/stage-5-33edcc9de1e54661bf3f3d960a6192ca/results.json",
+    "results_sha256": "fb707da25a682c3fd99d51eff33ec224e4c0c7669a1ce0e8422ce0f106424cbe"
+  },
+  {
+    "operation": "delete",
+    "stage": 0,
+    "state": {
+      "occupied": 10000000,
+      "deleted": 0,
+      "live": 10000000
+    },
+    "directory": "data/raw/delete/stage-00",
+    "results": "data/raw/delete/stage-00/results.json",
+    "ground_truth": "data/raw/delete/stage-00/ground-truth.npz",
+    "calibration": "data/raw/delete/stage-00/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-0-6891755c7a824eea921d1265b4e174c3/results.json",
+    "results_sha256": "2a2bc5115d4efadd2dd200528accb61f596370649fdfc9d8f789d9edd2d3d147"
+  },
+  {
+    "operation": "delete",
+    "stage": 1,
+    "state": {
+      "occupied": 10000000,
+      "deleted": 1000000,
+      "live": 9000000
+    },
+    "directory": "data/raw/delete/stage-01",
+    "results": "data/raw/delete/stage-01/results.json",
+    "ground_truth": "data/raw/delete/stage-01/ground-truth.npz",
+    "calibration": "data/raw/delete/stage-01/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-1-588c4f72ad384759b657f129fa2b02a1/results.json",
+    "results_sha256": "3fd672b7aa91ed0061323db538485ee84ed6dddf0ee56a96b7ed452d9b35756a"
+  },
+  {
+    "operation": "delete",
+    "stage": 2,
+    "state": {
+      "occupied": 10000000,
+      "deleted": 2000000,
+      "live": 8000000
+    },
+    "directory": "data/raw/delete/stage-02",
+    "results": "data/raw/delete/stage-02/results.json",
+    "ground_truth": "data/raw/delete/stage-02/ground-truth.npz",
+    "calibration": "data/raw/delete/stage-02/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-2-02848ac5817844be956e15ecf1098675/results.json",
+    "results_sha256": "6f77c9f0a3e3c495c45edb68c233273f22af7e203fa6812cc985a31511036dd2"
+  },
+  {
+    "operation": "delete",
+    "stage": 3,
+    "state": {
+      "occupied": 10000000,
+      "deleted": 3000000,
+      "live": 7000000
+    },
+    "directory": "data/raw/delete/stage-03",
+    "results": "data/raw/delete/stage-03/results.json",
+    "ground_truth": "data/raw/delete/stage-03/ground-truth.npz",
+    "calibration": "data/raw/delete/stage-03/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-3-4c11037fd103438eb01d33fbfaafe920/results.json",
+    "results_sha256": "c5ab69ff18669424a9fc24b1aae0066b4bb0bde00adeb558ad0928a94dcdf332"
+  },
+  {
+    "operation": "delete",
+    "stage": 4,
+    "state": {
+      "occupied": 10000000,
+      "deleted": 4000000,
+      "live": 6000000
+    },
+    "directory": "data/raw/delete/stage-04",
+    "results": "data/raw/delete/stage-04/results.json",
+    "ground_truth": "data/raw/delete/stage-04/ground-truth.npz",
+    "calibration": "data/raw/delete/stage-04/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-4-2f876aa278fe45e7be1dd3afdaba6542/results.json",
+    "results_sha256": "97b5b59da7a742239b7671079d90be89451e290c9ce64cc6084f63bb67117676"
+  },
+  {
+    "operation": "delete",
+    "stage": 5,
+    "state": {
+      "occupied": 10000000,
+      "deleted": 5000000,
+      "live": 5000000
+    },
+    "directory": "data/raw/delete/stage-05",
+    "results": "data/raw/delete/stage-05/results.json",
+    "ground_truth": "data/raw/delete/stage-05/ground-truth.npz",
+    "calibration": "data/raw/delete/stage-05/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/delete/attempts/stage-5-dbc4614f27b948c39eb5607edab24f5b/results.json",
+    "results_sha256": "176a75b4a43006017472d37dfd623600e5ce15e90ae58ecc3e150d544d53706b"
+  },
+  {
+    "operation": "point_update",
+    "stage": 0,
+    "state": {
+      "occupied": 5000000,
+      "deleted": 0,
+      "live": 5000000
+    },
+    "directory": "data/raw/point_update/stage-00",
+    "results": "data/raw/point_update/stage-00/results.json",
+    "ground_truth": "data/raw/point_update/stage-00/ground-truth.npz",
+    "calibration": "data/raw/point_update/stage-00/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/attempts/stage-0-a302e8e0857a445abfc63ab6186e2048/results.json",
+    "results_sha256": "13d41f4dad0f9d02413a120a146dc8d28503463274c11d9d857a8537a07ffbed"
+  },
+  {
+    "operation": "point_update",
+    "stage": 1,
+    "state": {
+      "occupied": 6000000,
+      "deleted": 1000000,
+      "live": 5000000
+    },
+    "directory": "data/raw/point_update/stage-01",
+    "results": "data/raw/point_update/stage-01/results.json",
+    "ground_truth": "data/raw/point_update/stage-01/ground-truth.npz",
+    "calibration": "data/raw/point_update/stage-01/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/attempts/stage-1-45173cf38522471e92e4f9a1127945cb/results.json",
+    "results_sha256": "34ae16e27c8bad2fa5b242ccb3da7959e5c0c4c9939d852e0a0a01282169068f"
+  },
+  {
+    "operation": "point_update",
+    "stage": 2,
+    "state": {
+      "occupied": 7000000,
+      "deleted": 2000000,
+      "live": 5000000
+    },
+    "directory": "data/raw/point_update/stage-02",
+    "results": "data/raw/point_update/stage-02/results.json",
+    "ground_truth": "data/raw/point_update/stage-02/ground-truth.npz",
+    "calibration": "data/raw/point_update/stage-02/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/attempts/stage-2-980bb413cbf3400bb19a0976abf3f1ec/results.json",
+    "results_sha256": "a449332a0d86f72e1f23fb05e68ecff97eb74fcca18a7b70d8e286cc398a4358"
+  },
+  {
+    "operation": "point_update",
+    "stage": 3,
+    "state": {
+      "occupied": 8000000,
+      "deleted": 3000000,
+      "live": 5000000
+    },
+    "directory": "data/raw/point_update/stage-03",
+    "results": "data/raw/point_update/stage-03/results.json",
+    "ground_truth": "data/raw/point_update/stage-03/ground-truth.npz",
+    "calibration": "data/raw/point_update/stage-03/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/attempts/stage-3-ac88382918c5403786f77990b82b6261/results.json",
+    "results_sha256": "9ac9797774e3b39a5451fc39e3fce5199096abbd18e95fa33d5715385d29f77c"
+  },
+  {
+    "operation": "point_update",
+    "stage": 4,
+    "state": {
+      "occupied": 9000000,
+      "deleted": 4000000,
+      "live": 5000000
+    },
+    "directory": "data/raw/point_update/stage-04",
+    "results": "data/raw/point_update/stage-04/results.json",
+    "ground_truth": "data/raw/point_update/stage-04/ground-truth.npz",
+    "calibration": "data/raw/point_update/stage-04/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/attempts/stage-4-f0a1ff0678864211904f7a9e50db7a80/results.json",
+    "results_sha256": "cbd3bc32694934d5e855fe1440ef4ab9aa1ed5ac91b7ff07041700abe707e877"
+  },
+  {
+    "operation": "point_update",
+    "stage": 5,
+    "state": {
+      "occupied": 10000000,
+      "deleted": 5000000,
+      "live": 5000000
+    },
+    "directory": "data/raw/point_update/stage-05",
+    "results": "data/raw/point_update/stage-05/results.json",
+    "ground_truth": "data/raw/point_update/stage-05/ground-truth.npz",
+    "calibration": "data/raw/point_update/stage-05/calibration.npz",
+    "original_results_path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/point_update/attempts/stage-5-4fb39d8088f04013ad81a3dbaa601a90/results.json",
+    "results_sha256": "99d3f6f928be0fa2aff69434558cb18b06386c14271237fcc2d283f3fe5e7b77"
+  }
+]

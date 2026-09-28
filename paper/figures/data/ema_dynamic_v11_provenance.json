@@ -1,0 +1,19 @@
+{
+  "native_sha256": "608e9ae692fa2fd9d5ec160a370a63b90419356c6b64d67285f10d6bd1e4f84e",
+  "protocol": "sift10m-mixed-dnf-dynamic-rebuild-v5",
+  "measurement_schema": "canonical-dynamic-recall-revision-v1",
+  "source_table": "/home/mocheng/hashann/paper_handoff/ema_dynamic_v11_recall95_20260914/data/stage_metrics.csv",
+  "plot_table": "ema_dynamic_v11.csv",
+  "plot_table_sha256": "7edeb5de0e64b57ed78d127888266c022036e34488547cf78dd99b84f8deb3c7",
+  "published_paper_sha256": "ee97d398f7116145fcf02dc83696d2edb0b1ccb2c6328d508263f5d4a1961601",
+  "source90_published_paper_sha256": "b134cce85bae8c69bec06e1ba255a038a3ddb669db6db1adb2a339de1ced6203",
+  "query_measurement_run": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_recall95_v11_20260914_608e9ae692fa",
+  "target_recall": 0.95,
+  "ft_routing_min_deg": 8,
+  "queries_retimed": true,
+  "maintenance_reused": true,
+  "mutations_executed": false,
+  "preserved_source90_handoff": "/home/mocheng/hashann/paper_handoff/ema_dynamic_v11_20260913",
+  "qps": "All18 values are actual QPS95 results from new recall calibration and paired timing on the unchanged stage checkpoints. No minimum-ef substitutions or QPS90 relabeling. Solid lines and filled markers are retained.",
+  "maintenance": "Original per-stage1M-record mutation wall seconds /60, unchanged; excludes stage0 and construction/GT/query/checkpoint overhead. Queries only were remeasured."
+}

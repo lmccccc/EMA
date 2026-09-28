@@ -16,14 +16,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 from hashann import HashANN  # noqa: E402
-
-
-def fvecs_read(path, max_n=None):
-    with open(path, "rb") as f:
-        d = np.frombuffer(f.read(4), dtype=np.int32)[0]
-        f.seek(0)
-        data = np.fromfile(f, dtype=np.float32).reshape(-1, d + 1)[:, 1:]
-    return data if max_n is None else data[:max_n]
+from hashann_query import load_query_data, validate_ids  # noqa: E402
 
 
 def main():
@@ -66,23 +59,25 @@ def main():
         "youtube_rgb": "youtube1m",
     }.get(args.dataset, args.dataset)
     label_root = ds_root / args.label_subdir
-    attr_tag = "arbi_" + "_".join(args.attr_type.split(",")) + "_random"
+    predicate_tag = "arbi_" + "_".join(args.attr_type.split(","))
+    attr_tag = predicate_tag + "_random"
+    attr_idx_list = [int(x) for x in args.attr_type.split(",")]
+    numeric_marker_suffix = "_nb2" if 0 in attr_idx_list else ""
 
     if args.index_path:
         index_path = args.index_path
     else:
         index_path = str(
             ds_root / "hashann" / "index"
-            / f"index_{args.M}_{args.ef_construction}_{attr_tag}_{args.ft_bits}"
+            / f"index_{args.M}_{args.ef_construction}_{attr_tag}_{args.ft_bits}{numeric_marker_suffix}_mo2_do1"
         )
     query_file = args.query_file or str(ds_root / "query.fvecs")
     print(f"[FPR] dataset       = {args.dataset}")
     print(f"[FPR] index_path    = {index_path}")
     print(f"[FPR] label_root    = {label_root}")
     print(f"[FPR] query_file    = {query_file}")
-    assert Path(index_path).is_file(), f"index file missing: {index_path}"
-
-    attr_idx_list = [int(x) for x in args.attr_type.split(",")]
+    if not Path(index_path).is_file():
+        raise FileNotFoundError(f"index file missing: {index_path}")
 
     params = {
         "M": args.M, "N": args.N, "dim": args.dim,
@@ -92,9 +87,6 @@ def main():
     hash_ann = HashANN()
     hash_ann.init_params(params)
     index = hash_ann.load_index(params, attr_idx_list, index_path, 1, "bfann")
-
-    queries = fvecs_read(query_file, max_n=args.n_query)
-    print(f"[FPR] queries       = {queries.shape}")
 
     index.set_num_threads(1)
     index.set_ft_routing_flag(True)
@@ -107,13 +99,18 @@ def main():
         pred, label = token.rsplit(":", 1)
         sel_pairs.append((pred.strip(), label.strip()))
     ef_list = [int(x) for x in args.ef_search_list.split(",") if x]
+    if not ef_list or any(ef < args.K for ef in ef_list):
+        raise ValueError("Every ef_search must be at least K")
 
     all_results = []
     for predicate_str, sel_label in sel_pairs:
-        pred_file = label_root / f"predicate_arbi_0_1_{predicate_str}.json"
-        gt_file = label_root / f"gt_arbi_0_1_{predicate_str}.json"
-        preds = json.load(open(pred_file))
-        gt = json.load(open(gt_file))
+        pred_file = label_root / f"predicate_{predicate_tag}_{predicate_str}.json"
+        gt_file = label_root / f"gt_{predicate_tag}_{predicate_str}.json"
+        test_q, test_pred, truth = load_query_data(
+            query_file, pred_file, gt_file, args.N, args.n_query, args.K)
+        if test_q.shape[1] != args.dim:
+            raise ValueError("Query dimension differs from the index configuration")
+        Q = len(test_q)
 
         print(f"\n{'='*64}")
         print(f"Selectivity {sel_label}  (predicate={predicate_str})")
@@ -121,24 +118,18 @@ def main():
         print(f"  gt_file   = {gt_file}")
         print(f"{'='*64}")
 
-        test_q = queries[:args.n_query]
-        test_pred = preds[:args.n_query]
         for ef in ef_list:
             index.set_ef(ef)
             index.set_ft_flag(True)
             index.reset_ft_stats()
-            ids, _ = index.hybrid_knn_query(test_q, test_pred, k=args.K)
+            ids, _ = index.hybrid_knn_query(test_q, test_pred, k=args.K, num_threads=1)
+            validate_ids(ids, args.N, Q, args.K)
             stats = index.get_ft_stats()
             ft_total = int(stats["ft_passed_total"])
             ft_fp = int(stats["ft_false_positives"])
             ft_tp = int(stats["ft_true_positives"])
             fp_rate = float(stats["ft_fp_rate"])
-            Q = len(gt)
-            correct = sum(
-                len(set(gt[qi]) & set(int(x) for x in ids[qi]))
-                for qi in range(Q)
-            )
-            recall = correct / (Q * args.K)
+            recall = float(np.any(ids[:, :, None] == truth[:, None, :], axis=1).mean())
             print(f"  ef={ef:3d}: recall={recall:.4f}  "
                   f"ft_passed={ft_total}  ft_fp={ft_fp}  ft_tp={ft_tp}  "
                   f"FP_rate={fp_rate:.4f} ({fp_rate*100:.1f}%)")

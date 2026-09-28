@@ -1,0 +1,20 @@
+{
+  "insert": {
+    "records": 5000000,
+    "seconds": 603.8291802555323,
+    "minutes": 10.063819670925538,
+    "minutes_per_million": 2.0127639341851076
+  },
+  "delete": {
+    "records": 5000000,
+    "seconds": 1759.7975076921284,
+    "minutes": 29.329958461535472,
+    "minutes_per_million": 5.8659916923070945
+  },
+  "point_update": {
+    "records": 5000000,
+    "seconds": 2310.988279303536,
+    "minutes": 38.5164713217256,
+    "minutes_per_million": 7.70329426434512
+  }
+}

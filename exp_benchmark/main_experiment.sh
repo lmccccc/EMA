@@ -6,11 +6,7 @@ cd "$(dirname "$0")"
 source ./env.sh
 source ./ablation/selectivity_specs.sh
 
-DATASETS=("${EMA_DATASETS[@]:-sift10m youtube_rgb wiki_15_4M Redcaps_4M}")
-# Bash expansion safeguard when EMA_DATASETS is unset:
-if [ -z "${EMA_DATASETS:-}" ]; then
-    DATASETS=(sift10m youtube_rgb wiki_15_4M Redcaps_4M)
-fi
+read -r -a DATASETS <<< "${EMA_DATASETS:-sift10m youtube_rgb wiki_15_4M Redcaps_4M}"
 
 OUTDIR=logs/main
 mkdir -p "$OUTDIR"

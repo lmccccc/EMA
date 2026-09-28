@@ -1,0 +1,64 @@
+{
+  "phase": "deleted_before_optional_add",
+  "counters": {
+    "requested": 1000000,
+    "marked": 1000000,
+    "search_candidates": 305124600,
+    "search_expanded": 307452218,
+    "incoming_edges_repaired": 46516507,
+    "outgoing_edges_added": 89897455,
+    "rewired_nodes": 76416512,
+    "pruned_edges": 81593778,
+    "scrubbed_edges": 440112,
+    "candidate_sources": 298998346,
+    "empty_marker_rows": 68231937,
+    "matched_edges": 229074455,
+    "cleared_bits": 19594195,
+    "support_checks": 5854613728,
+    "parallel_preparations": 0,
+    "reused_preparations": 0,
+    "recomputed_preparations": 0,
+    "parallel_points": 1000000,
+    "max_active_points": 32,
+    "parallel_deletions": 1000000,
+    "peak_parallel_deletions": 32,
+    "incoming_handoffs": 87206,
+    "distance_cache_hits": 3743380101,
+    "distance_cache_misses": 15624463957,
+    "rng_witness_reuses": 12778616,
+    "cleanup_bound_reused_rows": 298858396,
+    "cleanup_bound_stale_rows": 139950,
+    "deferred_incoming_handoffs": 17083,
+    "deferred_incoming_repairs": 17083,
+    "deferred_retired_source_repairs": 2,
+    "ignored_completed_ghosts": 12851339,
+    "deferred_overlapping_edges": 17079,
+    "deferred_pending_requests": 2,
+    "deferred_retired_source_requests": 2,
+    "deferred_intermediate_rows": 2,
+    "publication_retired_targets": 136
+  },
+  "phases": {
+    "delete": {
+      "wall_s": 341.7420843951404,
+      "thread_cpu_s": 0.1940797190000012,
+      "process_cpu_s": 6614.631975093987,
+      "process_rusage": {
+        "user_cpu_s": 6579.128503,
+        "system_cpu_s": 35.50350400000025,
+        "minor_faults": 1298,
+        "major_faults": 0,
+        "voluntary_switches": 1162008,
+        "involuntary_switches": 418098
+      },
+      "thread_rusage": {
+        "user_cpu_s": 0.19287800000029165,
+        "system_cpu_s": 0.001238000000057582,
+        "minor_faults": 28,
+        "major_faults": 0,
+        "voluntary_switches": 5,
+        "involuntary_switches": 2
+      }
+    }
+  }
+}

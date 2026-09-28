@@ -1,0 +1,64 @@
+{
+  "phase": "deleted_before_optional_add",
+  "counters": {
+    "requested": 1000000,
+    "marked": 1000000,
+    "search_candidates": 302235600,
+    "search_expanded": 304242565,
+    "incoming_edges_repaired": 40168711,
+    "outgoing_edges_added": 92005058,
+    "rewired_nodes": 71621585,
+    "pruned_edges": 88341032,
+    "scrubbed_edges": 733563,
+    "candidate_sources": 298999081,
+    "empty_marker_rows": 77416720,
+    "matched_edges": 219641189,
+    "cleared_bits": 15481976,
+    "support_checks": 5906570208,
+    "parallel_preparations": 0,
+    "reused_preparations": 0,
+    "recomputed_preparations": 0,
+    "parallel_points": 1000000,
+    "max_active_points": 32,
+    "parallel_deletions": 1000000,
+    "peak_parallel_deletions": 32,
+    "incoming_handoffs": 39453,
+    "distance_cache_hits": 3489813649,
+    "distance_cache_misses": 15667030778,
+    "rng_witness_reuses": 12545554,
+    "cleanup_bound_reused_rows": 298928836,
+    "cleanup_bound_stale_rows": 70245,
+    "deferred_incoming_handoffs": 7454,
+    "deferred_incoming_repairs": 7454,
+    "deferred_retired_source_repairs": 0,
+    "ignored_completed_ghosts": 9724958,
+    "deferred_overlapping_edges": 7454,
+    "deferred_pending_requests": 0,
+    "deferred_retired_source_requests": 0,
+    "deferred_intermediate_rows": 0,
+    "publication_retired_targets": 63
+  },
+  "phases": {
+    "delete": {
+      "wall_s": 345.90494061261415,
+      "thread_cpu_s": 0.8408639219999259,
+      "process_cpu_s": 6707.280160249997,
+      "process_rusage": {
+        "user_cpu_s": 6672.585942999998,
+        "system_cpu_s": 34.69424700000127,
+        "minor_faults": 43758,
+        "major_faults": 0,
+        "voluntary_switches": 1057934,
+        "involuntary_switches": 458553
+      },
+      "thread_rusage": {
+        "user_cpu_s": 0.7667879999999059,
+        "system_cpu_s": 0.07411100000001625,
+        "minor_faults": 39096,
+        "major_faults": 0,
+        "voluntary_switches": 6,
+        "involuntary_switches": 2
+      }
+    }
+  }
+}

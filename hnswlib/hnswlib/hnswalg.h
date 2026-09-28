@@ -1,21 +1,28 @@
 #pragma once
 
 #include "visited_list_pool.h"
+#include "parallel_for.h"
+#include "deletion_cache.h"
+#include "deletion_publication_gate.h"
 #include "hnswlib.h"
 #include "btree_map.hpp"
 #include <atomic>
+#include <array>
 #include <random>
 #include <stdlib.h>
 #include <assert.h>
 #include <unordered_set>
 #include <list>
 #include <memory>
+#include <mutex>
+#include <condition_variable>
 #include <bitset>
 #include <unordered_map>
 #include <cmath>
 #include <deque>
 #include <tuple>
 #include <chrono>
+#include <exception>
 #include <limits>
 #ifdef _OPENMP
 #include <omp.h>
@@ -47,6 +54,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
  public:
     static const tableint MAX_LABEL_OPERATION_LOCKS = 65536;
     static const unsigned char DELETE_MARK = 0x01;
+    static const unsigned char MARKER_CLEANED = 0x02;
+    static const int NUMERIC_MARKER_VERSION = 2;
+    static const int MARKER_OWNER_VERSION = 2;
+    static const int DISTANCE_ORDER_VERSION = 1;
+    static const int NODE_FT_FORMAT_VERSION = 9;
+    static const int EDGE_FT_FORMAT_VERSION = 10;
+    static const int PARTIAL_CODEBOOK_NODE_FORMAT_VERSION = 11;
+    static const int PARTIAL_CODEBOOK_EDGE_FORMAT_VERSION = 12;
 
     size_t max_elements_{0};
     size_t top_elements_{0};
@@ -61,7 +76,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t maxM0_{0};
     size_t M0_mul_{2};
     size_t minM0_{16};
-    double attr_sort_alpha_{0.5};  // weight for attribute similarity in mixed sorting
     size_t ef_construction_{0};
     size_t ef_{ 0 };
     size_t ef_top_{ 0 };
@@ -125,6 +139,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::mutex deleted_elements_lock;  // lock for deleted_elements
     std::unordered_set<tableint> deleted_elements;  // contains internal ids of deleted elements
 
+    // Derived query-maintenance cache; the inline DELETE_MARK remains authoritative.
+    std::vector<std::atomic<uint64_t>> deleted_bitmap_;
+
     // Repair candidate tracking: nodes with high dead-neighbor ratio detected during search
     double repair_dead_ratio_threshold_{0.1};  // report nodes with ≥10% deleted neighbors
     mutable std::mutex repair_candidates_lock_;
@@ -140,6 +157,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     mutable std::vector<std::atomic<uint64_t>> dirty_bitmap_;
     mutable std::atomic<size_t> dirty_count_{0};
     size_t last_patch_deleted_count_{0};
+    bool marker_cleanup_used_{false};
 
     // Maintenance thresholds (fraction of cur_element_count)
     double patch_trigger_ratio_{0.20};
@@ -166,6 +184,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     int table_size_;
     int* counting_hash_table = nullptr; // counting hash table
     std::vector<std::vector<int>> counting_hash_table_mapping;
+    std::mutex attr_mapping_mutex_;
 
     // search hyper-parameters
     // double total_scan_factor_{0.001}; // scan all points belonging to top buckets
@@ -296,7 +315,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
     std::vector<int> bucketize_equal_count(const std::vector<std::vector<std::vector<int>>>& attr, const int attr_idx, int M) {
-        int N = max_elements_;
+        if (attr.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+            throw std::runtime_error("Too many Codebook initialization records");
+        int N = static_cast<int>(attr.size());
         if (N == 0 || M <= 0) return {};
 
         std::vector<int> indexed;
@@ -319,7 +340,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 offset++;
             }
             if (start + offset >= N) {
-                mapping[k] = indexed[N - 1] + 1;
+                mapping[k] = indexed[N - 1] == std::numeric_limits<int>::max()
+                    ? indexed[N - 1] : indexed[N - 1] + 1;
                 for (int kk = k + 1; kk < M; ++kk)
                     mapping[kk] = mapping[k];
                 break;
@@ -343,7 +365,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         // count label frequencies
         std::vector<int> label_cnt(max_cate_size_, 0);
-        for (int i = 0; i < max_elements_; ++i){
+        for (size_t i = 0; i < attr.size(); ++i){
             // int* _attr = attr_at(i, attr_idx);
             std::vector<int> _attr = attr[i][attr_idx];
 
@@ -368,14 +390,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // sort labels by frequency, sort together with both label and frequency
         std::vector<std::pair<int, int>> label_freq;
         for (int lbl = 0; lbl < max_cate_size_; lbl++) {
-            label_freq.push_back({lbl, label_cnt[lbl]});
+            if (label_cnt[lbl] != 0)
+                label_freq.push_back({lbl, label_cnt[lbl]});
         }
         std::sort(label_freq.begin(), label_freq.end(),
                   [](auto& a, auto& b){ return a.second > b.second; });
 
 
         // distribute labels to M buckets, assign label[i] = bucket_id
-        std::vector<int> label_to_bucket(M, -1);
+        // Index by label, even when several labels share one Marker slot.
+        std::vector<int> label_to_bucket(std::max<size_t>(M, max_cate_size_), -1);
         std::vector<int> bucket_count(M, 0);
         for (int i = 0; i < label_freq.size(); i++) {
             int lbl = label_freq[i].first;
@@ -461,16 +485,111 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     #endif
     }
 
+    inline int numerical_bucket(int attribute, int value) const {
+        const auto& mapping = counting_hash_table_mapping[attribute];
+        if (mapping.empty() || mapping.size() > ft_bits_)
+            throw std::runtime_error("Numerical Marker mapping is missing or has invalid size");
+        // Quantile boundaries are bucket starts, not upper bounds.
+        return std::max(0, last_le_index(mapping.data(), static_cast<int>(mapping.size()), value));
+    }
+
     void init_attr_mapping(const std::vector<std::vector<std::vector<int>>>& attr){
+        std::lock_guard<std::mutex> lock(attr_mapping_mutex_);
+        if (ft_bits_ == 0 || ft_bits_ > static_cast<size_t>(std::numeric_limits<int>::max()))
+            throw std::runtime_error("Codebook size must be a positive representable bucket count");
+        if (cur_element_count != 0)
+            throw std::runtime_error(
+                "Cannot remap a populated index; use register_attr_values instead");
+        for (const auto& record : attr) validate_update_attr_record(record);
+        if (attr.empty() && std::find(attr_type_.begin(), attr_type_.end(), 0) != attr_type_.end())
+            throw std::runtime_error("Numerical Codebook initialization requires sample records");
         table_size_ = ft_bits_;
-        counting_hash_table_mapping.clear();
+        std::vector<std::vector<int>> mappings;
         for(int i = 0; i < attr_type_.size(); ++i){
             if (attr_type_[i] == 0) { // numerical
-                counting_hash_table_mapping.push_back(bucketize_equal_count(attr, i, table_size_));
+                mappings.push_back(bucketize_equal_count(attr, i, table_size_));
             } else if (attr_type_[i] == 1) { // categorical
-                counting_hash_table_mapping.push_back(distribute_labels(attr, i, table_size_));
+                mappings.push_back(distribute_labels(attr, i, table_size_));
             }
         }
+        counting_hash_table_mapping = std::move(mappings);
+    }
+
+    void validate_categorical_value(size_t attribute, int value) const {
+        if (value < 0 || value >= max_cate_size_)
+            throw std::runtime_error(
+                "categorical value " + std::to_string(value) +
+                " at attribute " + std::to_string(attribute) +
+                " is outside [0, " + std::to_string(max_cate_size_) + ")");
+    }
+
+    int categorical_bucket(size_t attribute, int value, bool require_assigned = false) const {
+        validate_categorical_value(attribute, value);
+        if (attribute >= counting_hash_table_mapping.size() ||
+            static_cast<size_t>(value) >= counting_hash_table_mapping[attribute].size())
+            throw std::runtime_error("Categorical Codebook mapping is missing");
+        int slot = counting_hash_table_mapping[attribute][value];
+        if (slot < -1 || slot >= static_cast<int>(ft_bits_))
+            throw std::runtime_error("Categorical Codebook bucket is invalid");
+        if (require_assigned && slot == -1)
+            throw std::runtime_error("Stored categorical value has no Codebook assignment");
+        return slot;
+    }
+
+    size_t register_attr_record_locked(const std::vector<std::vector<int>>& record) {
+        if (ft_bits_ == 0 || ft_bits_ > static_cast<size_t>(std::numeric_limits<int>::max()))
+            throw std::runtime_error("Codebook size must be a positive representable bucket count");
+        if (counting_hash_table_mapping.size() != attr_type_.size())
+            throw std::runtime_error("Initialize the Codebook with initAttrMapping before writing attributes");
+        size_t assigned = 0;
+        for (size_t attribute = 0; attribute < attr_type_.size(); ++attribute) {
+            if (attr_type_[attribute] == 0) {
+                numerical_bucket(static_cast<int>(attribute), record[attribute][0]);
+                continue;
+            }
+            auto& mapping = counting_hash_table_mapping[attribute];
+            if (mapping.size() < static_cast<size_t>(max_cate_size_))
+                throw std::runtime_error("Categorical Codebook does not cover the configured capacity");
+            std::vector<size_t> loads;
+            for (int value : record[attribute]) {
+                if (categorical_bucket(attribute, value) != -1) continue;
+                if (loads.empty()) {
+                    loads.assign(ft_bits_, 0);
+                    for (int label = 0; label < max_cate_size_; ++label) {
+                        int slot = categorical_bucket(attribute, label);
+                        if (slot >= 0) ++loads[slot];
+                    }
+                }
+                size_t slot = std::min_element(loads.begin(), loads.end()) - loads.begin();
+                mapping[value] = static_cast<int>(slot);
+                ++loads[slot];
+                ++assigned;
+            }
+        }
+        return assigned;
+    }
+
+    size_t register_attr_values(const std::vector<std::vector<std::vector<int>>>& records) {
+        for (const auto& record : records) validate_update_attr_record(record);
+        std::lock_guard<std::mutex> lock(attr_mapping_mutex_);
+        size_t assigned = 0;
+        for (const auto& record : records) assigned += register_attr_record_locked(record);
+        return assigned;
+    }
+
+    void register_attr_record(const std::vector<std::vector<int>>& record) {
+        validate_update_attr_record(record);
+        std::lock_guard<std::mutex> lock(attr_mapping_mutex_);
+        register_attr_record_locked(record);
+    }
+
+    bool has_unassigned_categories() const {
+        for (size_t attribute = 0; attribute < attr_type_.size(); ++attribute) {
+            if (attr_type_[attribute] != 1) continue;
+            for (int label = 0; label < max_cate_size_; ++label)
+                if (categorical_bucket(attribute, label) == -1) return true;
+        }
+        return false;
     }
 
     void update_cht(int* cht, tableint id){
@@ -479,15 +598,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             int base = i * table_size_;
             if (attr_type_[i] == 0) { // numerical
                 int val = _attr[0];
-                int corresponding_slot = lower_bound(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), val);
-                if (corresponding_slot == -1) continue;
+                int corresponding_slot = numerical_bucket(i, val);
                 cht[base + corresponding_slot]++;
             } else if (attr_type_[i] == 1) { // categorical
                 for(int k = 0; k < max_cate_size_; ++k){
                     int byte_pos = k >> 5;
                     int bit_pos = k & 31;
                     if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
-                        int corresponding_slot = counting_hash_table_mapping[i][k]; 
+                        int corresponding_slot = categorical_bucket(i, k, true);
                         cht[base + corresponding_slot]++;
                     }
                 }
@@ -659,6 +777,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         for (size_t i = 0; i < dirty_words; i++) dirty_bitmap_[i].store(0, std::memory_order_relaxed);
         dirty_count_.store(0, std::memory_order_relaxed);
         last_patch_deleted_count_ = 0;
+        restoreDeletedState();
 
     }
 
@@ -678,6 +797,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         free(linkLists_);
         linkLists_ = nullptr;
         cur_element_count = 0;
+        deleted_bitmap_.clear();
+        marker_cleanup_used_ = false;
         visited_list_pool_.reset(nullptr);
 
 
@@ -810,12 +931,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 continue;
             }
             for (int value : data[j]) {
-                if (value < 0 || value >= max_cate_size_) {
-                    throw std::runtime_error(
-                        "update_attr: categorical value " + std::to_string(value) +
-                        " at attribute " + std::to_string(j) +
-                        " is outside [0, " + std::to_string(max_cate_size_) + ")");
-                }
+                validate_categorical_value(j, value);
             }
         }
     }
@@ -980,6 +1096,42 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return num_deleted_;
     }
 
+    static std::vector<std::atomic<uint64_t>> resized_bitmap(
+        const std::vector<std::atomic<uint64_t>>& bitmap, size_t words) {
+        std::vector<std::atomic<uint64_t>> resized(words);
+        for (size_t i = 0; i < words; i++) {
+            resized[i].store(i < bitmap.size()
+                ? bitmap[i].load(std::memory_order_relaxed) : 0,
+                std::memory_order_relaxed);
+        }
+        return resized;
+    }
+
+    void restoreDeletedState() {
+        deleted_bitmap_ = std::vector<std::atomic<uint64_t>>((max_elements_ + 63) / 64);
+        for (auto& word : deleted_bitmap_) word.store(0, std::memory_order_relaxed);
+        deleted_elements.clear();
+        marker_cleanup_used_ = false;
+        size_t deleted_count = 0;
+        for (size_t i = 0; i < cur_element_count; i++) {
+            const unsigned char flags =
+                *(reinterpret_cast<const unsigned char*>(get_linklist0(i)) + 2);
+            if (flags & DELETE_MARK) {
+                deleted_bitmap_[i >> 6].fetch_or(
+                    uint64_t(1) << (i & 63), std::memory_order_relaxed);
+                deleted_count++;
+                if (allow_replace_deleted_) deleted_elements.insert(i);
+            }
+            if (flags & MARKER_CLEANED) marker_cleanup_used_ = true;
+        }
+        num_deleted_.store(deleted_count, std::memory_order_relaxed);
+    }
+
+    inline bool isMarkedDeletedCached(tableint id) const {
+        return (deleted_bitmap_[id >> 6].load(std::memory_order_relaxed)
+            & (uint64_t(1) << (id & 63))) != 0;
+    }
+
     // ---------------- Dirty bitmap (FreshDiskANN-style) ----------------
     inline bool set_dirty(tableint id) const {
         if (dirty_bitmap_.empty() || id >= max_elements_) return false;
@@ -1009,9 +1161,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     void ensure_dirty_bitmap_sized() {
         size_t needed = (max_elements_ + 63) / 64;
         if (dirty_bitmap_.size() < needed) {
-            dirty_bitmap_ = std::vector<std::atomic<uint64_t>>(needed);
-            for (size_t i = 0; i < needed; i++) dirty_bitmap_[i].store(0, std::memory_order_relaxed);
-            dirty_count_.store(0, std::memory_order_relaxed);
+            dirty_bitmap_ = resized_bitmap(dirty_bitmap_, needed);
         }
     }
 
@@ -1033,7 +1183,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-    searchBaseLayer(tableint ep_id, const void *data_point, int layer) {
+    searchBaseLayer(tableint ep_id, const void *data_point, int layer,
+                    std::vector<tableint>* expanded = nullptr,
+                    tableint live_placeholder = tableint(-1)) {
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
         vl_type *visited_array = vl->mass;
         vl_type visited_array_tag = vl->curV;
@@ -1042,7 +1194,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidateSet;
 
         dist_t lowerBound;
-        if (!isMarkedDeleted(ep_id)) {
+        if (ep_id == live_placeholder || !isMarkedDeletedCached(ep_id)) {
             dist_t dist = fstdistfunc_(data_point, getDataByInternalId(ep_id), dist_func_param_);
             top_candidates.emplace(dist, ep_id);
             lowerBound = dist;
@@ -1061,6 +1213,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             candidateSet.pop();
 
             tableint curNodeNum = curr_el_pair.second;
+            if (expanded) expanded->push_back(curNodeNum);
 
             std::unique_lock <std::mutex> lock(link_list_locks_[curNodeNum]);
 
@@ -1074,18 +1227,24 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             size_t size = getListCount((linklistsizeint*)data);
             tableint *datal = (tableint *) (data + 1);
 #ifdef USE_SSE
-            _mm_prefetch((char *) (visited_array + *(data + 1)), _MM_HINT_T0);
-            _mm_prefetch((char *) (visited_array + *(data + 1) + 64), _MM_HINT_T0);
-            _mm_prefetch(getDataByInternalId(*datal), _MM_HINT_T0);
-            _mm_prefetch(getDataByInternalId(*(datal + 1)), _MM_HINT_T0);
+            if (size > 0) {
+                _mm_prefetch((char *) (visited_array + datal[0]), _MM_HINT_T0);
+                if (size_t(datal[0]) + 64 < max_elements_)
+                    _mm_prefetch((char *) (visited_array + datal[0] + 64), _MM_HINT_T0);
+                _mm_prefetch(getDataByInternalId(datal[0]), _MM_HINT_T0);
+            }
+            if (size > 1)
+                _mm_prefetch(getDataByInternalId(datal[1]), _MM_HINT_T0);
 #endif
 
             for (size_t j = 0; j < size; j++) {
                 tableint candidate_id = *(datal + j);
 //                    if (candidate_id == 0) continue;
 #ifdef USE_SSE
-                _mm_prefetch((char *) (visited_array + *(datal + j + 1)), _MM_HINT_T0);
-                _mm_prefetch(getDataByInternalId(*(datal + j + 1)), _MM_HINT_T0);
+                if (j + 1 < size) {
+                    _mm_prefetch((char *) (visited_array + datal[j + 1]), _MM_HINT_T0);
+                    _mm_prefetch(getDataByInternalId(datal[j + 1]), _MM_HINT_T0);
+                }
 #endif
                 if (visited_array[candidate_id] == visited_array_tag) continue;
                 visited_array[candidate_id] = visited_array_tag;
@@ -1098,7 +1257,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     _mm_prefetch(getDataByInternalId(candidateSet.top().second), _MM_HINT_T0);
 #endif
 
-                    if (!isMarkedDeleted(candidate_id))
+                    if (candidate_id == live_placeholder || !isMarkedDeletedCached(candidate_id))
                         top_candidates.emplace(dist1, candidate_id);
 
                     if (top_candidates.size() > ef_construction_)
@@ -1250,14 +1409,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 //     }
 
     // bare_bone_search means there is no check for deletions and stop condition is ignored in return of extra performance
-    template <bool bare_bone_search = true, bool collect_metrics = false>
+    template <bool bare_bone_search = true, bool collect_metrics = false, bool collect_expanded = false>
     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
     searchBaseLayerST(
         // tableint ep_id,
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates_,
         const void *data_point,
         size_t ef,
-        BaseSearchStopCondition<dist_t>* stop_condition = nullptr) const {
+        BaseSearchStopCondition<dist_t>* stop_condition = nullptr,
+        std::vector<tableint>* expanded = nullptr,
+        tableint live_placeholder = tableint(-1),
+        std::vector<std::mutex>* row_locks = nullptr,
+        const std::vector<std::atomic<size_t>>* adjacency_versions = nullptr,
+        std::vector<size_t>* expanded_versions = nullptr) const {
+        if (collect_expanded && !expanded)
+            throw std::runtime_error("Expanded search trace storage is required");
+        if (expanded_versions && (!collect_expanded || !row_locks || !adjacency_versions))
+            throw std::runtime_error("Adjacency versions require locked expanded search rows");
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
         vl_type *visited_array = vl->mass;
         vl_type visited_array_tag = vl->curV;
@@ -1288,7 +1456,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             tableint id = top_candidates_.top().second;
             visited_array[id] = visited_array_tag;
             candidate_set.emplace(-top_candidates_.top().first, id);
-            if (bare_bone_search || !isMarkedDeleted(id)) {
+            if (bare_bone_search || id == live_placeholder ||
+                !(collect_expanded ? isMarkedDeletedCached(id) : isMarkedDeleted(id))) {
                 top_candidates.emplace(top_candidates_.top());
             }
             top_candidates_.pop();
@@ -1319,6 +1488,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             candidate_set.pop();
 
             tableint current_node_id = current_node_pair.second;
+            if (collect_expanded) expanded->push_back(current_node_id);
+            std::unique_lock<std::mutex> row_lock;
+            if (row_locks)
+                row_lock = std::unique_lock<std::mutex>((*row_locks)[current_node_id]);
+            if (expanded_versions)
+                expanded_versions->push_back(
+                    (*adjacency_versions)[current_node_id].load(std::memory_order_relaxed));
             int *data = (int *) get_linklist0(current_node_id);
             size_t size = getListCount((linklistsizeint*)data);
 //                bool cur_node_deleted = isMarkedDeleted(current_node_id);
@@ -1328,19 +1504,23 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
 
 #ifdef USE_SSE
-            _mm_prefetch((char *) (visited_array + *(data + 1)), _MM_HINT_T0);
-            _mm_prefetch((char *) (visited_array + *(data + 1) + 64), _MM_HINT_T0);
-            _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
-            _mm_prefetch((char *) (data + 2), _MM_HINT_T0);
+            if (size > 0) {
+                _mm_prefetch((char *) (visited_array + data[1]), _MM_HINT_T0);
+                if (size_t(data[1]) + 64 < max_elements_)
+                    _mm_prefetch((char *) (visited_array + data[1] + 64), _MM_HINT_T0);
+                _mm_prefetch(getDataByInternalId(data[1]), _MM_HINT_T0);
+            }
+            if (size > 1) _mm_prefetch((char *) (data + 2), _MM_HINT_T0);
 #endif
 
             for (size_t j = 1; j <= size; j++) {
                 int candidate_id = *(data + j);
 //                    if (candidate_id == 0) continue;
 #ifdef USE_SSE
-                _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
-                _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + offsetData_,
-                                _MM_HINT_T0);  ////////////
+                if (j < size) {
+                    _mm_prefetch((char *) (visited_array + data[j + 1]), _MM_HINT_T0);
+                    _mm_prefetch(getDataByInternalId(data[j + 1]), _MM_HINT_T0);
+                }
 #endif
                 if (!(visited_array[candidate_id] == visited_array_tag)) {
                     visited_array[candidate_id] = visited_array_tag;
@@ -1363,8 +1543,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                                         _MM_HINT_T0);  ////////////////////////
 #endif
 
-                        if (bare_bone_search || 
-                            !isMarkedDeleted(candidate_id)) {
+                        if (bare_bone_search || candidate_id == live_placeholder ||
+                            !(collect_expanded ? isMarkedDeletedCached(candidate_id)
+                                               : isMarkedDeleted(candidate_id))) {
                             top_candidates.emplace(dist, candidate_id);
                             if (!bare_bone_search && stop_condition) {
                                 stop_condition->add_point_to_result(getExternalLabel(candidate_id), currObj1, dist);
@@ -1998,17 +2179,58 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return true;
     }
 
-    // ====================================================================
-    // node_ft_check_dnf: branchless two-bitmap FT check for DNF predicates
-    //
-    // Per attribute, two checks run unconditionally (no attr_type_ branch):
-    //   1. Existence: (ft & or_bitmap) != 0
-    //   2. Superset:  (~ft & and_bitmap) == 0
-    // Unconstrained attributes are skipped via attr_active flag.
-    //
-    // Outer loop: OR over DNF terms (short-circuit on first pass)
-    // Inner loop: AND over constrained attributes (short-circuit on fail)
-    // ====================================================================
+    // Shared node/edge DNF check: any OR bit must exist, and every AND bit must exist.
+    inline bool dnf_ft_attribute_check(
+        const unsigned char* ft, const char* or_pred, const char* and_pred) const {
+        if (ft_bytes_ <= 8) {
+            uint64_t ft_val = 0, or_val = 0, and_val = 0;
+            switch (ft_bytes_) {
+                case 2: {
+                    uint16_t a, b, c;
+                    memcpy(&a, ft, 2); memcpy(&b, or_pred, 2); memcpy(&c, and_pred, 2);
+                    ft_val = a; or_val = b; and_val = c;
+                    break;
+                }
+                case 4: {
+                    uint32_t a, b, c;
+                    memcpy(&a, ft, 4); memcpy(&b, or_pred, 4); memcpy(&c, and_pred, 4);
+                    ft_val = a; or_val = b; and_val = c;
+                    break;
+                }
+                case 8:
+                    memcpy(&ft_val, ft, 8);
+                    memcpy(&or_val, or_pred, 8);
+                    memcpy(&and_val, and_pred, 8);
+                    break;
+                default:
+                    memcpy(&ft_val, ft, ft_bytes_);
+                    memcpy(&or_val, or_pred, ft_bytes_);
+                    memcpy(&and_val, and_pred, ft_bytes_);
+                    break;
+            }
+            return (ft_val & or_val) != 0 && (~ft_val & and_val) == 0;
+        }
+
+        bool or_pass = false;
+        size_t offset = 0;
+#ifdef USE_SSE
+        for (; offset + 16 <= ft_bytes_; offset += 16) {
+            __m128i v_ft = _mm_loadu_si128((const __m128i*)(ft + offset));
+            __m128i v_or = _mm_loadu_si128((const __m128i*)(or_pred + offset));
+            __m128i v_and = _mm_loadu_si128((const __m128i*)(and_pred + offset));
+            __m128i overlap = _mm_and_si128(v_ft, v_or);
+            or_pass |= !_mm_testz_si128(overlap, overlap);
+            __m128i missing = _mm_andnot_si128(v_ft, v_and);
+            if (!_mm_testz_si128(missing, missing)) return false;
+        }
+#endif
+        for (; offset < ft_bytes_; ++offset) {
+            or_pass |= ((ft[offset] & (unsigned char)or_pred[offset]) != 0);
+            if ((~ft[offset] & (unsigned char)and_pred[offset]) != 0) return false;
+        }
+        return or_pass;
+    }
+
     inline bool node_ft_check_dnf(tableint nbr_id,
                                   const DNFPredicate& pred) const {
         for (int t = 0; t < pred.num_terms; ++t) {
@@ -2020,85 +2242,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             for (int i = 0; i < pred.attr_count; ++i) {
                 if (!active[i]) continue;  // unconstrained — skip
 
-                unsigned char* ft   = node_ft_at(nbr_id, i);
-                const char* or_p    = or_pred  + i * ft_bytes_;
-                const char* and_p   = and_pred + i * ft_bytes_;
-
-                bool or_pass  = false;
-                bool and_fail = false;
-
-                // Fast scalar path for small FT (16/32/64 bit)
-                if (ft_bytes_ <= 8) {
-                    uint64_t ft_val = 0, or_val = 0, and_val = 0;
-                    switch (ft_bytes_) {
-                        case 2: {
-                            uint16_t a, b, c;
-                            memcpy(&a, ft, 2); memcpy(&b, or_p, 2); memcpy(&c, and_p, 2);
-                            ft_val = a; or_val = b; and_val = c; break;
-                        }
-                        case 4: {
-                            uint32_t a, b, c;
-                            memcpy(&a, ft, 4); memcpy(&b, or_p, 4); memcpy(&c, and_p, 4);
-                            ft_val = a; or_val = b; and_val = c; break;
-                        }
-                        case 8: {
-                            memcpy(&ft_val, ft, 8); memcpy(&or_val, or_p, 8); memcpy(&and_val, and_p, 8);
-                            break;
-                        }
-                        default: {
-                            memcpy(&ft_val, ft, ft_bytes_); memcpy(&or_val, or_p, ft_bytes_); memcpy(&and_val, and_p, ft_bytes_);
-                            break;
-                        }
-                    }
-                    or_pass  = (ft_val & or_val) != 0;
-                    and_fail = (~ft_val & and_val) != 0;
-
-                    if (!or_pass || and_fail) {
-                        term_pass = false;
-                        break;
-                    }
-                    continue;
-                }
-
-                #ifdef USE_SSE
-                size_t offset = 0;
-                for (; offset + 16 <= ft_bytes_; offset += 16) {
-                    __m128i v_ft  = _mm_loadu_si128((const __m128i*)(ft    + offset));
-                    __m128i v_or  = _mm_loadu_si128((const __m128i*)(or_p  + offset));
-                    __m128i v_and = _mm_loadu_si128((const __m128i*)(and_p + offset));
-
-                    // Existence: any bit set in (ft & or_bitmap)
-                    __m128i or_r = _mm_and_si128(v_ft, v_or);
-                    or_pass |= !_mm_testz_si128(or_r, or_r);
-
-                    // Superset: any bit set in (~ft & and_bitmap) means fail
-                    __m128i and_missing = _mm_andnot_si128(v_ft, v_and);
-                    if (!_mm_testz_si128(and_missing, and_missing)) {
-                        and_fail = true;
-                        break;
-                    }
-                }
-                // Tail bytes
-                if (!and_fail) {
-                    for (; offset < ft_bytes_; ++offset) {
-                        or_pass  |= ((ft[offset] & (unsigned char)or_p[offset]) != 0);
-                        if ((~ft[offset] & (unsigned char)and_p[offset]) != 0) {
-                            and_fail = true;
-                            break;
-                        }
-                    }
-                }
-                #else
-                for (size_t j = 0; j < ft_bytes_; ++j) {
-                    or_pass |= ((ft[j] & (unsigned char)or_p[j]) != 0);
-                    if ((~ft[j] & (unsigned char)and_p[j]) != 0) {
-                        and_fail = true;
-                        break;
-                    }
-                }
-                #endif
-
-                if (!or_pass || and_fail) {
+                if (!dnf_ft_attribute_check(
+                        node_ft_at(nbr_id, i), or_pred + i * ft_bytes_,
+                        and_pred + i * ft_bytes_)) {
                     term_pass = false;
                     break;
                 }
@@ -2120,32 +2266,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             for (int i = 0; i < pred.attr_count; ++i) {
                 if (!active[i]) continue;
 
-                unsigned char* ft   = edge_ft_at(node_id, edge_idx, i);
-                const char* or_p    = or_pred  + i * ft_bytes_;
-                const char* and_p   = and_pred + i * ft_bytes_;
-
-                bool or_pass  = false;
-                bool and_fail = false;
-
-                if (ft_bytes_ <= 8) {
-                    uint64_t ft_val = 0, or_val = 0, and_val = 0;
-                    memcpy(&ft_val, ft, ft_bytes_);
-                    memcpy(&or_val, or_p, ft_bytes_);
-                    memcpy(&and_val, and_p, ft_bytes_);
-                    or_pass  = (ft_val & or_val) != 0;
-                    and_fail = (~ft_val & and_val) != 0;
-                    if (!or_pass || and_fail) { term_pass = false; break; }
-                    continue;
+                if (!dnf_ft_attribute_check(
+                        edge_ft_at(node_id, edge_idx, i), or_pred + i * ft_bytes_,
+                        and_pred + i * ft_bytes_)) {
+                    term_pass = false;
+                    break;
                 }
-
-                for (size_t j = 0; j < ft_bytes_; ++j) {
-                    or_pass |= ((ft[j] & (unsigned char)or_p[j]) != 0);
-                    if ((~ft[j] & (unsigned char)and_p[j]) != 0) {
-                        and_fail = true;
-                        break;
-                    }
-                }
-                if (!or_pass || and_fail) { term_pass = false; break; }
             }
             if (term_pass) return true;
         }
@@ -2191,6 +2317,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 int byte_pos, bit_pos;
                 for(int j = 0; j < ori_predicate[i].size(); ++j){
                     int val = ori_predicate[i][j];
+                    validate_categorical_value(i, val);
                     byte_pos = val >> 5; 
                     bit_pos = val & 31;
                     assert(byte_pos < cate_int_byte_);
@@ -2199,6 +2326,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
         return mapped_predicate;
+    }
+
+    void add_numerical_range_bits(char* bitmap, int attribute, int low, int high) const {
+        int first = numerical_bucket(attribute, low);
+        int last = numerical_bucket(attribute, high);
+        // Exact predicates include the upper value, including singleton ranges.
+        for (int slot = first; slot <= last; ++slot)
+            bitmap[slot >> 3] |= static_cast<char>(1u << (slot & 7));
     }
 
     // transform predicate to filter table format
@@ -2224,16 +2359,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 else if (ori_predicate[i].size() == 2){
                     int low = ori_predicate[i][0];
                     int high = ori_predicate[i][1];
-                    int low_slot = lower_bound(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), low);
-                    low_slot = low_slot < 0 ? 0 : low_slot;
-                    int high_slot = lower_bound(&counting_hash_table_mapping[i][0], counting_hash_table_mapping[i].size(), high);
-                    for (int val = low_slot; val < high_slot; ++val){
-                        int pos = val >> 3;
-                        int bit = val & 7;
-                        if (pos < ft_bytes_){
-                            predicate_ft[i * ft_bytes_ + pos] |= (1 << bit);
-                        }
-                    }
+                    add_numerical_range_bits(predicate_ft.data() + i * ft_bytes_, i, low, high);
                 } else {
                     throw std::runtime_error("Numerical attribute predicate should have exactly two values: [low, high]");
                 }
@@ -2242,7 +2368,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 int byte_pos, bit_pos;
                 for(int j = 0; j < ori_predicate[i].size(); ++j){
                     int val = ori_predicate[i][j];
-                    int slot = counting_hash_table_mapping[i][val]; 
+                    int slot = categorical_bucket(i, val);
+                    if (slot == -1) continue;
                     byte_pos = slot >> 3;
                     bit_pos = slot & 7;
                     predicate_ft[i * ft_bytes_ + byte_pos] |= (1 << bit_pos);
@@ -2332,23 +2459,14 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 // ------ build FT bitmap ------
                 char ft_buf[256] = {};  // max 2048 bits, stack-allocated
                 assert(ft_bytes_ <= 256);
+                bool missing_label = false;
 
                 if (attr_type_[i] == 0) { // numerical — possibly multi-range
                     int n_pairs = static_cast<int>(vals.size()) / 2;
                     pred.raw_ranges[t * n_attr + i] = vals;  // store all [lo,hi,...] pairs
                     for (int p = 0; p < n_pairs; ++p) {
                         int lo = vals[p*2], hi = vals[p*2+1];
-                        int lo_slot = lower_bound(
-                            &counting_hash_table_mapping[i][0],
-                            counting_hash_table_mapping[i].size(), lo);
-                        if (lo_slot < 0) lo_slot = 0;
-                        int hi_slot = lower_bound(
-                            &counting_hash_table_mapping[i][0],
-                            counting_hash_table_mapping[i].size(), hi);
-                        for (int v = lo_slot; v < hi_slot; ++v) {
-                            int pos = v >> 3, bit = v & 7;
-                            if (pos < ft_bytes_) ft_buf[pos] |= (1 << bit);
-                        }
+                        add_numerical_range_bits(ft_buf, i, lo, hi);
                     }
                     // Exact predicate: store all ranges sequentially
                     // (first pair goes into the standard [lo,hi] slot)
@@ -2357,7 +2475,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 } else { // categorical
                     for (int j = 0; j < static_cast<int>(vals.size()); ++j) {
                         int val = vals[j];
-                        int slot = counting_hash_table_mapping[i][val];
+                        int slot = categorical_bucket(i, val);
+                        if (slot == -1) {
+                            missing_label = true;
+                            continue;
+                        }
                         int pos = slot >> 3, bit = slot & 7;
                         ft_buf[pos] |= (1 << bit);
                     }
@@ -2379,7 +2501,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     // (or=all-ones ensures existence part is trivially true
                     //  for valid edges that have ≥1 bit set in FT)
                     memcpy(and_base + i * ft_bytes_, ft_buf, ft_bytes_);
-                    memset(or_base  + i * ft_bytes_, 0xFF, ft_bytes_);
+                    memset(or_base + i * ft_bytes_, missing_label ? 0 : 0xFF, ft_bytes_);
                 }
             }
         }
@@ -2985,7 +3107,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             if (num_deleted_.load(std::memory_order_relaxed) > 0 && size > 0) {
                 int dead_count = 0;
                 for (size_t j = 1; j <= size; j++) {
-                    if (isMarkedDeleted(*(data + j))) dead_count++;
+                    if (isMarkedDeletedCached(*(data + j))) dead_count++;
                 }
                 if (dead_count > 0) {
                     // FreshDiskANN dirty bitmap: cheap atomic OR, no lock
@@ -3518,8 +3640,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             int* _attr = attr_at(attr_id, attr_idx);
             if (attr_type_[attr_idx] == 0) { // numerical
                 // hash by mapping to bucket
-                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0], counting_hash_table_mapping[attr_idx].size(), _attr[0]);
-                if (pos < 0) continue;
+                int pos = numerical_bucket(attr_idx, _attr[0]);
                 set_ft_at_pos(ft, pos);
             }
             else { // categorical
@@ -3527,8 +3648,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     int byte_pos = k >> 5; 
                     int bit_pos = k & 31;
                     if (byte_pos < cate_int_byte_ && (_attr[byte_pos] & (1 << bit_pos))) {
-                        int pos = counting_hash_table_mapping[attr_idx][k];
-                        if (pos < 0) continue;
+                        int pos = categorical_bucket(attr_idx, k, true);
                         set_ft_at_pos(ft, pos);
                     }
                 }
@@ -3572,40 +3692,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     bool build_stats_printed_{false};
     // #define DEBUG_BUILD
 
-    // Compute attribute distance between src and nbr, normalized to [0, 1].
-    // 0 = identical attributes, 1 = maximally different.
-    // For numerical: |bucket_src - bucket_nbr| / num_buckets
-    // For categorical: 1 if no shared labels, 0 if identical
-    double compute_attr_distance(tableint src_id, tableint nbr_id) {
-        double total_dist = 0.0;
-        int num_attrs = (int)attr_type_.size();
-        for (int attr_idx = 0; attr_idx < num_attrs; attr_idx++) {
-            int* src_attr = attr_at(src_id, attr_idx);
-            int* nbr_attr = attr_at(nbr_id, attr_idx);
-            if (attr_type_[attr_idx] == 0) { // numerical
-                int src_pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
-                                          counting_hash_table_mapping[attr_idx].size(), src_attr[0]);
-                int nbr_pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
-                                          counting_hash_table_mapping[attr_idx].size(), nbr_attr[0]);
-                int num_buckets = (int)counting_hash_table_mapping[attr_idx].size();
-                total_dist += (num_buckets > 1) ? 
-                    (double)std::abs(src_pos - nbr_pos) / (num_buckets - 1) : 0.0;
-            } else { // categorical: 1 - has_shared_label
-                bool has_shared = false;
-                for (int byte = 0; byte < cate_int_byte_; ++byte) {
-                    if (((uint32_t*)src_attr)[byte] & ((uint32_t*)nbr_attr)[byte]) {
-                        has_shared = true;
-                        break;
-                    }
-                }
-                total_dist += has_shared ? 0.0 : 1.0;
-            }
-        }
-        return total_dist / num_attrs;
-    }
-
     bool cht_low_degree(int* cht, tableint src_id, tableint nbr_id, int return_list_size) {
-        if (return_list_size < maxM_ / 3) return true;
+        if (return_list_size == 0 || return_list_size < maxM_ / 3) return true;
 
         // check if id has unique attr not covered by cht
         for (int attr_idx = 0; attr_idx < attr_type_.size(); attr_idx++) {
@@ -3613,8 +3701,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             int* nbr_attr = attr_at(nbr_id, attr_idx);
             if (attr_type_[attr_idx] == 0) { // numerical
                 // hash by mapping to bucket
-                int src_pos = lower_bound(&counting_hash_table_mapping[attr_idx][0], counting_hash_table_mapping[attr_idx].size(), src_attr[0]);
-                int nbr_pos = lower_bound(&counting_hash_table_mapping[attr_idx][0], counting_hash_table_mapping[attr_idx].size(), nbr_attr[0]);
+                int src_pos = numerical_bucket(attr_idx, src_attr[0]);
+                int nbr_pos = numerical_bucket(attr_idx, nbr_attr[0]);
                 int range_left = std::min(src_pos, nbr_pos);
                 int range_right = std::max(src_pos, nbr_pos);
                 
@@ -3664,16 +3752,27 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         const size_t M,
         bool need_record = false, // if need_record, we will record the pruned candidates and add to filter table
         tableint cur_id = -1,      // id of point who is getting neighbors. valid only when need_record is true
-        std::vector<std::vector<tableint>>* dominated_list = nullptr // return the dominate list
+        std::vector<std::vector<tableint>>* dominated_list = nullptr, // return the dominate list
+        std::vector<tableint>* selected_order = nullptr,
+        bool collect_stats = true,
+        DeletionDistanceCache<tableint, dist_t>* distances = nullptr
     ) {
 
         // start time
         auto start = std::chrono::high_resolution_clock::now();
+        if (selected_order) selected_order->clear();
         if (top_candidates.size() < M) {
+            if (selected_order) {
+                auto remaining = top_candidates;
+                while (!remaining.empty()) {
+                    selected_order->push_back(remaining.top().second);
+                    remaining.pop();
+                }
+                std::reverse(selected_order->begin(), selected_order->end());
+            }
             return;
         }
 
-        // Extract all candidates and sort by mixed score (distance + alpha * attr_distance)
         std::vector<std::pair<dist_t, tableint>> all_candidates;
         all_candidates.reserve(top_candidates.size());
         while (top_candidates.size() > 0) {
@@ -3681,60 +3780,36 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             top_candidates.pop();
         }
 
-        // Sort by mixed score: normalized distance + alpha * attr_distance
-        if (need_record && attr_sort_alpha_ > 0 && cur_id >= 0 && !counting_hash_table_mapping.empty()) {
-            // Find max distance for normalization
-            dist_t max_dist = 0;
-            for (auto& [d, id] : all_candidates) {
-                if (d > max_dist) max_dist = d;
-            }
-            if (max_dist <= 0) max_dist = 1.0f;
+        std::sort(all_candidates.begin(), all_candidates.end());
 
-            // Compute mixed scores and sort
-            std::vector<std::pair<double, size_t>> scored; // (score, original_index)
-            scored.reserve(all_candidates.size());
-            for (size_t idx = 0; idx < all_candidates.size(); idx++) {
-                double norm_dist = (double)all_candidates[idx].first / max_dist;
-                double attr_dist = compute_attr_distance(cur_id, all_candidates[idx].second);
-                double score = norm_dist + attr_sort_alpha_ * attr_dist;
-                scored.emplace_back(score, idx);
-            }
-            std::sort(scored.begin(), scored.end());
-
-            // Reorder candidates by mixed score
-            std::vector<std::pair<dist_t, tableint>> sorted_candidates;
-            sorted_candidates.reserve(all_candidates.size());
-            for (auto& [score, idx] : scored) {
-                sorted_candidates.push_back(all_candidates[idx]);
-            }
-            all_candidates = std::move(sorted_candidates);
-        } else {
-            // Default: sort by distance (ascending)
-            std::sort(all_candidates.begin(), all_candidates.end());
-        }
-
-        // Heuristic pruning on reordered candidates
+        // CHT constrains edge coverage, not the vector-distance ordering.
         std::vector<std::pair<dist_t, tableint>> return_list;
         std::vector<int> temp_cht;
         if (need_record) temp_cht.resize(table_size_ * attr_type_.size(), 0);
 
         for (auto& curent_pair : all_candidates) {
+            if (distances && isMarkedDeletedCached(curent_pair.second)) continue;
             dist_t dist_to_query = curent_pair.first;
             bool good = true;
 
             for (int i = 0; i < return_list.size(); i++) {
                 std::pair<dist_t, tableint> second_pair = return_list[i];
-                dist_t curdist =
-                        fstdistfunc_(getDataByInternalId(second_pair.second),
-                                        getDataByInternalId(curent_pair.second),
-                                        dist_func_param_);
+                if (distances && isMarkedDeletedCached(second_pair.second)) continue;
+                auto evaluate = [&] {
+                    return fstdistfunc_(getDataByInternalId(second_pair.second),
+                                       getDataByInternalId(curent_pair.second),
+                                       dist_func_param_);
+                };
+                dist_t curdist = distances
+                    ? distances->get(second_pair.second, curent_pair.second, evaluate)
+                    : evaluate();
                 if (curdist < dist_to_query) {
                     good = false;
 
                     if (need_record) {
                         tableint nbr_id = curent_pair.second;
                         (*dominated_list)[i].push_back(nbr_id);
-                        pruned_count++;
+                        if (collect_stats) pruned_count++;
                     }
                     break;
                 }
@@ -3749,7 +3824,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     update_cht(temp_cht.data(), curent_pair.second);
                 }
                 else{
-                    attr_pruned_count++;
+                    if (collect_stats) attr_pruned_count++;
                 }
 
                 if (need_push)
@@ -3760,12 +3835,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         for (std::pair<dist_t, tableint> curent_pair : return_list) {
+            if (selected_order) selected_order->push_back(curent_pair.second);
             top_candidates.emplace(-curent_pair.first, curent_pair.second);
         }
 
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> diff = end - start;
-        heuristic_time += diff.count();
+        if (collect_stats) {
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> diff = end - start;
+            heuristic_time += diff.count();
+        }
     }
 
 
@@ -3800,6 +3878,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         unsigned char* ft = node_ft_at(node_id);
         memset(ft, 0, size_per_ft_);
         updateft(ft, node_id);
+    }
+
+    void merge_own_node_ft(tableint node_id) {
+        // Other source rows may still rely on witnesses stored in this node marker.
+        updateft(node_ft_at(node_id), node_id);
     }
 
     // Merge dominated nodes' attributes into a surviving neighbor's node FT.
@@ -3891,7 +3974,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             // Search base layer with large efc (read-only traversal, thread-safe)
             auto top_candidates = searchBaseLayer(currObj, data_point, 0);
 
-            // Sort candidates by mixed score (normalized_dist + alpha * attr_dist)
             std::vector<std::pair<dist_t, tableint>> sorted_cands;
             sorted_cands.reserve(top_candidates.size());
             while (!top_candidates.empty()) {
@@ -3903,33 +3985,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 top_candidates.pop();
             }
 
-            if (!sorted_cands.empty() && attr_sort_alpha_ > 0 && !counting_hash_table_mapping.empty()) {
-                dist_t max_dist = 0;
-                for (auto& [d, id] : sorted_cands) {
-                    if (d > max_dist) max_dist = d;
-                }
-                if (max_dist <= 0) max_dist = 1.0f;
+            std::sort(sorted_cands.begin(), sorted_cands.end());
 
-                std::vector<std::pair<double, size_t>> scored;
-                scored.reserve(sorted_cands.size());
-                for (size_t idx = 0; idx < sorted_cands.size(); idx++) {
-                    double norm_dist = (double)sorted_cands[idx].first / max_dist;
-                    double attr_dist = compute_attr_distance((tableint)i, sorted_cands[idx].second);
-                    scored.emplace_back(norm_dist + attr_sort_alpha_ * attr_dist, idx);
-                }
-                std::sort(scored.begin(), scored.end());
-
-                std::vector<std::pair<dist_t, tableint>> reordered;
-                reordered.reserve(sorted_cands.size());
-                for (auto& [score, idx] : scored) {
-                    reordered.push_back(sorted_cands[idx]);
-                }
-                sorted_cands = std::move(reordered);
-            } else {
-                std::sort(sorted_cands.begin(), sorted_cands.end());
-            }
-
-            // Greedily pick new neighbors using CHT check + mixed-score order
+            // Keep distance order while enforcing CHT coverage.
             std::vector<tableint> new_nbrs;
             new_nbrs.reserve(slots_avail);
             for (auto& [dist, cand_id] : sorted_cands) {
@@ -4180,7 +4238,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     if (added > 0) {
                         nodes_augmented++;
                         if (!edge_level_ft_) {
-                            update_node_ft(node_id);
+                            merge_own_node_ft(node_id);
                         }
                     }
                 }
@@ -4259,8 +4317,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     unsigned char* ft_part = (unsigned char*)(self_ft.data() + attr_idx * ft_bytes_);
                     int* _attr = attr_at(node_id, attr_idx);
                     if (attr_type_[attr_idx] == 0) { // numerical
-                        int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
-                                              counting_hash_table_mapping[attr_idx].size(), _attr[0]);
+                        int pos = numerical_bucket(attr_idx, _attr[0]);
                         if (pos >= 0) {
                             int byte_pos = pos >> 3;
                             int bit_pos = pos & 7;
@@ -4331,8 +4388,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                                 int* cand_attr = attr_at(cand, attr_idx);
 
                                 if (attr_type_[attr_idx] == 0) { // numerical: cand's bucket bit must overlap pred
-                                    int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
-                                                          counting_hash_table_mapping[attr_idx].size(), cand_attr[0]);
+                                    int pos = numerical_bucket(attr_idx, cand_attr[0]);
                                     if (pos < 0) { attr_match = false; break; }
                                     int byte_pos = pos >> 3;
                                     int bit_pos = pos & 7;
@@ -4536,8 +4592,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         auto node_has_bit = [&](tableint v) -> bool {
             int* a = attr_at(v, attr_idx);
             if (attr_type_[attr_idx] == 0) {  // numerical
-                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
-                                      counting_hash_table_mapping[attr_idx].size(), a[0]);
+                int pos = numerical_bucket(attr_idx, a[0]);
                 return pos == bit_idx;
             } else {  // categorical
                 for (int k = 0; k <= max_cate_size_; ++k) {
@@ -4824,8 +4879,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         auto node_has_bit = [&](tableint v) -> bool {
             int* a = attr_at(v, attr_idx);
             if (attr_type_[attr_idx] == 0) {
-                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
-                                      counting_hash_table_mapping[attr_idx].size(), a[0]);
+                int pos = numerical_bucket(attr_idx, a[0]);
                 return pos == bit_idx;
             } else {
                 for (int k = 0; k <= max_cate_size_; ++k) {
@@ -5017,8 +5071,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         auto node_has_bit = [&](tableint v) -> bool {
             int* a = attr_at(v, attr_idx);
             if (attr_type_[attr_idx] == 0) {
-                int pos = lower_bound(&counting_hash_table_mapping[attr_idx][0],
-                                      counting_hash_table_mapping[attr_idx].size(), a[0]);
+                int pos = numerical_bucket(attr_idx, a[0]);
                 return pos == bit_idx;
             } else {
                 for (int k = 0; k <= max_cate_size_; ++k) {
@@ -5340,6 +5393,24 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
 
+    static void alignPruningWitnesses(
+        std::vector<tableint>& owners,
+        std::vector<std::vector<tableint>>& witnesses,
+        const std::vector<tableint>& neighbors) {
+        if (owners.size() != neighbors.size() || witnesses.size() < neighbors.size())
+            throw std::runtime_error("Pruning witness owners do not match selected neighbors");
+        // Heap extraction need not retain the order in which RNG recorded its witnesses.
+        for (size_t slot = 0; slot < neighbors.size(); slot++) {
+            if (owners[slot] == neighbors[slot]) continue;
+            auto found = std::find(owners.begin() + slot + 1, owners.end(), neighbors[slot]);
+            if (found == owners.end())
+                throw std::runtime_error("Pruning witness owner is missing from selected neighbors");
+            size_t previous_slot = static_cast<size_t>(found - owners.begin());
+            std::swap(owners[slot], owners[previous_slot]);
+            std::swap(witnesses[slot], witnesses[previous_slot]);
+        }
+    }
+
     tableint mutuallyConnectNewElement(
         const void *data_point,
         tableint cur_c,
@@ -5349,6 +5420,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t Mcurmax = level ? maxM_ : maxM0_;
         // std::cout << "connecting " << cur_c << " at level " << level << " with " << top_candidates.size() << " candidates" << std::endl;
         std::vector<std::vector<tableint>> dominated_list(level ? 0 : maxM0_); // for each selected neighbor, the list of points it dominates
+        std::vector<tableint> witness_owners;
         
         if (level == 0){
             for (int i = 0; i < maxM0_; i++) {
@@ -5356,7 +5428,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
         }
         // std::cout << "level==0?" << (level==0) << std::endl;
-        getNeighborsByHeuristic2(top_candidates, level==0 ? Mcurmax : M_, level==0, cur_c, &dominated_list);
+        getNeighborsByHeuristic2(top_candidates, level==0 ? Mcurmax : M_, level==0, cur_c,
+                                &dominated_list, level == 0 ? &witness_owners : nullptr);
 
         for(int i = 0; i < dominated_list.size(); i++) {
             dominate_count += static_cast<long long>(dominated_list[i].size());
@@ -5373,6 +5446,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             top_candidates.pop();
         }
         std::reverse(selectedNeighbors.begin(), selectedNeighbors.end());
+        if (selectedNeighbors.empty())
+            throw std::runtime_error("Insertion search produced no usable neighbors");
+        if (level == 0)
+            alignPruningWitnesses(witness_owners, dominated_list, selectedNeighbors);
 
         // accumulate per-node domination events (dominated_list[i] was dominated by selectedNeighbors[i])
         for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors.size(); i++) {
@@ -5503,7 +5580,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                             dominated_list[i].clear();
                         }
                     }
-                    getNeighborsByHeuristic2(candidates, Mcurmax, level==0, selectedNeighbors[idx], &dominated_list);
+                    getNeighborsByHeuristic2(candidates, Mcurmax, level==0, selectedNeighbors[idx],
+                                            &dominated_list, level == 0 ? &witness_owners : nullptr);
 
                     for(int i = 0; i < dominated_list.size(); i++) {
                         dominate_count += static_cast<long long>(dominated_list[i].size());
@@ -5519,6 +5597,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         indx++;
                     }
                     std::reverse(selectedNeighbors_other.begin(), selectedNeighbors_other.end());
+                    if (level == 0)
+                        alignPruningWitnesses(witness_owners, dominated_list, selectedNeighbors_other);
 
                     // accumulate per-node domination events for reverse connection update
                     for (int i = 0; i < (int)dominated_list.size() && i < (int)selectedNeighbors_other.size(); i++) {
@@ -5585,6 +5665,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (new_max_elements < cur_element_count)
             throw std::runtime_error("Cannot resize, max element is less than the current number of elements");
 
+        size_t bitmap_words = (new_max_elements + 63) / 64;
+        auto resized_deleted = resized_bitmap(deleted_bitmap_, bitmap_words);
+        auto resized_dirty = resized_bitmap(dirty_bitmap_, bitmap_words);
+
         visited_list_pool_.reset(new VisitedListPool(1, new_max_elements));
 
         element_levels_.resize(new_max_elements);
@@ -5604,6 +5688,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         linkLists_ = linkLists_new;
 
         max_elements_ = new_max_elements;
+        deleted_bitmap_.swap(resized_deleted);
+        dirty_bitmap_.swap(resized_dirty);
         node_dominate_count_.resize(new_max_elements, 0);
     }
 
@@ -5663,6 +5749,1843 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return repaired;
     }
 
+    struct DeletedMarkerCleanupStats {
+        size_t deleted_points{0};
+        size_t candidate_sources{0};
+        size_t empty_marker_rows{0};
+        size_t matched_edges{0};
+        size_t cleared_bits{0};
+        size_t support_checks{0};
+        size_t search_candidates{0};
+        size_t search_expanded{0};
+        size_t incoming_edges_repaired{0};
+        size_t outgoing_edges_added{0};
+        size_t rewired_nodes{0};
+        size_t pruned_edges{0};
+        size_t scrubbed_edges{0};
+        size_t parallel_preparations{0};
+        size_t reused_preparations{0};
+        size_t recomputed_preparations{0};
+        size_t parallel_points{0};
+        size_t max_active_points{0};
+        size_t incoming_handoffs{0};
+        size_t distance_cache_hits{0};
+        size_t distance_cache_misses{0};
+        size_t rng_witness_reuses{0};
+        size_t cleanup_bound_reused_rows{0};
+        size_t cleanup_bound_stale_rows{0};
+        size_t deferred_incoming_handoffs{0};
+        size_t deferred_incoming_repairs{0};
+        size_t deferred_retired_source_repairs{0};
+        size_t ignored_completed_ghosts{0};
+        size_t deferred_overlapping_edges{0};
+        size_t deferred_pending_requests{0};
+        size_t deferred_retired_source_requests{0};
+        size_t deferred_intermediate_rows{0};
+        size_t publication_retired_targets{0};
+        // Batch wall time, measured after worker and deferred repair completion.
+        double scrub_wall_s{0.0};
+    };
+
+    struct DeletedMarkerMatch {
+        uint64_t hash{0};
+        DeletedMarkerMatch* next{nullptr};
+        std::vector<unsigned char> mask;
+        std::vector<uint64_t> witnesses;
+        std::once_flag ready;
+    };
+
+    struct DeletedMarkerMatchCache {
+        std::array<std::atomic<DeletedMarkerMatch*>, 61> buckets;
+
+        DeletedMarkerMatchCache() {
+            for (auto& bucket : buckets)
+                bucket.store(nullptr, std::memory_order_relaxed);
+        }
+
+        ~DeletedMarkerMatchCache() {
+            // Row workers have joined before the owning deletion context is released.
+            for (auto& bucket : buckets) {
+                auto* entry = bucket.load(std::memory_order_relaxed);
+                while (entry) {
+                    auto* next = entry->next;
+                    delete entry;
+                    entry = next;
+                }
+            }
+        }
+    };
+
+    struct DeletedMarkerContext {
+        tableint deleted_id;
+        bool completed_search{false};
+        std::vector<std::pair<dist_t, tableint>> candidates;
+        std::unordered_map<tableint, size_t> positions;
+        std::vector<unsigned char> deleted_mask;
+        std::vector<std::pair<size_t, unsigned char>> deleted_bytes;
+        std::vector<unsigned char> masks;
+        std::vector<std::vector<size_t>> supporters;
+        std::shared_ptr<DeletedMarkerMatchCache> matches;
+        std::shared_ptr<DeletionDistanceCache<tableint, dist_t>> distances;
+        const std::vector<std::atomic<size_t>>* adjacency_versions{nullptr};
+        std::vector<size_t> expanded_versions;
+        size_t causal_epoch{std::numeric_limits<size_t>::max()};
+    };
+
+    struct DeletionRowResult {
+        tableint source{0};
+        int level{0};
+        bool replace_neighbors{false};
+        int marker_edge{-1};
+        std::vector<tableint> neighbors;
+        std::vector<unsigned char> markers;
+        DeletedMarkerCleanupStats stats;
+    };
+
+    DeletedMarkerContext makeDeletedMarkerContext(
+        tableint deleted_id,
+        const std::vector<std::pair<dist_t, tableint>>& candidates,
+        bool completed_search = false) {
+        DeletedMarkerContext context;
+        context.deleted_id = deleted_id;
+        context.completed_search = completed_search;
+        context.matches = std::make_shared<DeletedMarkerMatchCache>();
+        context.distances =
+            std::make_shared<DeletionDistanceCache<tableint, dist_t>>(deleted_id, candidates);
+        context.deleted_mask.assign(size_per_ft_, 0);
+        updateft(context.deleted_mask.data(), deleted_id);
+        for (size_t byte = 0; byte < context.deleted_mask.size(); byte++) {
+            if (context.deleted_mask[byte])
+                context.deleted_bytes.emplace_back(byte, context.deleted_mask[byte]);
+        }
+        for (const auto& candidate : candidates) {
+            if (candidate.second != deleted_id && !isMarkedDeletedCached(candidate.second))
+                context.candidates.push_back(candidate);
+        }
+        context.positions.reserve(context.candidates.size());
+        context.masks.assign(context.candidates.size() * size_per_ft_, 0);
+        context.supporters.resize(size_per_ft_ * 8);
+        for (size_t i = 0; i < context.candidates.size(); i++) {
+            context.positions.emplace(context.candidates[i].second, i);
+            unsigned char* mask = context.masks.data() + i * size_per_ft_;
+            updateft(mask, context.candidates[i].second);
+            for (size_t byte = 0; byte < size_per_ft_; byte++) {
+                unsigned int bits = mask[byte];
+                while (bits) {
+                    int bit = __builtin_ctz(bits);
+                    context.supporters[byte * 8 + bit].push_back(i);
+                    bits &= bits - 1;
+                }
+            }
+        }
+        return context;
+    }
+
+    dist_t deletionDistance(
+        const DeletedMarkerContext& context, tableint from, tableint to) {
+        return context.distances->get(from, to, [&] {
+            return fstdistfunc_(getDataByInternalId(from), getDataByInternalId(to), dist_func_param_);
+        });
+    }
+
+    const unsigned char* deletionOwnMask(
+        const DeletedMarkerContext& context, tableint id,
+        std::vector<unsigned char>& scratch) {
+        if (id == context.deleted_id) return context.deleted_mask.data();
+        auto position = context.positions.find(id);
+        if (position != context.positions.end())
+            return context.masks.data() + position->second * size_per_ft_;
+        scratch.assign(size_per_ft_, 0);
+        updateft(scratch.data(), id);
+        return scratch.data();
+    }
+
+    void mergeDeletionOwnMask(
+        unsigned char* marker, tableint id, const DeletedMarkerContext& context) {
+        auto position = context.positions.find(id);
+        if (position == context.positions.end()) {
+            updateft(marker, id);
+            return;
+        }
+        const auto* own = context.masks.data() + position->second * size_per_ft_;
+        for (int byte = 0; byte < size_per_ft_; ++byte) marker[byte] |= own[byte];
+    }
+
+    DeletionRowResult prepareDeletedMarkerSource(
+        tableint source, const DeletedMarkerContext& context) {
+        DeletionRowResult result;
+        result.source = source;
+        auto& stats = result.stats;
+        stats.candidate_sources = 1;
+        if (isMarkedDeletedCached(source)) return result;
+        auto* ll = get_linklist0(source);
+        int degree = getListCount(ll);
+        auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+        auto source_pos = context.positions.find(source);
+        bool completed_search = context.completed_search;
+        if (context.adjacency_versions) {
+            size_t captured = source_pos == context.positions.end()
+                ? std::numeric_limits<size_t>::max()
+                : context.expanded_versions[source_pos->second];
+            completed_search = captured != std::numeric_limits<size_t>::max() &&
+                captured == (*context.adjacency_versions)[source].load(std::memory_order_relaxed);
+            if (completed_search) ++stats.cleanup_bound_reused_rows;
+            else ++stats.cleanup_bound_stale_rows;
+        }
+        bool needs_cleanup = false;
+        std::vector<unsigned char> uncached_own;
+        for (int edge = 0; edge < degree; edge++) {
+            tableint target = neighbors[edge];
+            if (target == context.deleted_id) continue;
+            auto position = context.positions.find(target);
+            if (source_pos != context.positions.end()) {
+                dist_t source_distance = context.candidates[source_pos->second].first;
+                if (position == context.positions.end() && completed_search &&
+                    std::isfinite(source_distance))
+                    continue;
+                if (position != context.positions.end() &&
+                    context.candidates[position->second].first >= source_distance)
+                    continue;
+            }
+            if (isMarkedDeletedCached(target)) continue;
+            const unsigned char* own;
+            if (position != context.positions.end()) {
+                own = context.masks.data() + position->second * size_per_ft_;
+            } else {
+                uncached_own.assign(size_per_ft_, 0);
+                updateft(uncached_own.data(), target);
+                own = uncached_own.data();
+            }
+            const unsigned char* marker = edge_ft_at(source, edge);
+            for (const auto& part : context.deleted_bytes) {
+                if (marker[part.first] & part.second & ~own[part.first]) {
+                    needs_cleanup = true;
+                    break;
+                }
+            }
+            if (needs_cleanup) break;
+        }
+        // Skip only the whole no-op row. Filtering individual edges before
+        // choosing the closest owner could redirect cleanup to a farther edge.
+        if (!needs_cleanup) {
+            stats.empty_marker_rows = 1;
+            return result;
+        }
+        dist_t source_distance = source_pos == context.positions.end()
+            ? deletionDistance(context, source, context.deleted_id)
+            : context.candidates[source_pos->second].first;
+        int dominator_edge = -1;
+        dist_t best_distance = std::numeric_limits<dist_t>::max();
+        for (int edge = 0; edge < degree; edge++) {
+            tableint target = neighbors[edge];
+            if (target == context.deleted_id) continue;
+            auto position = context.positions.find(target);
+            // A retained source was expanded; its unchanged row cannot hide a
+            // strictly closer live neighbor outside the completed search pool.
+            if (position == context.positions.end() && completed_search &&
+                source_pos != context.positions.end() && std::isfinite(source_distance))
+                continue;
+            if (isMarkedDeletedCached(target)) continue;
+            dist_t to_deleted = position == context.positions.end()
+                ? deletionDistance(context, target, context.deleted_id)
+                : context.candidates[position->second].first;
+            if (to_deleted >= source_distance) continue;
+            dist_t distance = deletionDistance(context, source, target);
+            if (distance > source_distance) continue;
+            if (distance < best_distance) {
+                best_distance = distance;
+                dominator_edge = edge;
+            }
+        }
+        if (dominator_edge < 0) return result;
+        tableint target = neighbors[dominator_edge];
+        const auto* stored = edge_ft_at(source, dominator_edge);
+        result.markers.assign(stored, stored + size_per_ft_);
+        unsigned char* marker = result.markers.data();
+        const unsigned char* own = deletionOwnMask(context, target, uncached_own);
+        std::vector<unsigned char> support(context.candidates.size(), 0);
+        bool matched = false;
+        for (size_t byte = 0; byte < size_per_ft_; byte++) {
+            matched = matched || (marker[byte] & context.deleted_mask[byte]);
+            unsigned int removable =
+                marker[byte] & context.deleted_mask[byte] & ~own[byte];
+            while (removable) {
+                int bit = __builtin_ctz(removable);
+                bool found = false;
+                for (size_t i : context.supporters[byte * 8 + bit]) {
+                    tableint candidate = context.candidates[i].second;
+                    if (candidate == source || candidate == target || isMarkedDeletedCached(candidate))
+                        continue;
+                    if (support[i] == 0) {
+                        dist_t distance = deletionDistance(context, source, candidate);
+                        bool eligible = best_distance <= distance
+                            && deletionDistance(context, target, candidate) < distance;
+                        support[i] = eligible ? 2 : 1;
+                        stats.support_checks++;
+                    }
+                    if (support[i] == 2) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    marker[byte] &= static_cast<unsigned char>(~(1u << bit));
+                    stats.cleared_bits++;
+                }
+                removable &= removable - 1;
+            }
+        }
+        stats.matched_edges = matched ? 1 : 0;
+        if (stats.cleared_bits) result.marker_edge = dominator_edge;
+        return result;
+    }
+
+    DeletedMarkerCleanupStats cleanupDeletedMarkerSource(
+        tableint source, const DeletedMarkerContext& context) {
+        std::unique_lock<std::mutex> lock(link_list_locks_[source]);
+        auto result = prepareDeletedMarkerSource(source, context);
+        if (result.marker_edge >= 0)
+            memcpy(edge_ft_at(source, result.marker_edge), result.markers.data(), size_per_ft_);
+        return result.stats;
+    }
+
+    struct DeletionRowPlan {
+        tableint source;
+        int level;
+        std::vector<tableint> neighbors;
+        std::vector<std::vector<unsigned char>> color_requests;
+    };
+
+    struct DeletionPreparation {
+        std::vector<DeletionRowPlan> plans;
+        DeletedMarkerContext context;
+        DeletedMarkerCleanupStats stats;
+    };
+
+    struct DeletionWork {
+        tableint source;
+        bool cleanup;
+        const DeletionRowPlan* plan;
+    };
+
+    std::vector<DeletionWork> deletionWork(const DeletionPreparation& prepared) const {
+        std::vector<DeletionWork> work;
+        if (edge_level_ft_) {
+            for (const auto& candidate : prepared.context.candidates)
+                work.push_back({candidate.second, true, nullptr});
+        }
+        for (const auto& plan : prepared.plans) {
+            auto position = prepared.context.positions.find(plan.source);
+            if (edge_level_ft_ && plan.level == 0 && position != prepared.context.positions.end())
+                work[position->second].plan = &plan;
+            else
+                work.push_back({plan.source, false, &plan});
+        }
+        return work;
+    }
+
+    static void addDeletionStats(
+        DeletedMarkerCleanupStats& total, const DeletedMarkerCleanupStats& part) {
+        total.candidate_sources += part.candidate_sources;
+        total.empty_marker_rows += part.empty_marker_rows;
+        total.matched_edges += part.matched_edges;
+        total.cleared_bits += part.cleared_bits;
+        total.support_checks += part.support_checks;
+        total.search_candidates += part.search_candidates;
+        total.search_expanded += part.search_expanded;
+        total.incoming_edges_repaired += part.incoming_edges_repaired;
+        total.outgoing_edges_added += part.outgoing_edges_added;
+        total.rewired_nodes += part.rewired_nodes;
+        total.pruned_edges += part.pruned_edges;
+        total.scrubbed_edges += part.scrubbed_edges;
+        total.incoming_handoffs += part.incoming_handoffs;
+        total.distance_cache_hits += part.distance_cache_hits;
+        total.distance_cache_misses += part.distance_cache_misses;
+        total.rng_witness_reuses += part.rng_witness_reuses;
+        total.cleanup_bound_reused_rows += part.cleanup_bound_reused_rows;
+        total.cleanup_bound_stale_rows += part.cleanup_bound_stale_rows;
+        total.deferred_incoming_handoffs += part.deferred_incoming_handoffs;
+        total.deferred_incoming_repairs += part.deferred_incoming_repairs;
+        total.deferred_retired_source_repairs += part.deferred_retired_source_repairs;
+        total.ignored_completed_ghosts += part.ignored_completed_ghosts;
+        total.deferred_overlapping_edges += part.deferred_overlapping_edges;
+        total.deferred_pending_requests += part.deferred_pending_requests;
+        total.deferred_retired_source_requests += part.deferred_retired_source_requests;
+        total.deferred_intermediate_rows += part.deferred_intermediate_rows;
+        total.publication_retired_targets += part.publication_retired_targets;
+    }
+
+    std::vector<std::pair<dist_t, tableint>> searchDeletionLayer(
+        tableint deleted_id, int layer, std::vector<tableint>& expanded,
+        bool concurrent = false,
+        const std::vector<std::atomic<size_t>>* adjacency_versions = nullptr,
+        std::vector<size_t>* expanded_versions = nullptr) {
+        const void* query = getDataByInternalId(deleted_id);
+        tableint entry = enterpoint_node_;
+        dist_t distance = fstdistfunc_(query, getDataByInternalId(entry), dist_func_param_);
+        for (int level = maxlevel_; level > layer; level--) {
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                std::unique_lock<std::mutex> row_lock;
+                if (concurrent) row_lock = std::unique_lock<std::mutex>(link_list_locks_[entry]);
+                auto* ll = get_linklist(entry, level);
+                auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+                for (int j = 0; j < getListCount(ll); j++) {
+                    tableint candidate = neighbors[j];
+                    if (candidate != deleted_id && isMarkedDeletedCached(candidate)) continue;
+                    dist_t d = fstdistfunc_(query, getDataByInternalId(candidate), dist_func_param_);
+                    if (d < distance) {
+                        entry = candidate;
+                        distance = d;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        std::priority_queue<std::pair<dist_t, tableint>,
+            std::vector<std::pair<dist_t, tableint>>, CompareByFirst> seed;
+        seed.emplace(distance, entry);
+        expanded.reserve(ef_construction_);
+        if (expanded_versions) expanded_versions->reserve(ef_construction_);
+        auto queue = layer == 0
+            ? searchBaseLayerST<false, false, true>(
+                seed, query, ef_construction_, nullptr, &expanded,
+                deleted_id, concurrent ? &link_list_locks_ : nullptr,
+                adjacency_versions, expanded_versions)
+            : searchBaseLayer(entry, query, layer, &expanded, deleted_id);
+        std::vector<std::pair<dist_t, tableint>> result;
+        result.reserve(queue.size());
+        while (!queue.empty()) {
+            result.push_back(queue.top());
+            queue.pop();
+        }
+        std::reverse(result.begin(), result.end());
+        return result;
+    }
+
+    void planInplaceDeletion(
+        tableint deleted_id, int layer,
+        const std::vector<std::pair<dist_t, tableint>>& nearest,
+        const std::vector<tableint>& expanded,
+        std::vector<DeletionRowPlan>& plans, DeletedMarkerCleanupStats& stats,
+        const DeletedMarkerContext& context) {
+        constexpr size_t candidate_limit = 50;
+        constexpr size_t replacement_count = 3;
+        std::unordered_map<tableint, size_t> positions;
+        auto plan_for = [&](tableint source) -> DeletionRowPlan& {
+            auto found = positions.find(source);
+            if (found != positions.end()) return plans[found->second];
+            DeletionRowPlan plan;
+            plan.source = source;
+            plan.level = layer;
+            auto* ll = get_linklist_at_level(source, layer);
+            auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+            for (int j = 0; j < getListCount(ll); j++) {
+                tableint target = neighbors[j];
+                if (target != source && target != deleted_id && !isMarkedDeletedCached(target)
+                    && std::find(plan.neighbors.begin(), plan.neighbors.end(), target) == plan.neighbors.end()) {
+                    plan.neighbors.push_back(target);
+                    plan.color_requests.emplace_back();
+                }
+            }
+            size_t position = plans.size();
+            positions.emplace(source, position);
+            plans.push_back(std::move(plan));
+            return plans[position];
+        };
+        std::unordered_map<tableint, std::vector<tableint>> replacements;
+        auto closest = [&](tableint point) -> const std::vector<tableint>& {
+            auto found = replacements.find(point);
+            if (found != replacements.end()) return found->second;
+            std::vector<std::pair<dist_t, tableint>> scored;
+            for (size_t i = 0; i < std::min(candidate_limit, nearest.size()); i++) {
+                tableint candidate = nearest[i].second;
+                if (candidate == point || candidate == deleted_id || isMarkedDeletedCached(candidate))
+                    continue;
+                scored.emplace_back(deletionDistance(context, point, candidate), candidate);
+            }
+            size_t count = std::min(replacement_count, scored.size());
+            std::partial_sort(scored.begin(), scored.begin() + count, scored.end());
+            std::vector<tableint> selected;
+            for (size_t i = 0; i < count; i++) selected.push_back(scored[i].second);
+            return replacements.emplace(point, std::move(selected)).first->second;
+        };
+        auto add_edge = [&](tableint source, tableint target, const unsigned char* request) {
+            auto& plan = plan_for(source);
+            auto found = std::find(plan.neighbors.begin(), plan.neighbors.end(), target);
+            bool added = found == plan.neighbors.end();
+            size_t position = added ? plan.neighbors.size() : size_t(found - plan.neighbors.begin());
+            if (added) {
+                plan.neighbors.push_back(target);
+                plan.color_requests.emplace_back();
+            }
+            if (request) {
+                auto& mask = plan.color_requests[position];
+                if (mask.empty()) mask.assign(size_per_ft_, 0);
+                for (size_t byte = 0; byte < size_per_ft_; byte++) mask[byte] |= request[byte];
+            }
+            return added;
+        };
+        for (tableint source : expanded) {
+            if (source == deleted_id || isMarkedDeletedCached(source)) continue;
+            auto* ll = get_linklist_at_level(source, layer);
+            auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+            for (int j = 0; j < getListCount(ll); j++) {
+                if (neighbors[j] != deleted_id) continue;
+                plan_for(source);
+                stats.incoming_edges_repaired++;
+                const unsigned char* request = layer == 0 && edge_level_ft_
+                    ? edge_ft_at(source, j) : nullptr;
+                for (tableint target : closest(source)) add_edge(source, target, request);
+                break;
+            }
+        }
+        auto* ll = get_linklist_at_level(deleted_id, layer);
+        auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+        for (int j = 0; j < getListCount(ll); j++) {
+            tableint target = neighbors[j];
+            if (target == deleted_id || isMarkedDeletedCached(target)) continue;
+            const unsigned char* request = layer == 0 && edge_level_ft_
+                ? edge_ft_at(deleted_id, j) : nullptr;
+            for (tableint source : closest(target)) {
+                if (add_edge(source, target, request)) stats.outgoing_edges_added++;
+            }
+        }
+    }
+
+    DeletionPreparation prepareDeletion(tableint deleted_id) {
+        DeletionPreparation prepared;
+        for (int layer = 0; layer <= element_levels_[deleted_id]; layer++) {
+            std::vector<tableint> expanded;
+            auto nearest = searchDeletionLayer(deleted_id, layer, expanded);
+            prepared.stats.search_expanded += expanded.size();
+            if (layer == 0)
+                prepared.context = makeDeletedMarkerContext(deleted_id, nearest, true);
+            planInplaceDeletion(
+                deleted_id, layer, nearest, expanded, prepared.plans, prepared.stats, prepared.context);
+            if (layer == 0) prepared.stats.search_candidates += nearest.size();
+        }
+        return prepared;
+    }
+
+    bool marker_covers_record(const unsigned char* marker, const unsigned char* point) const {
+        size_t width = static_cast<size_t>(size_per_ft_);
+        if (width <= 8) {
+            uint64_t stored = 0, required = 0;
+            memcpy(&stored, marker, width);
+            memcpy(&required, point, width);
+            return (~stored & required) == 0;
+        }
+        size_t byte = 0;
+#ifdef USE_SSE
+        for (; byte + 16 <= width; byte += 16) {
+            __m128i stored = _mm_loadu_si128(reinterpret_cast<const __m128i*>(marker + byte));
+            __m128i required = _mm_loadu_si128(reinterpret_cast<const __m128i*>(point + byte));
+            __m128i missing = _mm_andnot_si128(stored, required);
+            if (!_mm_testz_si128(missing, missing)) return false;
+        }
+#endif
+        for (; byte < width; ++byte)
+            if ((marker[byte] & point[byte]) != point[byte]) return false;
+        return true;
+    }
+
+    const std::vector<uint64_t>& matchingDeletedCandidates(
+        const DeletedMarkerContext& context, const unsigned char* mask) {
+        uint64_t hash = 14695981039346656037ULL;
+        for (int byte = 0; byte < size_per_ft_; byte++) {
+            hash ^= mask[byte];
+            hash *= 1099511628211ULL;
+        }
+        DeletedMarkerMatch* match = nullptr;
+        auto& bucket = context.matches->buckets[hash % context.matches->buckets.size()];
+        auto* head = bucket.load(std::memory_order_acquire);
+        std::unique_ptr<DeletedMarkerMatch> entry;
+        while (!match) {
+            for (auto* stored = head; stored; stored = stored->next) {
+                if (stored->hash == hash && memcmp(stored->mask.data(), mask, size_per_ft_) == 0) {
+                    match = stored;
+                    break;
+                }
+            }
+            if (match) break;
+            if (!entry) {
+                entry.reset(new DeletedMarkerMatch);
+                entry->hash = hash;
+                entry->mask.assign(mask, mask + size_per_ft_);
+            }
+            // Entries are never moved or erased while readers exist. A failed
+            // insertion reloads the new head and checks for a competing same key.
+            entry->next = head;
+            if (bucket.compare_exchange_strong(
+                    head, entry.get(), std::memory_order_acq_rel, std::memory_order_acquire))
+                match = entry.release();
+        }
+        // Cache only immutable request-mask matches, never mutable owner markers
+        // or source-specific geometry. Entries live until this deletion ends.
+        std::call_once(match->ready, [&] {
+            match->witnesses.assign((context.candidates.size() + 63) / 64, 0);
+            auto consider = [&](size_t i) {
+                if (marker_covers_record(
+                        match->mask.data(), context.masks.data() + i * size_per_ft_))
+                    match->witnesses[i / 64] |= uint64_t(1) << (i % 64);
+            };
+            // Numeric records have exactly one bit per column. Choose the smallest
+            // necessary-condition posting union, then check the complete record.
+            size_t column = attr_type_.size();
+            size_t best_count = context.candidates.size();
+            for (size_t attr = 0; attr < attr_type_.size(); attr++) {
+                if (attr_type_[attr] != 0) continue;
+                size_t count = 0;
+                for (size_t byte = attr * ft_bytes_; byte < (attr + 1) * ft_bytes_; byte++) {
+                    unsigned int bits = match->mask[byte];
+                    while (bits) {
+                        int bit = __builtin_ctz(bits);
+                        count += context.supporters[byte * 8 + bit].size();
+                        bits &= bits - 1;
+                    }
+                }
+                if (column == attr_type_.size() || count < best_count) {
+                    column = attr;
+                    best_count = count;
+                }
+            }
+            if (column == attr_type_.size()) {
+                for (size_t i = 0; i < context.candidates.size(); i++) consider(i);
+            } else {
+                for (size_t byte = column * ft_bytes_; byte < (column + 1) * ft_bytes_; byte++) {
+                    unsigned int bits = match->mask[byte];
+                    while (bits) {
+                        int bit = __builtin_ctz(bits);
+                        for (size_t i : context.supporters[byte * 8 + bit]) consider(i);
+                        bits &= bits - 1;
+                    }
+                }
+            }
+        });
+        return match->witnesses;
+    }
+
+    DeletionRowResult prepareDeletionRow(
+        const DeletionRowPlan& plan, const DeletedMarkerContext& context,
+        const DeletionRowResult* cleanup) {
+        DeletionRowResult result;
+        result.source = plan.source;
+        result.level = plan.level;
+        result.replace_neighbors = true;
+        auto& stats = result.stats;
+        auto* ll = get_linklist_at_level(plan.source, plan.level);
+        auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+        size_t old_degree = getListCount(ll);
+        std::vector<tableint> old_neighbors(neighbors, neighbors + old_degree);
+        bool edge_markers = plan.level == 0 && edge_level_ft_;
+        std::vector<unsigned char> old_markers;
+        if (edge_markers) {
+            old_markers.resize(old_degree * size_per_ft_);
+            if (!old_markers.empty())
+                memcpy(old_markers.data(), edge_ft_at(plan.source, 0), old_markers.size());
+            if (cleanup && cleanup->marker_edge >= 0)
+                memcpy(old_markers.data() + cleanup->marker_edge * size_per_ft_,
+                       cleanup->markers.data(), size_per_ft_);
+        }
+        size_t limit = plan.level == 0 ? maxM0_ : maxM_;
+        if (edge_markers) result.markers.assign(limit * size_per_ft_, 0);
+        auto edge_marker = [&](size_t edge) {
+            return result.markers.data() + edge * size_per_ft_;
+        };
+        std::vector<tableint> selected = plan.neighbors;
+        std::vector<std::vector<tableint>> dominated(edge_markers ? limit : 0);
+        bool pruned = selected.size() > limit;
+        if (pruned) {
+            std::priority_queue<std::pair<dist_t, tableint>,
+                std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidates;
+            for (tableint target : selected)
+                candidates.emplace(deletionDistance(context, plan.source, target), target);
+            // Heap ordering is not the ordering of the recorded pruning witnesses.
+            getNeighborsByHeuristic2(candidates, limit, edge_markers, plan.source,
+                                    &dominated, &selected, false, context.distances.get());
+            stats.pruned_edges = plan.neighbors.size() - selected.size();
+        }
+        if (edge_markers) {
+            std::vector<unsigned char> lost(size_per_ft_, 0);
+            if (pruned) {
+                for (size_t i = 0; i < old_neighbors.size(); i++) {
+                    if (std::find(selected.begin(), selected.end(), old_neighbors[i]) != selected.end())
+                        continue;
+                    for (size_t byte = 0; byte < size_per_ft_; byte++)
+                        lost[byte] |= old_markers[i * size_per_ft_ + byte];
+                }
+            }
+            std::vector<unsigned char> wanted(selected.size() * size_per_ft_, 0);
+            std::vector<size_t> requested_edges;
+            for (size_t edge = 0; edge < selected.size(); edge++) {
+                tableint target = selected[edge];
+                unsigned char* marker = edge_marker(edge);
+                auto old = std::find(old_neighbors.begin(), old_neighbors.end(), target);
+                if (old == old_neighbors.end()) {
+                    memset(marker, 0, size_per_ft_);
+                    mergeDeletionOwnMask(marker, target, context);
+                } else {
+                    memcpy(marker, old_markers.data() + size_t(old - old_neighbors.begin()) * size_per_ft_,
+                           size_per_ft_);
+                }
+                if (pruned) {
+                    for (tableint witness : dominated[edge]) {
+                        if (!isMarkedDeletedCached(witness))
+                            mergeDeletionOwnMask(marker, witness, context);
+                    }
+                }
+                size_t input_position = std::find(
+                    plan.neighbors.begin(), plan.neighbors.end(), target) - plan.neighbors.begin();
+                const auto& request = plan.color_requests[input_position];
+                bool needs_support = false;
+                for (size_t byte = 0; byte < size_per_ft_; byte++) {
+                    unsigned char bits = lost[byte] | (request.empty() ? 0 : request[byte]);
+                    wanted[edge * size_per_ft_ + byte] = bits;
+                    needs_support = needs_support || (bits & static_cast<unsigned char>(~marker[byte]));
+                }
+                if (needs_support) requested_edges.push_back(edge);
+            }
+            if (!requested_edges.empty()) {
+                std::vector<const std::vector<uint64_t>*> compatible(selected.size(), nullptr);
+                std::vector<uint64_t> requested((context.candidates.size() + 63) / 64, 0);
+                for (size_t edge : requested_edges) {
+                    const auto& matches = matchingDeletedCandidates(
+                        context, wanted.data() + edge * size_per_ft_);
+                    compatible[edge] = &matches;
+                    for (size_t word = 0; word < requested.size(); word++)
+                        requested[word] |= matches[word];
+                }
+                auto exclude = [&](tableint id) {
+                    auto position = context.positions.find(id);
+                    if (position != context.positions.end()) {
+                        size_t i = position->second;
+                        bool present = requested[i / 64] & (uint64_t(1) << (i % 64));
+                        requested[i / 64] &= ~(uint64_t(1) << (i % 64));
+                        return present;
+                    }
+                    return false;
+                };
+                exclude(plan.source);
+                for (tableint target : selected) exclude(target);
+                // These are direct, source-specific RNG proofs, not transitive
+                // transfers of an old owner's compressed Marker.
+                if (pruned) {
+                    for (size_t edge = 0; edge < selected.size(); ++edge) {
+                        if (isMarkedDeletedCached(selected[edge])) continue;
+                        for (tableint witness : dominated[edge]) {
+                            if (!isMarkedDeletedCached(witness) && exclude(witness))
+                                ++stats.rng_witness_reuses;
+                        }
+                    }
+                }
+                if (std::any_of(requested.begin(), requested.end(), [](uint64_t bits) { return bits != 0; })) {
+                    std::vector<std::pair<dist_t, size_t>> order;
+                    std::vector<size_t> new_owner_order;
+                    std::vector<dist_t> target_distances(selected.size());
+                    for (size_t edge = 0; edge < selected.size(); edge++) {
+                        target_distances[edge] = deletionDistance(context, plan.source, selected[edge]);
+                        order.emplace_back(target_distances[edge], edge);
+                    }
+                    std::sort(order.begin(), order.end());
+                    for (const auto& candidate : order) {
+                        if (compatible[candidate.second])
+                            new_owner_order.push_back(candidate.second);
+                    }
+                    std::vector<unsigned char> eligible(selected.size());
+                    for (size_t word = 0; word < requested.size(); word++) {
+                        uint64_t bits = requested[word];
+                        while (bits) {
+                            int bit = __builtin_ctzll(bits);
+                            bits &= bits - 1;
+                            size_t i = word * 64 + bit;
+                            tableint witness = context.candidates[i].second;
+                            if (isMarkedDeletedCached(witness)) continue;
+                            const unsigned char* point_mask = context.masks.data() + i * size_per_ft_;
+                            dist_t distance = deletionDistance(context, plan.source, witness);
+                            std::fill(eligible.begin(), eligible.end(), 0);
+                            auto supports = [&](size_t edge) {
+                                if (isMarkedDeletedCached(selected[edge]) ||
+                                    isMarkedDeletedCached(witness)) return false;
+                                if (eligible[edge] == 0) {
+                                    bool valid = target_distances[edge] <= distance
+                                        && deletionDistance(context, selected[edge], witness) < distance;
+                                    eligible[edge] = valid ? 2 : 1;
+                                    stats.support_checks++;
+                                }
+                                return eligible[edge] == 2;
+                            };
+                            bool covered = false;
+                            for (const auto& candidate : order) {
+                                size_t edge = candidate.second;
+                                if (marker_covers_record(edge_marker(edge), point_mask) && supports(edge)) {
+                                    covered = true;
+                                    break;
+                                }
+                            }
+                            if (covered) continue;
+                            // Nonrequested edges already cover their wanted masks.
+                            // A valid route through one would have been found above.
+                            for (size_t edge : new_owner_order) {
+                                if (((*compatible[edge])[word] & (uint64_t(1) << bit)) && supports(edge)) {
+                                    unsigned char* marker = edge_marker(edge);
+                                    for (int byte = 0; byte < size_per_ft_; byte++)
+                                        marker[byte] |= point_mask[byte];
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        result.neighbors = std::move(selected);
+        stats.rewired_nodes = 1;
+        return result;
+    }
+
+    DeletionRowResult prepareDeletionWork(
+        const DeletionWork& work, const DeletedMarkerContext& context) {
+        DeletionRowResult cleanup;
+        cleanup.source = work.source;
+        if (work.cleanup) cleanup = prepareDeletedMarkerSource(work.source, context);
+        if (!work.plan) return cleanup;
+        auto row = prepareDeletionRow(*work.plan, context, work.cleanup ? &cleanup : nullptr);
+        addDeletionStats(row.stats, cleanup.stats);
+        return row;
+    }
+
+    // Caller holds the source lock through preparation and publication.
+    void commitDeletionRowLocked(const DeletionRowResult& row) {
+        if (!row.replace_neighbors) {
+            if (row.marker_edge >= 0)
+                memcpy(edge_ft_at(row.source, row.marker_edge), row.markers.data(), size_per_ft_);
+            return;
+        }
+        auto* ll = get_linklist_at_level(row.source, row.level);
+        auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+        size_t limit = row.level == 0 ? maxM0_ : maxM_;
+        if (row.level == 0 && edge_level_ft_) {
+            memcpy(edge_ft_at(row.source, 0), row.markers.data(), row.markers.size());
+            if (use_augmented_edges_ && row.source < orig_degree_.size())
+                orig_degree_[row.source] =
+                    static_cast<uint8_t>(std::min<size_t>(row.neighbors.size(), 255));
+        }
+        std::copy(row.neighbors.begin(), row.neighbors.end(), neighbors);
+        std::fill(neighbors + row.neighbors.size(), neighbors + limit, tableint(0));
+        setListCount(ll, row.neighbors.size());
+    }
+
+    struct PendingDeletionIncoming {
+        tableint source;
+        int level;
+        std::vector<unsigned char> marker;
+    };
+
+    struct DeferredDeletionIncoming {
+        tableint deleted;
+        PendingDeletionIncoming incoming;
+    };
+
+    struct ActiveDeletion {
+        std::mutex mutex;
+        std::condition_variable ready;
+        std::atomic<size_t> producers{0};
+        bool accepting{true};
+        std::vector<PendingDeletionIncoming> incoming;
+    };
+
+    struct DeletionIncomingReservation {
+        std::shared_ptr<ActiveDeletion> task;
+
+        explicit DeletionIncomingReservation(std::shared_ptr<ActiveDeletion> active)
+            : task(std::move(active)) {}
+        DeletionIncomingReservation(const DeletionIncomingReservation&) = delete;
+        DeletionIncomingReservation& operator=(const DeletionIncomingReservation&) = delete;
+        DeletionIncomingReservation(DeletionIncomingReservation&&) = default;
+
+        void release() {
+            auto active = std::move(task);
+            if (!active) return;
+            {
+                std::lock_guard<std::mutex> lock(active->mutex);
+                active->producers.fetch_sub(1, std::memory_order_acq_rel);
+            }
+            active->ready.notify_all();
+        }
+
+        ~DeletionIncomingReservation() { release(); }
+    };
+
+    struct DeletionBatch {
+        DeletionPublicationMutex publication_gate;
+        std::mutex registry_mutex;
+        std::unordered_map<tableint, std::shared_ptr<ActiveDeletion>> active;
+        std::mutex deferred_mutex;
+        std::deque<DeferredDeletionIncoming> deferred;
+        std::vector<std::atomic<size_t>> adjacency_versions;
+        std::vector<std::atomic<size_t>> completion_epochs;
+        std::atomic<size_t> completion_sequence{0};
+        std::atomic<size_t> running{0};
+        std::atomic<size_t> peak{0};
+
+        explicit DeletionBatch(size_t count)
+            : adjacency_versions(count), completion_epochs(count) {
+            for (auto& version : adjacency_versions)
+                version.store(0, std::memory_order_relaxed);
+            for (auto& epoch : completion_epochs)
+                epoch.store(0, std::memory_order_relaxed);
+        }
+    };
+
+    struct DeletionDelta {
+        DeletionRowPlan additions;
+        bool pending_incoming{false};
+        std::vector<unsigned char> incoming_marker;
+        std::vector<size_t> outgoing_repairs;
+    };
+
+    std::vector<tableint> rankDeletionReplacements(
+        tableint point, const std::vector<std::pair<dist_t, tableint>>& nearest,
+        const DeletedMarkerContext& context) {
+        std::vector<std::pair<dist_t, tableint>> scored;
+        // Positions, not fifty filtered matches. A retired self still occupies
+        // its original search-result position and is never a replacement.
+        for (size_t i = 0; i < std::min<size_t>(50, nearest.size()); ++i) {
+            tableint candidate = nearest[i].second;
+            if (candidate == point || candidate == context.deleted_id ||
+                isMarkedDeletedCached(candidate)) continue;
+            scored.emplace_back(deletionDistance(context, point, candidate), candidate);
+        }
+        std::sort(scored.begin(), scored.end());
+        std::vector<tableint> result;
+        result.reserve(scored.size());
+        for (const auto& candidate : scored) result.push_back(candidate.second);
+        return result;
+    }
+
+    static DeletionIncomingReservation reserveDeletionIncoming(
+        DeletionBatch& batch, tableint deleted) {
+        std::lock_guard<std::mutex> lock(batch.registry_mutex);
+        auto found = batch.active.find(deleted);
+        if (found == batch.active.end()) return DeletionIncomingReservation(nullptr);
+        // Reserve before releasing the registry lookup: an obtained task is a
+        // producer promise, even when its queue has not received the item yet.
+        found->second->producers.fetch_add(1, std::memory_order_acq_rel);
+        return DeletionIncomingReservation(found->second);
+    }
+
+    static bool tryCloseDeletionIncoming(
+        DeletionBatch& batch, tableint deleted, const std::shared_ptr<ActiveDeletion>& task) {
+        std::lock_guard<std::mutex> registry_lock(batch.registry_mutex);
+        std::lock_guard<std::mutex> queue_lock(task->mutex);
+        auto found = batch.active.find(deleted);
+        if (found == batch.active.end()) return true;
+        if (found->second != task) return false;
+        if (!task->incoming.empty() || task->producers.load(std::memory_order_acquire) != 0)
+            return false;
+        task->accepting = false;
+        size_t epoch = batch.completion_sequence.load(std::memory_order_relaxed) + 1;
+        batch.completion_epochs[deleted].store(epoch, std::memory_order_release);
+        batch.completion_sequence.store(epoch, std::memory_order_release);
+        batch.active.erase(found);
+        return true;
+    }
+
+    void publishDeletionIncoming(
+        DeletionIncomingReservation& reservation, tableint source, int level,
+        const unsigned char* marker, DeletedMarkerCleanupStats& stats) {
+        assert(reservation.task);
+        PendingDeletionIncoming incoming{source, level, {}};
+        if (marker) incoming.marker.assign(marker, marker + size_per_ft_);
+        {
+            std::lock_guard<std::mutex> lock(reservation.task->mutex);
+            reservation.task->incoming.push_back(std::move(incoming));
+        }
+        reservation.release();
+        ++stats.incoming_handoffs;
+    }
+
+    void deferDeletionIncoming(
+        DeletionBatch& batch, tableint deleted, tableint source, int level,
+        const unsigned char* marker, DeletedMarkerCleanupStats& stats) {
+        DeferredDeletionIncoming deferred{deleted, {source, level, {}}};
+        if (marker) deferred.incoming.marker.assign(marker, marker + size_per_ft_);
+        {
+            std::lock_guard<std::mutex> lock(batch.deferred_mutex);
+            batch.deferred.push_back(std::move(deferred));
+        }
+        ++stats.incoming_handoffs;
+        ++stats.deferred_incoming_handoffs;
+    }
+
+    void handoffDeletionIncoming(
+        DeletionBatch& batch, tableint deleted, tableint source, int level,
+        const unsigned char* marker, DeletedMarkerCleanupStats& stats,
+        bool pending_promise = true, size_t source_epoch = 0) {
+        auto reservation = reserveDeletionIncoming(batch, deleted);
+        if (reservation.task) {
+            publishDeletionIncoming(reservation, source, level, marker, stats);
+        } else if (isMarkedDeletedCached(deleted)) {
+            if (pending_promise) {
+                ++stats.deferred_pending_requests;
+            } else if (batch.completion_epochs[deleted].load(std::memory_order_acquire) > source_epoch) {
+                ++stats.deferred_overlapping_edges;
+            } else {
+                ++stats.ignored_completed_ghosts;
+                return;
+            }
+            // Discovery may precede closure even when lookup arrives too late.
+            deferDeletionIncoming(batch, deleted, source, level, marker, stats);
+        }
+    }
+
+    bool applyDeletionDelta(
+        const DeletionDelta& delta, const DeletedMarkerContext& context,
+        const std::vector<std::pair<dist_t, tableint>>& nearest,
+        DeletionBatch& batch, DeletedMarkerCleanupStats& stats,
+        bool cleanup = false) {
+        tableint source = delta.additions.source;
+        int level = delta.additions.level;
+        std::unique_lock<std::mutex> lock(link_list_locks_[source]);
+        // All primary rows share the point's pre-search causal boundary.
+        // Standalone internal row operations have no earlier snapshots.
+        size_t source_epoch = context.causal_epoch == std::numeric_limits<size_t>::max()
+            ? batch.completion_sequence.load(std::memory_order_acquire) : context.causal_epoch;
+        if (isMarkedDeletedCached(source)) {
+            if (delta.pending_incoming) {
+                ++stats.deferred_retired_source_requests;
+                deferDeletionIncoming(batch, context.deleted_id, source, level,
+                    delta.incoming_marker.empty() ? nullptr : delta.incoming_marker.data(), stats);
+            }
+            return false;
+        }
+        DeletionRowResult cleaned;
+        if (cleanup) cleaned = prepareDeletedMarkerSource(source, context);
+        addDeletionStats(stats, cleaned.stats);
+
+        auto* ll = get_linklist_at_level(source, level);
+        auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+        size_t degree = getListCount(ll);
+        bool markers = level == 0 && edge_level_ft_;
+        if (!delta.pending_incoming && delta.additions.neighbors.empty()) {
+            bool retired_edge = false;
+            for (size_t edge = 0; edge < degree; ++edge) {
+                if (neighbors[edge] == source || isMarkedDeletedCached(neighbors[edge])) {
+                    retired_edge = true;
+                    break;
+                }
+            }
+            if (!retired_edge) {
+                if (cleaned.marker_edge >= 0) commitDeletionRowLocked(cleaned);
+                return true;
+            }
+        }
+        DeletionRowPlan plan{source, level, {}, {}};
+        plan.neighbors.reserve(degree + delta.additions.neighbors.size() + 3);
+        std::vector<tableint> proposed_targets;
+        proposed_targets.reserve(delta.additions.neighbors.size() + 3);
+        bool changed = false;
+        bool incoming = delta.pending_incoming;
+        std::vector<unsigned char> request = delta.incoming_marker;
+        auto merge_request = [&](std::vector<unsigned char>& mask, const unsigned char* bits) {
+            if (!bits) return;
+            if (mask.empty()) mask.assign(size_per_ft_, 0);
+            for (int byte = 0; byte < size_per_ft_; ++byte) mask[byte] |= bits[byte];
+        };
+        for (size_t edge = 0; edge < degree; ++edge) {
+            tableint target = neighbors[edge];
+            if (target == context.deleted_id) {
+                incoming = true;
+                if (markers) merge_request(request, edge_ft_at(source, edge));
+            }
+            if (target == source || isMarkedDeletedCached(target)) {
+                changed = true;
+                continue;
+            }
+            plan.neighbors.push_back(target);
+            plan.color_requests.emplace_back();
+        }
+        auto add_edge = [&](tableint target, const unsigned char* bits) {
+            if (target == source) return false;
+            if (std::find(proposed_targets.begin(), proposed_targets.end(), target) == proposed_targets.end())
+                proposed_targets.push_back(target);
+            if (isMarkedDeletedCached(target)) {
+                handoffDeletionIncoming(batch, target, source, level, bits, stats);
+                return false;
+            }
+            auto found = std::find(plan.neighbors.begin(), plan.neighbors.end(), target);
+            bool added = found == plan.neighbors.end();
+            size_t edge = added ? plan.neighbors.size() : size_t(found - plan.neighbors.begin());
+            if (added) {
+                plan.neighbors.push_back(target);
+                plan.color_requests.emplace_back();
+            }
+            merge_request(plan.color_requests[edge], bits);
+            // Even a structural no-op is an explicit proposal. It must reach
+            // the retirement/publication handshake regardless of Marker bits.
+            changed = true;
+            return added;
+        };
+        if (incoming) {
+            ++stats.incoming_edges_repaired;
+            size_t replacements = 0;
+            for (tableint target : rankDeletionReplacements(source, nearest, context)) {
+                if (isMarkedDeletedCached(target)) continue;
+                add_edge(target, request.empty() ? nullptr : request.data());
+                if (++replacements == 3) break;
+            }
+        }
+        for (size_t edge = 0; edge < delta.additions.neighbors.size(); ++edge) {
+            const auto& mask = delta.additions.color_requests[edge];
+            if (add_edge(delta.additions.neighbors[edge], mask.empty() ? nullptr : mask.data()))
+                ++stats.outgoing_edges_added;
+        }
+        if (!changed) {
+            if (cleaned.marker_edge >= 0) commitDeletionRowLocked(cleaned);
+            return true;
+        }
+
+        auto row = prepareDeletionRow(plan, context, cleanup ? &cleaned : nullptr);
+        publishDeletionRowLocked(row, plan, context, proposed_targets, batch, stats, source_epoch);
+        return true;
+    }
+
+    // Caller holds the source row lock throughout preparation and publication.
+    void publishDeletionRowLocked(
+        DeletionRowResult& row, const DeletionRowPlan& plan,
+        const DeletedMarkerContext& context, const std::vector<tableint>& proposed_targets,
+        DeletionBatch& batch, DeletedMarkerCleanupStats& stats, size_t source_epoch) {
+        tableint source = plan.source;
+        int level = plan.level;
+        auto* ll = get_linklist_at_level(source, level);
+        auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+        size_t degree = getListCount(ll);
+        bool markers = level == 0 && edge_level_ft_;
+        // No retiring point reserves capacity. Its edge and complete request
+        // are handed to its own worker rather than silently lost to this prune.
+        std::vector<tableint> removed;
+        std::vector<unsigned char> removed_markers;
+        std::vector<unsigned char> pending_promises, retiring_targets;
+        size_t capacity = degree + plan.neighbors.size();
+        removed.reserve(capacity);
+        pending_promises.reserve(capacity);
+        retiring_targets.reserve(capacity);
+        if (markers) removed_markers.reserve(capacity * size_per_ft_);
+        auto remember = [&](tableint target, const unsigned char* mask) {
+            if (target == context.deleted_id) return;
+            auto found = std::find(removed.begin(), removed.end(), target);
+            if (found == removed.end()) {
+                removed.push_back(target);
+                if (markers) removed_markers.resize(removed.size() * size_per_ft_, 0);
+                found = removed.end() - 1;
+            }
+            if (markers && mask) {
+                size_t offset = size_t(found - removed.begin()) * size_per_ft_;
+                for (int byte = 0; byte < size_per_ft_; ++byte)
+                    removed_markers[offset + byte] |= mask[byte];
+            }
+            if (markers) {
+                auto proposal = std::find(plan.neighbors.begin(), plan.neighbors.end(), target);
+                if (proposal != plan.neighbors.end()) {
+                    const auto& request = plan.color_requests[proposal - plan.neighbors.begin()];
+                    size_t offset = size_t(found - removed.begin()) * size_per_ft_;
+                    for (size_t byte = 0; byte < request.size(); ++byte)
+                        removed_markers[offset + byte] |= request[byte];
+                }
+            }
+        };
+        for (size_t edge = 0; edge < degree; ++edge) {
+            if (std::find(row.neighbors.begin(), row.neighbors.end(), neighbors[edge]) == row.neighbors.end())
+                remember(neighbors[edge], markers ? edge_ft_at(source, edge) : nullptr);
+        }
+        // Retirement takes this gate exclusively while setting DELETE_MARK. Either
+        // this row really publishes before T retires, or T is handed off here;
+        // no checked-live proposal can become a post-retirement stored edge.
+        DeletionPublicationLock publication_lock(batch.publication_gate);
+        size_t kept = 0;
+        for (size_t edge = 0; edge < row.neighbors.size(); ++edge) {
+            tableint target = row.neighbors[edge];
+            if (isMarkedDeletedCached(target)) {
+                remember(target, markers ? row.markers.data() + edge * size_per_ft_ : nullptr);
+                ++stats.publication_retired_targets;
+                continue;
+            }
+            row.neighbors[kept] = target;
+            if (markers && kept != edge)
+                memmove(row.markers.data() + kept * size_per_ft_,
+                        row.markers.data() + edge * size_per_ft_, size_per_ft_);
+            ++kept;
+        }
+        row.neighbors.resize(kept);
+        if (markers)
+            std::fill(row.markers.begin() + kept * size_per_ft_, row.markers.end(), 0);
+        // A retiring proposal may have been excluded from pruning/transfer
+        // before its request was materialized. Preserve the original complete
+        // request independently of both the old and the selected edge lists.
+        for (size_t edge = 0; edge < plan.neighbors.size(); ++edge) {
+            tableint target = plan.neighbors[edge];
+            if (std::find(row.neighbors.begin(), row.neighbors.end(), target) == row.neighbors.end())
+                remember(target, nullptr);
+        }
+        for (size_t edge = 0; edge < removed.size(); ++edge) {
+            pending_promises.push_back(
+                std::find(proposed_targets.begin(), proposed_targets.end(), removed[edge])
+                    != proposed_targets.end());
+            retiring_targets.push_back(isMarkedDeletedCached(removed[edge]));
+        }
+        // All concurrent topology publication goes through this source lock.
+        // Marker-only rewrites do not invalidate an expansion's adjacency proof.
+        if (degree != row.neighbors.size() ||
+            !std::equal(row.neighbors.begin(), row.neighbors.end(), neighbors))
+            batch.adjacency_versions[source].fetch_add(1, std::memory_order_relaxed);
+        commitDeletionRowLocked(row);
+        publication_lock.unlock();
+        for (size_t edge = 0; edge < removed.size(); ++edge) {
+            if (!retiring_targets[edge]) continue;
+            handoffDeletionIncoming(batch, removed[edge], source, level,
+                markers ? removed_markers.data() + edge * size_per_ft_ : nullptr, stats,
+                pending_promises[edge], source_epoch);
+        }
+        addDeletionStats(stats, row.stats);
+    }
+
+    DeletionRowResult prepareDeferredIntermediateEdges(
+        const DeferredDeletionIncoming& deferred, const DeletedMarkerContext& context,
+        const std::vector<std::pair<dist_t, tableint>>& nearest,
+        DeletionBatch& batch, DeletedMarkerCleanupStats& stats) {
+        tableint source = deferred.incoming.source;
+        int level = deferred.incoming.level;
+        std::lock_guard<std::mutex> lock(link_list_locks_[source]);
+        assert(isMarkedDeletedCached(source));
+        auto* ll = get_linklist_at_level(source, level);
+        auto* old = reinterpret_cast<tableint*>(ll + 1);
+        size_t degree = getListCount(ll);
+        bool markers = level == 0 && edge_level_ft_;
+        DeletionRowPlan plan{source, level, {}, {}};
+        for (size_t edge = 0; edge < degree; ++edge) {
+            tableint target = old[edge];
+            if (target == source || isMarkedDeletedCached(target)) continue;
+            if (std::find(plan.neighbors.begin(), plan.neighbors.end(), target) != plan.neighbors.end())
+                continue;
+            plan.neighbors.push_back(target);
+            plan.color_requests.emplace_back();
+        }
+        std::vector<tableint> proposed;
+        for (tableint target : rankDeletionReplacements(source, nearest, context)) {
+            if (isMarkedDeletedCached(target)) continue;
+            auto found = std::find(plan.neighbors.begin(), plan.neighbors.end(), target);
+            size_t edge = size_t(found - plan.neighbors.begin());
+            if (found == plan.neighbors.end()) {
+                plan.neighbors.push_back(target);
+                plan.color_requests.emplace_back();
+            }
+            plan.color_requests[edge] = deferred.incoming.marker;
+            proposed.push_back(target);
+            if (proposed.size() == 3) break;
+        }
+        // This is D's ordinary incoming/Marker repair evaluated on frozen S,
+        // never published to S. Its bounded witnesses and direct S/V geometry
+        // must validate new records before S's outgoing-source repair sees them.
+        auto row = prepareDeletionRow(plan, context, nullptr);
+        row.stats.rewired_nodes = 0;
+        addDeletionStats(stats, row.stats);
+        ++stats.deferred_intermediate_rows;
+        std::vector<tableint> handed;
+        auto handoff = [&](tableint target, const unsigned char* materialized) {
+            if (std::find(handed.begin(), handed.end(), target) != handed.end()) return;
+            handed.push_back(target);
+            std::vector<unsigned char> request(markers ? size_per_ft_ : 0, 0);
+            if (markers) {
+                if (std::find(proposed.begin(), proposed.end(), target) != proposed.end())
+                    for (size_t byte = 0; byte < deferred.incoming.marker.size(); ++byte)
+                        request[byte] |= deferred.incoming.marker[byte];
+                auto previous = std::find(old, old + degree, target);
+                const unsigned char* stored = previous == old + degree
+                    ? nullptr : edge_ft_at(source, previous - old);
+                for (int byte = 0; byte < size_per_ft_; ++byte) {
+                    if (stored) request[byte] |= stored[byte];
+                    if (materialized) request[byte] |= materialized[byte];
+                }
+            }
+            handoffDeletionIncoming(batch, target, source, level,
+                request.empty() ? nullptr : request.data(), stats);
+        };
+        size_t kept = 0;
+        for (size_t edge = 0; edge < row.neighbors.size(); ++edge) {
+            tableint target = row.neighbors[edge];
+            const unsigned char* materialized = markers
+                ? row.markers.data() + edge * size_per_ft_ : nullptr;
+            if (isMarkedDeletedCached(target)) {
+                handoff(target, materialized);
+                continue;
+            }
+            auto previous = std::find(old, old + degree, target);
+            bool affected = previous == old + degree ||
+                (markers && memcmp(materialized, edge_ft_at(source, previous - old), size_per_ft_) != 0);
+            if (!affected) continue;
+            row.neighbors[kept] = target;
+            if (markers && kept != edge)
+                memmove(row.markers.data() + kept * size_per_ft_, materialized, size_per_ft_);
+            ++kept;
+        }
+        row.neighbors.resize(kept);
+        if (markers) row.markers.resize(kept * size_per_ft_);
+        for (tableint target : proposed)
+            if (isMarkedDeletedCached(target) &&
+                std::find(row.neighbors.begin(), row.neighbors.end(), target) == row.neighbors.end())
+                handoff(target, nullptr);
+        return row;
+    }
+
+    void drainDeferredDeletionIncoming(DeletionBatch& batch, DeletedMarkerCleanupStats& stats) {
+        for (;;) {
+            DeferredDeletionIncoming deferred;
+            {
+                std::lock_guard<std::mutex> lock(batch.deferred_mutex);
+                if (batch.deferred.empty()) return;
+                deferred = std::move(batch.deferred.front());
+                batch.deferred.pop_front();
+            }
+            size_t causal_epoch = batch.completion_sequence.load(std::memory_order_acquire);
+            ++stats.deferred_incoming_repairs;
+            // No source/queue lock is held here. A late recipient gets a fresh
+            // bounded search, never a global scan or an unbounded saved context.
+            std::vector<tableint> expanded;
+            auto nearest = searchDeletionLayer(
+                deferred.deleted, deferred.incoming.level, expanded, true);
+            stats.search_expanded += expanded.size();
+            if (deferred.incoming.level == 0) stats.search_candidates += nearest.size();
+            auto context = makeDeletedMarkerContext(deferred.deleted, nearest, false);
+            context.causal_epoch = causal_epoch;
+            bool retired_source;
+            {
+                std::lock_guard<std::mutex> lock(link_list_locks_[deferred.incoming.source]);
+                retired_source = isMarkedDeletedCached(deferred.incoming.source);
+                if (retired_source && deferred.incoming.level == 0 && edge_level_ft_) {
+                    auto* ll = get_linklist0(deferred.incoming.source);
+                    auto* targets = reinterpret_cast<tableint*>(ll + 1);
+                    for (int edge = 0; edge < getListCount(ll); ++edge) {
+                        if (targets[edge] != deferred.deleted) continue;
+                        if (deferred.incoming.marker.empty())
+                            deferred.incoming.marker.assign(size_per_ft_, 0);
+                        const auto* stored = edge_ft_at(deferred.incoming.source, edge);
+                        for (int byte = 0; byte < size_per_ft_; ++byte)
+                            deferred.incoming.marker[byte] |= stored[byte];
+                    }
+                }
+            }
+            if (!retired_source) {
+                DeletionDelta delta;
+                delta.additions.source = deferred.incoming.source;
+                delta.additions.level = deferred.incoming.level;
+                delta.pending_incoming = true;
+                delta.incoming_marker = std::move(deferred.incoming.marker);
+                applyDeletionDelta(delta, context, nearest, batch, stats);
+            } else {
+                ++stats.deferred_retired_source_repairs;
+                auto intermediate = prepareDeferredIntermediateEdges(
+                    deferred, context, nearest, batch, stats);
+                if (intermediate.neighbors.empty()) {
+                    stats.distance_cache_hits += context.distances->hits;
+                    stats.distance_cache_misses += context.distances->misses;
+                    continue;
+                }
+                std::vector<tableint> source_expanded;
+                auto source_nearest = searchDeletionLayer(
+                    deferred.incoming.source, deferred.incoming.level, source_expanded, true);
+                stats.search_expanded += source_expanded.size();
+                if (deferred.incoming.level == 0) stats.search_candidates += source_nearest.size();
+                auto source_context = makeDeletedMarkerContext(
+                    deferred.incoming.source, source_nearest, false);
+                source_context.causal_epoch = causal_epoch;
+                for (size_t edge = 0; edge < intermediate.neighbors.size(); ++edge) {
+                    tableint target = intermediate.neighbors[edge];
+                    std::vector<unsigned char> request;
+                    if (deferred.incoming.level == 0 && edge_level_ft_)
+                        request.assign(intermediate.markers.data() + edge * size_per_ft_,
+                                       intermediate.markers.data() + (edge + 1) * size_per_ft_);
+                    if (isMarkedDeletedCached(target)) {
+                        handoffDeletionIncoming(batch, target, deferred.incoming.source,
+                            deferred.incoming.level, request.empty() ? nullptr : request.data(), stats);
+                        continue;
+                    }
+                    size_t sources = 0;
+                    for (tableint source : rankDeletionReplacements(
+                             target, source_nearest, source_context)) {
+                        DeletionDelta delta;
+                        delta.additions = {source, deferred.incoming.level,
+                                           {target}, {request}};
+                        if (applyDeletionDelta(delta, source_context, source_nearest, batch, stats) &&
+                            ++sources == 3) break;
+                    }
+                }
+                stats.distance_cache_hits += source_context.distances->hits;
+                stats.distance_cache_misses += source_context.distances->misses;
+            }
+            stats.distance_cache_hits += context.distances->hits;
+            stats.distance_cache_misses += context.distances->misses;
+        }
+    }
+
+    DeletedMarkerCleanupStats deletePointConcurrent(tableint deleted_id, DeletionBatch& batch) {
+        size_t causal_epoch = batch.completion_sequence.load(std::memory_order_acquire);
+        auto task = std::make_shared<ActiveDeletion>();
+        {
+            std::lock_guard<std::mutex> row_lock(link_list_locks_[deleted_id]);
+            std::lock_guard<DeletionPublicationMutex> publication_lock(batch.publication_gate);
+            {
+                std::lock_guard<std::mutex> registry_lock(batch.registry_mutex);
+                batch.active.emplace(deleted_id, task);
+                markDeletedInternalLocked(deleted_id);
+                *(reinterpret_cast<unsigned char*>(get_linklist0(deleted_id)) + 2) |= MARKER_CLEANED;
+            }
+        }
+        size_t running = batch.running.fetch_add(1, std::memory_order_relaxed) + 1;
+        size_t peak = batch.peak.load(std::memory_order_relaxed);
+        while (peak < running && !batch.peak.compare_exchange_weak(
+            peak, running, std::memory_order_relaxed)) {}
+
+        struct Layer {
+            std::vector<std::pair<dist_t, tableint>> nearest;
+            std::vector<tableint> expanded;
+            std::vector<size_t> expanded_versions;
+        };
+        std::vector<Layer> layers(element_levels_[deleted_id] + 1);
+        DeletedMarkerCleanupStats stats;
+        for (size_t level = 0; level < layers.size(); ++level) {
+            auto& layer = layers[level];
+            layer.nearest = searchDeletionLayer(
+                deleted_id, level, layer.expanded, true, &batch.adjacency_versions,
+                level == 0 && edge_level_ft_ ? &layer.expanded_versions : nullptr);
+            stats.search_expanded += layer.expanded.size();
+        }
+        stats.search_candidates = layers[0].nearest.size();
+        auto context = makeDeletedMarkerContext(deleted_id, layers[0].nearest, false);
+        context.causal_epoch = causal_epoch;
+        if (edge_level_ft_) {
+            context.adjacency_versions = &batch.adjacency_versions;
+            context.expanded_versions.assign(
+                context.candidates.size(), std::numeric_limits<size_t>::max());
+            for (size_t i = 0; i < layers[0].expanded.size(); ++i) {
+                auto position = context.positions.find(layers[0].expanded[i]);
+                if (position != context.positions.end())
+                    context.expanded_versions[position->second] = layers[0].expanded_versions[i];
+            }
+        }
+        for (size_t level = 0; level < layers.size(); ++level) {
+            auto& layer = layers[level];
+            struct Outgoing {
+                tableint target;
+                std::vector<unsigned char> marker;
+                std::vector<tableint> ranked;
+                std::vector<tableint> attempted;
+                size_t proposals{0};
+            };
+            std::vector<Outgoing> outgoing;
+            std::vector<DeletionDelta> deltas;
+            std::unordered_map<tableint, size_t> positions;
+            auto delta_for = [&](tableint source) -> DeletionDelta& {
+                auto found = positions.find(source);
+                if (found != positions.end()) return deltas[found->second];
+                size_t position = deltas.size();
+                positions.emplace(source, position);
+                DeletionDelta delta;
+                delta.additions.source = source;
+                delta.additions.level = level;
+                deltas.push_back(std::move(delta));
+                return deltas[position];
+            };
+            if (level == 0 && edge_level_ft_)
+                for (const auto& candidate : context.candidates) delta_for(candidate.second);
+            for (tableint source : layer.expanded) {
+                if (source != deleted_id && !isMarkedDeletedCached(source))
+                    delta_for(source);
+            }
+            // This point's outgoing rows are immutable from retirement until
+            // all workers join, including when it is the navigation entry.
+            auto* ll = get_linklist_at_level(deleted_id, level);
+            auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+            for (size_t edge = 0; edge < getListCount(ll); ++edge) {
+                tableint target = neighbors[edge];
+                if (target == deleted_id || isMarkedDeletedCached(target)) continue;
+                Outgoing repair;
+                repair.target = target;
+                if (level == 0 && edge_level_ft_) {
+                    const auto* marker = edge_ft_at(deleted_id, edge);
+                    repair.marker.assign(marker, marker + size_per_ft_);
+                }
+                repair.ranked = rankDeletionReplacements(target, layer.nearest, context);
+                size_t index = outgoing.size();
+                for (tableint source : repair.ranked) {
+                    if (isMarkedDeletedCached(source)) continue;
+                    auto& delta = delta_for(source);
+                    delta.additions.neighbors.push_back(target);
+                    delta.additions.color_requests.push_back(repair.marker);
+                    delta.outgoing_repairs.push_back(index);
+                    repair.attempted.push_back(source);
+                    if (++repair.proposals == 3) break;
+                }
+                outgoing.push_back(std::move(repair));
+            }
+            for (const auto& delta : deltas) {
+                bool cleanup = level == 0 && edge_level_ft_ &&
+                    context.positions.count(delta.additions.source);
+                if (!applyDeletionDelta(delta, context, layer.nearest, batch, stats, cleanup))
+                    for (size_t index : delta.outgoing_repairs) --outgoing[index].proposals;
+            }
+            // A chosen source can retire before its row is reached. Refill from
+            // the SAME first-fifty positions, never from a widened filtered pool.
+            for (auto& repair : outgoing) {
+                if (repair.proposals == 3 || isMarkedDeletedCached(repair.target)) continue;
+                for (tableint source : repair.ranked) {
+                    if (std::find(repair.attempted.begin(), repair.attempted.end(), source)
+                        != repair.attempted.end()) continue;
+                    DeletionDelta delta;
+                    delta.additions = {source, int(level), {repair.target}, {repair.marker}};
+                    if (applyDeletionDelta(delta, context, layer.nearest, batch, stats) &&
+                        ++repair.proposals == 3) break;
+                }
+            }
+        }
+        for (;;) {
+            std::vector<PendingDeletionIncoming> pending;
+            {
+                std::unique_lock<std::mutex> lock(task->mutex);
+                task->ready.wait(lock, [&] {
+                    return !task->incoming.empty() ||
+                        task->producers.load(std::memory_order_acquire) == 0;
+                });
+                pending.swap(task->incoming);
+            }
+            // Recheck emptiness and reservations atomically with registry
+            // removal. Never acquire a source row while holding a queue lock.
+            if (pending.empty()) {
+                if (tryCloseDeletionIncoming(batch, deleted_id, task)) break;
+                continue;
+            }
+            for (auto& incoming : pending) {
+                DeletionDelta delta;
+                delta.additions.source = incoming.source;
+                delta.additions.level = incoming.level;
+                delta.pending_incoming = true;
+                delta.incoming_marker = std::move(incoming.marker);
+                applyDeletionDelta(delta, context, layers[incoming.level].nearest, batch, stats);
+            }
+        }
+        stats.distance_cache_hits = context.distances->hits;
+        stats.distance_cache_misses = context.distances->misses;
+        // Every producer services deferred work before returning. A claimed
+        // request stays within a point worker, so ParallelFor joins its repairs.
+        drainDeferredDeletionIncoming(batch, stats);
+        batch.running.fetch_sub(1, std::memory_order_relaxed);
+        return stats;
+    }
+
+    void replaceDeletedEntry() {
+        if (enterpoint_node_ < cur_element_count && !isMarkedDeletedCached(enterpoint_node_))
+            return;
+        int best_level = -1;
+        tableint entry = tableint(-1);
+        for (tableint id = 0; id < cur_element_count; id++) {
+            if (!isMarkedDeletedCached(id) && element_levels_[id] > best_level) {
+                best_level = element_levels_[id];
+                entry = id;
+            }
+        }
+        enterpoint_node_ = entry;
+        maxlevel_ = best_level;
+    }
+
+    void clearRetiredOutgoing(tableint deleted_id) {
+        for (int layer = 0; layer <= element_levels_[deleted_id]; layer++) {
+            auto* ll = get_linklist_at_level(deleted_id, layer);
+            if (getListCount(ll) == 0) continue;
+            size_t limit = layer == 0 ? maxM0_ : maxM_;
+            auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+            std::fill(neighbors, neighbors + limit, tableint(0));
+            setListCount(ll, 0);
+            if (layer == 0 && edge_level_ft_)
+                memset(edge_ft_at(deleted_id, 0), 0, limit * size_per_ft_);
+        }
+    }
+
+    void retireDeletionEdges(tableint deleted_id) {
+        clearRetiredOutgoing(deleted_id);
+        replaceDeletedEntry();
+    }
+
+    size_t scrubDeletedEdges(int num_threads) {
+        size_t removed = 0;
+        size_t count = cur_element_count.load(std::memory_order_relaxed);
+        #pragma omp parallel for num_threads(num_threads) reduction(+:removed) schedule(static)
+        for (size_t source = 0; source < count; source++) {
+            if (isMarkedDeletedCached(source)) {
+                clearRetiredOutgoing(source);
+                continue;
+            }
+            for (int layer = 0; layer <= element_levels_[source]; layer++) {
+                auto* ll = get_linklist_at_level(source, layer);
+                auto* neighbors = reinterpret_cast<tableint*>(ll + 1);
+                size_t degree = getListCount(ll), kept = 0;
+                for (size_t edge = 0; edge < degree; edge++) {
+                    if (isMarkedDeletedCached(neighbors[edge])) {
+                        removed++;
+                        continue;
+                    }
+                    neighbors[kept] = neighbors[edge];
+                    if (layer == 0 && edge_level_ft_ && kept != edge)
+                        memmove(edge_ft_at(source, kept), edge_ft_at(source, edge), size_per_ft_);
+                    kept++;
+                }
+                if (kept == degree) continue;
+                std::fill(neighbors + kept, neighbors + degree, tableint(0));
+                if (layer == 0 && edge_level_ft_) {
+                    for (size_t edge = kept; edge < degree; edge++)
+                        memset(edge_ft_at(source, edge), 0, size_per_ft_);
+                    if (use_augmented_edges_ && source < orig_degree_.size())
+                        orig_degree_[source] = static_cast<uint8_t>(std::min<size_t>(kept, 255));
+                }
+                setListCount(ll, kept);
+            }
+        }
+        clear_dirty_bitmap();
+        clearRepairCandidates();
+        last_patch_deleted_count_ = num_deleted_.load();
+        return removed;
+    }
+    std::vector<tableint> resolveDeletionLabels(
+        const std::vector<labeltype>& labels,
+        bool require_deleted,
+        const char* operation) const {
+        std::vector<tableint> ids;
+        ids.reserve(labels.size());
+        std::unordered_set<labeltype> seen;
+        seen.reserve(labels.size());
+        std::unique_lock<std::mutex> lock_table(label_lookup_lock);
+        for (labeltype label : labels) {
+            if (!seen.insert(label).second) {
+                throw std::runtime_error(
+                    std::string(operation) + ": duplicate label: " +
+                    std::to_string(label));
+            }
+            auto it = label_lookup_.find(label);
+            if (it == label_lookup_.end()) {
+                throw std::runtime_error(
+                    std::string(operation) + ": label not found: " +
+                    std::to_string(label));
+            }
+            if (isMarkedDeleted(it->second) != require_deleted) {
+                throw std::runtime_error(
+                    std::string(operation) +
+                    (require_deleted ? ": label is not deleted: " :
+                                       ": label is already deleted: ") +
+                    std::to_string(label));
+            }
+            ids.push_back(it->second);
+        }
+        return ids;
+    }
+
+    DeletedMarkerCleanupStats applyPreparedDeletion(
+        tableint deleted_id, const DeletionPreparation& prepared) {
+        DeletedMarkerCleanupStats stats = prepared.stats;
+        const auto& context = prepared.context;
+        {
+            std::lock_guard<std::mutex> lock(link_list_locks_[deleted_id]);
+            markDeletedInternalLocked(deleted_id);
+            *(reinterpret_cast<unsigned char*>(get_linklist0(deleted_id)) + 2) |= MARKER_CLEANED;
+        }
+        for (const auto& work : deletionWork(prepared)) {
+            std::lock_guard<std::mutex> lock(link_list_locks_[work.source]);
+            auto row = prepareDeletionWork(work, context);
+            if (row.replace_neighbors || row.marker_edge >= 0) commitDeletionRowLocked(row);
+            addDeletionStats(stats, row.stats);
+        }
+        retireDeletionEdges(deleted_id);
+        return stats;
+    }
+
+    DeletedMarkerCleanupStats deleteItems(
+        const std::vector<labeltype>& labels,
+        int num_threads = -1) {
+        auto ids = resolveDeletionLabels(labels, false, "delete_items");
+        DeletedMarkerCleanupStats stats;
+        stats.deleted_points = ids.size();
+        if (ids.empty()) return stats;
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = std::max(1u, std::thread::hardware_concurrency());
+            #endif
+        }
+        num_threads = static_cast<int>(std::min(ids.size(), static_cast<size_t>(num_threads)));
+        replaceDeletedEntry();
+        marker_cleanup_used_ = true;
+        if (num_threads == 1) {
+            for (tableint id : ids) {
+                auto prepared = prepareDeletion(id);
+                addDeletionStats(stats, applyPreparedDeletion(id, prepared));
+                stats.distance_cache_hits += prepared.context.distances->hits;
+                stats.distance_cache_misses += prepared.context.distances->misses;
+            }
+            stats.max_active_points = 1;
+        } else {
+            DeletionBatch batch(cur_element_count.load(std::memory_order_relaxed));
+            std::vector<DeletedMarkerCleanupStats> workers(num_threads);
+            ParallelFor(0, ids.size(), num_threads, [&](size_t position, size_t worker) {
+                addDeletionStats(workers[worker], deletePointConcurrent(ids[position], batch));
+            });
+            for (const auto& worker : workers) addDeletionStats(stats, worker);
+            // No primary producer remains after join. Drain any final
+            // obligations (and their local cascades) to explicit quiescence.
+            drainDeferredDeletionIncoming(batch, stats);
+            stats.parallel_points = ids.size();
+            stats.max_active_points = batch.peak.load(std::memory_order_relaxed);
+        }
+        const auto scrub_started = std::chrono::steady_clock::now();
+        stats.scrubbed_edges = scrubDeletedEdges(num_threads);
+        stats.scrub_wall_s = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - scrub_started).count();
+        replaceDeletedEntry();
+        return stats;
+    }
+
+    std::vector<std::pair<dist_t, tableint>> searchDeletedNeighborhood(
+        tableint deleted_id) const {
+        const void* deleted_data = getDataByInternalId(deleted_id);
+        std::priority_queue<
+            std::pair<dist_t, tableint>,
+            std::vector<std::pair<dist_t, tableint>>,
+            CompareByFirst> seed;
+        seed.emplace(
+            fstdistfunc_(deleted_data, deleted_data, dist_func_param_),
+            deleted_id);
+        if (enterpoint_node_ != deleted_id) {
+            seed.emplace(
+                fstdistfunc_(deleted_data, getDataByInternalId(enterpoint_node_),
+                             dist_func_param_),
+                enterpoint_node_);
+        }
+        auto candidates = searchBaseLayerST<false, false>(
+            seed, deleted_data, ef_construction_);
+
+        std::vector<std::pair<dist_t, tableint>> result;
+        result.reserve(candidates.size());
+        while (!candidates.empty()) {
+            result.push_back(candidates.top());
+            candidates.pop();
+        }
+        std::reverse(result.begin(), result.end());
+        return result;
+    }
+
+    /*
+     * Heuristic reverse cleanup for attributes contributed by deleted points.
+     *
+     * A search using ef_construction_ starts from each deleted node and the
+     * graph entry. Nearby live nodes are candidate historical RNG-prune sources. For each
+     * source u, the closest current neighbor v satisfying
+     *     dist(v, deleted) < dist(u, deleted)
+     *     dist(u, v) <= dist(u, deleted)
+     * is treated as the likely dominator. Bits contributed by the deleted
+     * point are cleared from marker(u -> v) only when neither v nor another
+     * live point in the candidate pool supports the same bit under the same
+     * distance-ordered domination conditions.
+     *
+     * The ef_construction_ candidate budget deliberately trades coverage for cost;
+     * support recovery does not expand into a global scan.
+     * Supporters are indexed by bit; a single witness preserves that bit.
+     * Stop-the-world: do not overlap with graph updates or queries.
+     */
+    DeletedMarkerCleanupStats cleanupDeletedMarkerBits(
+        const std::vector<labeltype>& labels,
+        int num_threads = -1) {
+        if (!edge_level_ft_) {
+            throw std::runtime_error(
+                "cleanup_deleted_marker_bits requires edge_level_ft");
+        }
+        auto ids = resolveDeletionLabels(
+            labels, true, "cleanup_deleted_marker_bits");
+        return cleanupDeletedMarkerBitsById(ids, num_threads);
+    }
+
+    DeletedMarkerCleanupStats cleanupDeletedMarkerBitsById(
+        const std::vector<tableint>& deleted_ids,
+        int num_threads) {
+        DeletedMarkerCleanupStats stats;
+        stats.deleted_points = deleted_ids.size();
+        if (deleted_ids.empty()) return stats;
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = 1;
+            #endif
+        }
+        num_threads = static_cast<int>(
+            std::min(deleted_ids.size(), static_cast<size_t>(num_threads)));
+        std::vector<std::exception_ptr> errors(num_threads);
+
+        // Persist the retirement guard in the existing link-list flags byte.
+        // Set it before any worker can clear contributions, including on failure.
+        // Cleanup can also remove shared bits belonging to earlier tombstones.
+        marker_cleanup_used_ = true;
+        for (tableint id : deleted_ids) {
+            unsigned char* flags =
+                reinterpret_cast<unsigned char*>(get_linklist0(id)) + 2;
+            *flags |= MARKER_CLEANED;
+        }
+
+        size_t candidate_sources = 0;
+        size_t empty_marker_rows = 0;
+        size_t matched_edges = 0;
+        size_t cleared_bits = 0;
+        size_t support_checks = 0;
+
+        auto cleanup_one = [&](size_t deleted_idx) {
+            tableint deleted_id = deleted_ids[deleted_idx];
+            auto nearby = searchDeletedNeighborhood(deleted_id);
+            auto context = makeDeletedMarkerContext(deleted_id, nearby, true);
+            DeletedMarkerCleanupStats local;
+            for (const auto& candidate : context.candidates)
+                addDeletionStats(local, cleanupDeletedMarkerSource(candidate.second, context));
+            #pragma omp atomic update
+            candidate_sources += local.candidate_sources;
+            #pragma omp atomic update
+            empty_marker_rows += local.empty_marker_rows;
+            #pragma omp atomic update
+            matched_edges += local.matched_edges;
+            #pragma omp atomic update
+            cleared_bits += local.cleared_bits;
+            #pragma omp atomic update
+            support_checks += local.support_checks;
+        };
+        #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 1)
+        for (size_t deleted_idx = 0; deleted_idx < deleted_ids.size(); deleted_idx++) {
+            int thread_id = 0;
+            #ifdef _OPENMP
+            thread_id = omp_get_thread_num();
+            #endif
+            if (errors[thread_id]) continue;
+            try {
+                cleanup_one(deleted_idx);
+            } catch (...) {
+                errors[thread_id] = std::current_exception();
+            }
+        }
+        for (const auto& error : errors) {
+            if (error) std::rethrow_exception(error);
+        }
+        stats.candidate_sources = candidate_sources;
+        stats.empty_marker_rows = empty_marker_rows;
+        stats.matched_edges = matched_edges;
+        stats.cleared_bits = cleared_bits;
+        stats.support_checks = support_checks;
+        return stats;
+    }
 
     /*
      * FreshDiskANN-style batched delete patching.
@@ -5875,7 +7798,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return total_patched;
     }
 
-
     /*
      * Automatic maintenance dispatcher.
      * Returns:
@@ -5968,9 +7890,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         // --- Step 4: reset all graph state ---
         cur_element_count = 0;
-        num_deleted_ = 0;
+        restoreDeletedState();
         label_lookup_.clear();
-        deleted_elements.clear();
         enterpoint_node_ = -1;
         maxlevel_ = -1;
         clearRepairCandidates();
@@ -6009,9 +7930,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         std::fill(element_levels_.begin(), element_levels_.end(), 0);
-        // After load_index, node_dominate_count_ may be empty (loadIndex
-        // does not initialize it). Ensure it is sized to max_elements_ so
-        // mutuallyConnectNewElement can safely index into it during rebuild.
+        // Reset construction-only statistics for the rebuilt graph.
         if (node_dominate_count_.size() < max_elements_) {
             node_dominate_count_.assign(max_elements_, 0);
         } else {
@@ -6213,9 +8132,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         writeBinaryPOD(output, offsetNbrFt_);
         writeBinaryPOD(output, size_per_ft_);
 
-        // Format version: 4 = edge-level FT, 3 = node-level FT with FT-before-vector layout
-        // (2 = node-level FT old layout, 1 = legacy edge-level)
-        int ft_format_version = edge_level_ft_ ? 4 : 3;
+        int ft_format_version = edge_level_ft_ ? EDGE_FT_FORMAT_VERSION : NODE_FT_FORMAT_VERSION;
+        if (has_unassigned_categories())
+            ft_format_version = edge_level_ft_
+                ? PARTIAL_CODEBOOK_EDGE_FORMAT_VERSION : PARTIAL_CODEBOOK_NODE_FORMAT_VERSION;
         writeBinaryPOD(output, ft_format_version);
 
         //
@@ -6358,18 +8278,38 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         readBinaryPOD(input, offsetNbrFt_);
         readBinaryPOD(input, size_per_ft_);
 
-        // Read format version: 4 = edge-level FT, 3 = node-level FT-before-vector layout
-        // Version 2 = old node-level FT layout, 1 = legacy (no version field)
+        // Versions 9/10 require distance-only ordering; older attribute indexes
+        // did not persist whether construction used attribute-weighted ranks.
         int ft_format_version = 0;
         auto pre_version_pos = input.tellg();
         readBinaryPOD(input, ft_format_version);
-        if (ft_format_version != 2 && ft_format_version != 3 && ft_format_version != 4) {
+        if (ft_format_version < 2 || ft_format_version > PARTIAL_CODEBOOK_EDGE_FORMAT_VERSION) {
             // Old format (version 1): no version field, data follows size_per_ft_ directly
             ft_format_version = 1;
             input.seekg(pre_version_pos);
             std::cout << "Detected legacy index format (version 1, no version field)" << std::endl;
         }
-        edge_level_ft_ = (ft_format_version == 4);
+        if (ft_format_version < 5 &&
+            std::find(attr_type_.begin(), attr_type_.end(), 0) != attr_type_.end()) {
+            throw std::runtime_error(
+                "Legacy numerical Marker encoding is incompatible; rebuild the index with current hashannlib");
+        }
+        if (ft_format_version < 7 && !attr_type_.empty())
+            throw std::runtime_error(
+                "Legacy Marker ownership is incompatible; rebuild the index with current hashannlib");
+        if (ft_format_version < NODE_FT_FORMAT_VERSION && !attr_type_.empty())
+            throw std::runtime_error(
+                "Legacy candidate ordering is incompatible; rebuild the index with distance-only ordering");
+        edge_level_ft_ = (ft_format_version == 4 || ft_format_version == 6 ||
+                          ft_format_version == 8 ||
+                          ft_format_version == EDGE_FT_FORMAT_VERSION ||
+                          ft_format_version == PARTIAL_CODEBOOK_EDGE_FORMAT_VERSION);
+        if (ft_format_version >= 7) {
+            size_t links = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
+            size_t markers = (edge_level_ft_ ? maxM0_ : 1) * size_per_ft_;
+            if (ft_offset_ != links || offsetData_ != links + markers)
+                throw std::runtime_error("Incompatible Marker layout; rebuild the index");
+        }
         // Version 1 & 2: old layout [link|vector|label|FT|attr]
         // Version 3 & 4: new layout [link|FT|vector|label|attr]
         bool need_layout_migration = (ft_format_version <= 2);
@@ -6408,10 +8348,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         input.seekg(pos, input.beg);
 
         data_level0_memory_ = (char *) malloc(max_elements * size_data_per_element_);
-        memset(data_level0_memory_, 0, max_elements * size_data_per_element_);
         // tell pointer position
         if (data_level0_memory_ == nullptr)
             throw std::runtime_error("Not enough memory: loadIndex failed to allocate level0");
+        memset(data_level0_memory_, 0, max_elements * size_data_per_element_);
 
         input.read(data_level0_memory_, cur_element_count * size_data_per_element_);
 
@@ -6481,6 +8421,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (linkLists_ == nullptr)
             throw std::runtime_error("Not enough memory: loadIndex failed to allocate linklists");
         element_levels_ = std::vector<int>(max_elements);
+        // Not serialized; insertion also updates these counters for existing neighbors.
+        node_dominate_count_.assign(max_elements, 0);
         revSize_ = 1.0 / mult_;
         ef_ = 10;
         ef_top_ = 1;
@@ -6521,6 +8463,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         char *cur_ptr = load_buffer;
         for (size_t i = 0; i < cur_element_count; i++) {
+            marker_cleanup_used_ =
+                marker_cleanup_used_ || hasCleanedMarkerContributions(i);
             if (dynamic) {
                 label_lookup_[getExternalLabel(i)] = i;
             }
@@ -6547,14 +8491,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         free(load_buffer);
 
-        if (dynamic) {
-            for (size_t i = 0; i < cur_element_count; i++) {
-                if (isMarkedDeleted(i)) {
-                    num_deleted_ += 1;
-                    if (allow_replace_deleted_) deleted_elements.insert(i);
-                }
-            }
-        }
+        // Read-only loads must honor tombstones too; dynamic only controls label lookup.
+        restoreDeletedState();
 
         input.close();
 
@@ -6631,6 +8569,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (!isMarkedDeleted(internalId)) {
             unsigned char *ll_cur = ((unsigned char *)get_linklist0(internalId))+2;
             *ll_cur |= DELETE_MARK;
+            deleted_bitmap_[internalId >> 6].fetch_or(
+                uint64_t(1) << (internalId & 63), std::memory_order_relaxed);
             num_deleted_ += 1;
             if (allow_replace_deleted_) {
                 std::unique_lock <std::mutex> lock_deleted_elements(deleted_elements_lock);
@@ -6680,8 +8620,15 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     void unmarkDeletedInternalLocked(tableint internalId) {
         assert(internalId < cur_element_count);
         if (isMarkedDeleted(internalId)) {
+            if (marker_cleanup_used_) {
+                throw std::runtime_error(
+                    "Cannot restore a deleted element after Marker cleanup or in-place deletion; "
+                    "insert with a fresh label instead");
+            }
             unsigned char *ll_cur = ((unsigned char *)get_linklist0(internalId)) + 2;
             *ll_cur &= ~DELETE_MARK;
+            deleted_bitmap_[internalId >> 6].fetch_and(
+                ~(uint64_t(1) << (internalId & 63)), std::memory_order_relaxed);
             num_deleted_ -= 1;
             if (allow_replace_deleted_) {
                 std::unique_lock <std::mutex> lock_deleted_elements(deleted_elements_lock);
@@ -6699,6 +8646,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     bool isMarkedDeleted(tableint internalId) const {
         unsigned char *ll_cur = ((unsigned char*)get_linklist0(internalId)) + 2;
         return *ll_cur & DELETE_MARK;
+    }
+
+    bool hasCleanedMarkerContributions(tableint internalId) const {
+        const unsigned char* flags =
+            reinterpret_cast<const unsigned char*>(get_linklist0(internalId)) + 2;
+        return (*flags & MARKER_CLEANED) != 0;
     }
 
 
@@ -6770,6 +8723,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         bool is_vacant_place = !deleted_elements.empty();
         if (is_vacant_place) {
             internal_id_replaced = *deleted_elements.begin();
+            if (marker_cleanup_used_) {
+                throw std::runtime_error(
+                    "Cannot replace a deleted element after Marker cleanup or in-place deletion; "
+                    "insert with a fresh label and replace_deleted=False instead");
+            }
+            register_attr_record(attr_data);
             deleted_elements.erase(internal_id_replaced);
         }
         lock_deleted_elements.unlock();
@@ -6949,8 +8908,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 // the mutuallyConnect code path's semantics. At upper layers there
                 // is no FT so we use the simple 2-arg overload.
                 std::vector<std::vector<tableint>> dominated_list(layer == 0 ? Mcurmax : 0);
+                std::vector<tableint> witness_owners;
                 if (layer == 0) {
-                    getNeighborsByHeuristic2(candidates, Mcurmax, true, neigh, &dominated_list);
+                    getNeighborsByHeuristic2(candidates, Mcurmax, true, neigh,
+                                            &dominated_list, &witness_owners);
                 } else {
                     getNeighborsByHeuristic2(candidates, Mcurmax);
                 }
@@ -6969,6 +8930,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         candidates.pop();
                     }
                     std::reverse(new_edges.begin(), new_edges.end());
+                    if (layer == 0)
+                        alignPruningWitnesses(witness_owners, dominated_list, new_edges);
 
                     linklistsizeint *ll_cur = get_linklist_at_level(neigh, layer);
                     setListCount(ll_cur, new_edges.size());
@@ -6999,12 +8962,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     new_edges_for_node_ft = std::move(new_edges);
                 }
 
-                // Refresh node-FT bookkeeping at layer 0: reset neigh's own
-                // node-FT to its own attr bits and re-merge fresh dominations
-                // from the new pruning. (Node-FT is OR-based; stale merged bits
-                // would only cause false-positive routing.)
+                // Preserve witnesses contributed by other rows while merging this
+                // row's new dominations. Stale bits only cause false-positive routing.
                 if (layer == 0 && !edge_level_ft_) {
-                    update_node_ft(neigh);
+                    merge_own_node_ft(neigh);
                     for (size_t idx = 0; idx < dominated_list.size(); idx++) {
                         if (!dominated_list[idx].empty()
                             && idx < new_edges_for_node_ft.size()) {
@@ -7058,8 +9019,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     //       in search and in all writers).
     //
     // FT updates (!edge_level_ft_ mode, kept for completeness):
-    //   - update_node_ft(self): reset+rewrite with new attr only (loses dominated
-    //       bits in self's node_ft; accept as documented limitation).
+    //   - Merge new own attributes without discarding other rows' witness bits.
     void updateAttrByLabel(labeltype label, const std::vector<std::vector<int>>& new_attr) {
         validate_update_attr_record(new_attr);
 
@@ -7075,6 +9035,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (isMarkedDeleted(internalId)) {
             throw std::runtime_error("update_attr: label is marked-deleted");
         }
+        register_attr_record(new_attr);
 
         // Snapshot 1-hop layer-0 neighbors under self's lock, then write new attr.
         std::vector<tableint> one_hop;
@@ -7082,7 +9043,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             std::unique_lock<std::mutex> lock_self(link_list_locks_[internalId]);
             add_attr_to_point(internalId, new_attr);
             if (!edge_level_ft_) {
-                update_node_ft(internalId);
+                merge_own_node_ft(internalId);
             }
             unsigned int* data = get_linklist0(internalId);
             int sz = getListCount(data);
@@ -7113,26 +9074,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
     }
 
-    // Batch attribute replacement optimized for large update rounds.
-    // The full layer-0 scan refreshes every direct incoming edge, including
-    // asymmetric HNSW links that cannot be found from the updated node itself.
-    // This is stop-the-world maintenance and must not overlap with queries.
-    size_t batchUpdateAttrByLabel(
+    std::vector<tableint> prepareAttrUpdates(
         const std::vector<labeltype>& labels,
-        const std::vector<std::vector<std::vector<int>>>& new_attrs,
-        int num_threads = -1) {
+        const std::vector<std::vector<std::vector<int>>>& new_attrs) {
         if (labels.size() != new_attrs.size()) {
             throw std::runtime_error(
                 "batch_update_attr: attrs.size() != labels.size()");
         }
-        if (num_threads <= 0) {
-            #ifdef _OPENMP
-            num_threads = omp_get_max_threads();
-            #else
-            num_threads = 1;
-            #endif
-        }
-
         const size_t n = labels.size();
         std::vector<tableint> internal_ids(n);
         std::unordered_set<labeltype> seen_labels;
@@ -7160,6 +9108,24 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 internal_ids[i] = it->second;
             }
         }
+        register_attr_values(new_attrs);
+        return internal_ids;
+    }
+
+    // Stop-the-world: refresh all direct incoming edges, including asymmetric links.
+    size_t batchUpdateAttrByLabel(
+        const std::vector<labeltype>& labels,
+        const std::vector<std::vector<std::vector<int>>>& new_attrs,
+        int num_threads = -1) {
+        auto internal_ids = prepareAttrUpdates(labels, new_attrs);
+        const size_t n = labels.size();
+        if (num_threads <= 0) {
+            #ifdef _OPENMP
+            num_threads = omp_get_max_threads();
+            #else
+            num_threads = 1;
+            #endif
+        }
 
         #pragma omp parallel for num_threads(num_threads) schedule(dynamic, 256)
         for (size_t i = 0; i < n; i++) {
@@ -7167,7 +9133,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             std::unique_lock<std::mutex> lock_node(link_list_locks_[internal_id]);
             add_attr_to_point(internal_id, new_attrs[i]);
             if (!edge_level_ft_) {
-                update_node_ft(internal_id);
+                merge_own_node_ft(internal_id);
             }
         }
 
@@ -7359,7 +9325,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
     tableint addPoint(const void *data_point, labeltype label, const std::vector<std::vector<int>>& attr_data, int level) {
-
+        register_attr_record(attr_data);
         tableint cur_c = 0;
         {
             // Checking if the element with the same label already exists
@@ -7380,7 +9346,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
                 add_attr_to_point(existingInternalId, attr_data);
                 if (!edge_level_ft_) {
-                    update_node_ft(existingInternalId);  // rebuild node FT after attr change
+                    merge_own_node_ft(existingInternalId);
                 }
                 updatePoint(data_point, existingInternalId, 1.0);
 
@@ -7400,12 +9366,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
 
         add_attr_to_point(cur_c, attr_data);
-        // Node-level FT: hash own attributes into FT right after attrs are set.
-        // Edge-mode skips (storage aliases edge slot 0 and would be overwritten
-        // by mutuallyConnect below; reading it during search is gated off).
-        if (!edge_level_ft_) {
-            update_node_ft(cur_c);
-        }
         assert(level == 0 || level == 1);
         int curlevel = level;
 
@@ -7416,6 +9376,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // Initialisation of the data and label
         memcpy(getExternalLabeLp(cur_c), &label, sizeof(labeltype));
         memcpy(getDataByInternalId(cur_c), data_point, data_size_);
+        if (!edge_level_ft_)
+            update_node_ft(cur_c);
 
         connectIntoGraph(data_point, cur_c, curlevel);
 
@@ -7484,16 +9446,19 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::priority_queue<std::pair<dist_t, labeltype >>
     searchKnn(const void *query_data, size_t k) const {
         std::priority_queue<std::pair<dist_t, labeltype >> result;
-        if (cur_element_count == 0) return result;
+        if (cur_element_count == 0 || num_deleted_.load() == cur_element_count) return result;
 
         tableint currObj = enterpoint_node_;
         dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
 
-        assert(maxlevel_ == 1); // for two layers only
+        assert(maxlevel_ == 0 || maxlevel_ == 1);
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
-        top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_);
+        if (maxlevel_ > 0)
+            top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_);
+        else
+            top_layer_candidates.emplace(curdist, currObj);
         bool bare_bone_search = !num_deleted_;
         if (bare_bone_search) {
                 top_candidates = searchBaseLayerST<true, true>(
@@ -7807,17 +9772,20 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         // search on top layer
         std::priority_queue<std::pair<dist_t, labeltype >> result;
-        if (cur_element_count == 0) return result;
+        if (cur_element_count == 0 || num_deleted_.load() == cur_element_count) return result;
 
         tableint currObj = enterpoint_node_;
         dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
 
 
-        assert(maxlevel_ == 1); // for two layers only
+        assert(maxlevel_ == 0 || maxlevel_ == 1);
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
-        top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_ * 2);
+        if (maxlevel_ > 0)
+            top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_ * 2);
+        else
+            top_layer_candidates.emplace(curdist, currObj);
         
         // use ep as bottom layer ep
         // top_layer_candidates.emplace(curdist, currObj);
@@ -8025,16 +9993,19 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         std::vector<char> ft_predicate(size_per_ft_, 0);
 
         std::priority_queue<std::pair<dist_t, labeltype >> result;
-        if (cur_element_count == 0) return result;
+        if (cur_element_count == 0 || num_deleted_.load() == cur_element_count) return result;
 
         tableint currObj = enterpoint_node_;
         dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
 
-        assert(maxlevel_ == 1);
+        assert(maxlevel_ == 0 || maxlevel_ == 1);
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_layer_candidates;
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
 
-        top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_ * 2);
+        if (maxlevel_ > 0)
+            top_layer_candidates = searchTopLayerST<true, true>(currObj, query_data, ef_top_ * 2);
+        else
+            top_layer_candidates.emplace(curdist, currObj);
 
         bool bare_bone_search = (num_deleted_.load(std::memory_order_relaxed) == 0);
         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
@@ -8094,7 +10065,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         const void *query_data,
         BaseSearchStopCondition<dist_t>& stop_condition) const {
         std::vector<std::pair<dist_t, labeltype >> result;
-        if (cur_element_count == 0) return result;
+        if (cur_element_count == 0 || num_deleted_.load() == cur_element_count) return result;
 
         tableint currObj = enterpoint_node_;
         dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);

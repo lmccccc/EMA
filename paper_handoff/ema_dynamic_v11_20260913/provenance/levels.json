@@ -1,0 +1,54 @@
+{
+  "fingerprint": {
+    "dataset": {
+      "query_payload_sha256": "5fc3ea9c506f7ca2b250879f15c1674a8e70b1e7afb7c2cea60fa4396c61cb75",
+      "predicates_payload_sha256": "92c807088481aa571ab7df491a5fe9ac710daa871907056731b9c4ea13986ab4",
+      "numeric_payload_sha256": "ef5c4b1f9af7714470adccc732cbc4738491603a4f1851d881f0dcdca6f50a65",
+      "label9_payload_sha256": "9b253a80348b9cf03bd8855cb55557d0466a6877e8900d1e0d4800b7caeede73",
+      "label12_payload_sha256": "27689b6fe55b9907a009a345a4c39bfe8db2309d90f145427057b59510ff7344",
+      "complete_records_sha256": "84f6dc200ebd1458d98e604c727d94b0ff0ee2c630dcd37d66262b5a2ad72542",
+      "input_sha256": {
+        "base_vectors": "d3a64e449eac7b1abe20830970223d9f30f804da908ceeaebc3accac8e42b76f",
+        "queries": "4e686785082f56916a6422b120ad4c54b4110701195c17fa582391156bcb32cc",
+        "attributes": "84f6dc200ebd1458d98e604c727d94b0ff0ee2c630dcd37d66262b5a2ad72542",
+        "predicates": "84638044eaccd90f23cb94b954eda91e0cff7bd6e3a4de0b2ed24d32f7aa4ebc",
+        "canonical_gt0": "94043b7543f447e45a6e84fa4e7213e4656ddb9ea31402b402017e066f91e18c"
+      },
+      "integer_distance_domain": "all base/query coordinates integral in [0,255]; dim<=128"
+    },
+    "policy": {
+      "version": "production-centroid-representatives-whole-source-v1",
+      "source": "all source rows; use identical frozen slices for initial prefix and later adds",
+      "clusters": "floor(sqrt(source_count))*4",
+      "training_limit": 2560000,
+      "iterations": 25,
+      "sampling": "numpy.default_rng(level_seed).choice(N, min(N,2560000), replace=False)",
+      "representative": "nearest assigned source row per centroid; equal distances choose lowest source row",
+      "native_random_seed": 100
+    },
+    "seed": 1234,
+    "threads": 32
+  },
+  "details": {
+    "version": "production-centroid-representatives-whole-source-v1",
+    "source": "all source rows; use identical frozen slices for initial prefix and later adds",
+    "clusters": 12648,
+    "training_limit": 2560000,
+    "iterations": 25,
+    "sampling": "numpy.default_rng(level_seed).choice(N, min(N,2560000), replace=False)",
+    "representative": "nearest assigned source row per centroid; equal distances choose lowest source row",
+    "native_random_seed": 100,
+    "seed": 1234,
+    "training_ids_sha256": "4c47ed8c85477b2bdcc448438b34ebe649e21518de8de902de72b9e5c732e062",
+    "centroids_sha256": "781107fa67d8a2a685364a826e3d45cca03e4374a1795724e1824de1266bbc28",
+    "representatives_sha256": "5e23eeb01cf32ab27becac5d7e7e32bad0b7b12057a5bee7817526e6452012b4",
+    "levels_sha256": "0a8dca41a4631d861d3ff04525760ca46b9ed2cfdebb74d12bd0a96418912a81",
+    "faiss_version": "1.15.0"
+  },
+  "artifact": {
+    "path": "/mnt/data/mocheng/dataset/sift10m/hashann/benchmarks/dynamic_compare_20260910/canonical_dynamic_do1_parallelfor_20260913_v11_sift10m_requested_182139_608e9ae692fa/level-plan-df096842098847719656e763d880a47e/levels.npz",
+    "bytes": 40000266,
+    "mtime_ns": 1789298260520580727,
+    "sha256": "f585e9038f30221b2b767fdb7ba3bdb479c4743495d3e1c5c7a3edcc56f45d0a"
+  }
+}

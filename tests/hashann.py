@@ -5,11 +5,33 @@ import time
 import os
 import numpy as np
 import time 
+import hashlib
+import json
+import warnings
 
 try:
     import faiss
 except (ImportError, AttributeError):
     faiss = None
+
+
+def closest_cluster_representatives(distances, groups, cluster_count, metric):
+    distances, groups = np.asarray(distances), np.asarray(groups)
+    if (metric not in ("l2", "ip") or distances.ndim != 1
+            or groups.shape != distances.shape or not np.isfinite(distances).all()
+            or not np.issubdtype(groups.dtype, np.integer)
+            or cluster_count <= 0 or np.any(groups < 0) or np.any(groups >= cluster_count)):
+        raise ValueError("Invalid FAISS centroid assignments")
+    # FAISS IP returns similarity, unlike native1-dot distance: larger is closer.
+    rank = -distances if metric == "ip" else distances
+    order = np.lexsort((np.arange(len(groups)), rank, groups))
+    occupied, first = np.unique(groups[order], return_index=True)
+    closest = np.full(cluster_count, -1, dtype=np.int64)
+    closest[occupied] = order[first]
+    levels = np.zeros(len(groups), dtype=np.int32)
+    levels[closest[closest >= 0]] = 1
+    return closest, levels
+
 
 class HashANN:
     # NSW with filtering table, B+tree, cluster, pq entry points, counting hash table
@@ -50,7 +72,8 @@ class HashANN:
         self.metric = params.get("metric", "l2")
 
     def build_index(self, params, base_scalars, attr, attr_type_list, index_save_path, threads: int, name: str = "HNSW"):
-        self.save_root = os.path.dirname(index_save_path)
+        self.save_root = params.get("clustering_cache_root", os.path.dirname(index_save_path))
+        self.threads = threads
         self.index_method = name
         print("name:", name)
         if name == "HNSW":
@@ -128,8 +151,11 @@ class HashANN:
         # print("init counting hash table done, time:", time.time() - start)
         # self.index.generateFT()                                     # generate ft for node. new version ft is in edge, not sued.
         end = time.time()
+        self.construction_duration_s = end - start
         print(f"Index built: {name}, duration: {end-start}.")
+        save_start = time.perf_counter()
         self.index.save_index(index_save_path)
+        self.save_duration_s = time.perf_counter() - save_start
         print("index save done, time:", time.time() - end)
 
 
@@ -210,33 +236,68 @@ class HashANN:
     
 
     def clustering(self, base_scalars):
-
-        save_file = self.save_root+"_clustering.npz"
+        if faiss is None:
+            raise RuntimeError("FAISS is required to construct the representative level plan")
+        if (base_scalars.shape != (self.N, self.d) or self.metric not in ("l2", "ip")
+                or self.N <= 0):
+            raise ValueError("Clustering vectors differ from the declared dataset/metric")
+        identity_started = time.perf_counter()
+        digest = hashlib.sha256()
+        for start in range(0, self.N, 65_536):
+            block = np.ascontiguousarray(base_scalars[start:start + 65_536], dtype=np.float32)
+            if not np.isfinite(block).all():
+                raise ValueError("Nonfinite clustering vectors")
+            digest.update(memoryview(block))
+        seed, max_train_size = 1234, 2_560_000
+        centroid_size = min(self.N, int(np.sqrt(self.N)) * 4)
+        identity = {
+            "schema": "metric-nearest-representatives-v2", "metric": self.metric,
+            "N": self.N, "dimension": self.d, "vectors_sha256": digest.hexdigest(),
+            "seed": seed, "iterations": 25, "training_limit": max_train_size,
+            "centroid_size": centroid_size, "spherical": False,
+            "faiss_version": faiss.__version__, "threads": self.threads,
+        }
+        self.clustering_identity_s = time.perf_counter() - identity_started
+        save_file = self.save_root+"_clustering_nn2.npz"
         if os.path.exists(save_file):
             print("loading clustering from file:", save_file)
-            data = np.load(save_file)
-            centroid_size = data['centroid_size']
-            layers = data['layers']
-            closest_ids = data['closest_ids']
-            id2bucket = data['id2bucket']
-            if len(layers) > self.N:
-                print(f"truncating cached clustering: {len(layers)} -> {self.N}")
-                layers = layers[:self.N]
-                id2bucket = id2bucket[:self.N]
-            elif len(layers) < self.N:
-                raise RuntimeError(f"cached clustering size {len(layers)} < N {self.N}; remove {save_file} and rebuild")
+            with np.load(save_file, allow_pickle=False) as data:
+                if ("identity" not in data or json.loads(data["identity"].item()) != identity
+                        or data["centroid_size"].item() != centroid_size):
+                    raise RuntimeError(f"Clustering cache source/metric/policy mismatch: {save_file}")
+                layers, closest_ids, id2bucket = data["layers"], data["closest_ids"], data["id2bucket"]
+                self.clustering_metadata = json.loads(data["metadata"].item())
+            if (layers.shape != (self.N,) or id2bucket.shape != (self.N,)
+                    or closest_ids.shape != (centroid_size,)
+                    or any(not np.issubdtype(value.dtype, np.integer)
+                           for value in (layers, closest_ids, id2bucket))
+                    or np.any((layers != 0) & (layers != 1))
+                    or np.any(id2bucket < 0) or np.any(id2bucket >= centroid_size)):
+                raise RuntimeError(f"Invalid clustering cache dimensions/assignments: {save_file}")
+            representatives = closest_ids[closest_ids >= 0]
+            expected_levels = np.zeros(self.N, dtype=np.int32)
+            if (np.any(closest_ids < -1) or np.any(representatives >= self.N)
+                    or len(np.unique(representatives)) != len(representatives)
+                    or not np.array_equal(id2bucket[representatives], np.flatnonzero(closest_ids >= 0))
+                    or not np.array_equal(np.unique(id2bucket), np.flatnonzero(closest_ids >= 0))):
+                raise RuntimeError(f"Invalid clustering representatives: {save_file}")
+            expected_levels[representatives] = 1
+            if not np.array_equal(layers, expected_levels):
+                raise RuntimeError(f"Clustering levels disagree with representatives: {save_file}")
+            if (self.clustering_metadata["identity"] != identity
+                    or self.clustering_metadata["levels_sha256"]
+                    != hashlib.sha256(memoryview(np.ascontiguousarray(layers))).hexdigest()):
+                raise RuntimeError(f"Clustering cache metadata/checksum mismatch: {save_file}")
             print("clustering loaded")
+            self.clustering_cache_reused = True
+            self.clustering_cache_path = save_file
             return centroid_size, layers, closest_ids, id2bucket
 
-        seed = 1234
-        centroid_size = int(np.sqrt(self.N)) * 4 # * 10
-        # centroid_size = int(np.sqrt(self.N) / 100)
+        started = time.perf_counter()
         print("d:", self.d, "N:", self.N, "centroid_size:", centroid_size)
         clustering = faiss.Clustering(self.d, centroid_size)
         clustering.seed = seed
-        # clustering.niter = max(20, int(np.log2(self.N)) * 2)
         clustering.niter = 25
-        # clustering.max_points_per_centroid = int(np.sqrt(self.N))
 
         print(f"Clustering parameters: niter={clustering.niter}, max_points_per_centroid={clustering.max_points_per_centroid}")
 
@@ -251,9 +312,9 @@ class HashANN:
 
         faiss.omp_set_num_threads(self.threads)
 
-        max_train_size = 2_560_000
+        random_indices = np.arange(self.N, dtype=np.int64)
         if self.N > max_train_size:
-            random_indices = np.random.choice(self.N, size=max_train_size, replace=False)
+            random_indices = np.random.default_rng(seed).choice(self.N, size=max_train_size, replace=False)
             training_data = base_scalars[random_indices]
             print(f"Training clustering on a subset of size {max_train_size}")
         else:
@@ -278,54 +339,35 @@ class HashANN:
         index.add(centroids)
 
         # Find nearest centroid for each point
-        D, I = index.search(base_scalars, 1)  # I: cluster id for each point
-        D = D.reshape(-1)
-        I = I.reshape(-1)
-
-        id2bucket = I
-
-        # -----------------------------
-        # Step 4: Find closest vector to each centroid
-        # -----------------------------
-        closest_ids = np.full(centroid_size, -1, dtype=int)
-        best_dist = np.full(centroid_size, float('inf'))
-        layers = np.zeros(self.N, dtype=int)  # default layer 1
-
-        for i in range(self.N):
-            cluster_id = I[i]
-            dist = D[i]
-            if dist < best_dist[cluster_id]:
-                best_dist[cluster_id] = dist
-                closest_ids[cluster_id] = i
-
-        # -----------------------------
-        # Step 5: Map closest_ids back to the original indices
-        # -----------------------------
-        closest_ids = closest_ids
-        best_dist = best_dist
-        layers[closest_ids] = 1
-
-        bucket_data = np.zeros(self.N, dtype=int)
-        offsets = np.zeros(centroid_size + 1, dtype=int)
-
-        print("ep id len:", len(closest_ids))
-
-        if centroid_size <= 0:
-            print("error: centroid size <= 0")
-            exit(-1)
-        start = 0
-        end = 0
-        offsets[0] = 0
-        for i in range(centroid_size):
-            selected = np.where(I == i)[0]
-            size = selected.shape[0]
-            end += size
-            bucket_data[start:end] = selected
-            start = end
-            offsets[i + 1] = end
-
-        # save clustering result
-        np.savez(save_file, centroid_size=centroid_size, layers=layers, closest_ids=closest_ids, id2bucket=id2bucket)
+        distances = np.empty(self.N, dtype=np.float32)
+        id2bucket = np.empty(self.N, dtype=np.int64)
+        for start in range(0, self.N, 65_536):
+            stop = min(start + 65_536, self.N)
+            values, groups = index.search(np.ascontiguousarray(base_scalars[start:stop]), 1)
+            distances[start:stop], id2bucket[start:stop] = values[:, 0], groups[:, 0]
+        closest_ids, layers = closest_cluster_representatives(
+            distances, id2bucket, centroid_size, self.metric)
+        empty = int(np.count_nonzero(closest_ids < 0))
+        if empty:
+            warnings.warn(f"{empty} empty FAISS clusters receive no representative; row -1 is never used",
+                          RuntimeWarning)
+        self.clustering_metadata = {
+            "identity": identity, "generation_s": time.perf_counter() - started,
+            "empty_clusters": empty, "representative_count": int(layers.sum()),
+            "training_ids_sha256": hashlib.sha256(memoryview(np.ascontiguousarray(random_indices))).hexdigest(),
+            "centroids_sha256": hashlib.sha256(memoryview(np.ascontiguousarray(centroids))).hexdigest(),
+            "levels_sha256": hashlib.sha256(memoryview(np.ascontiguousarray(layers))).hexdigest(),
+        }
+        pending = save_file + f".{os.getpid()}.pending"
+        with open(pending, "xb") as stream:
+            np.savez(stream, centroid_size=centroid_size, layers=layers, closest_ids=closest_ids,
+                     id2bucket=id2bucket, identity=json.dumps(identity),
+                     metadata=json.dumps(self.clustering_metadata))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, save_file)
+        self.clustering_cache_reused = False
+        self.clustering_cache_path = save_file
         print("clustering saved to file:", save_file)
 
         return centroid_size, layers, closest_ids, id2bucket

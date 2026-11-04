@@ -19,15 +19,17 @@ cp appendix.pdf ../../EMA_appendix.pdf
 ```
 
 `appendix/APP/app.tex` is the active content. The bundled class, bibliography
-style, bibliography and seven figure PDFs are sufficient document inputs; there
-are no includes into the external manuscript workspace.
+style, bibliography, six active figure PDFs, and generated summary files in
+`appendix/CH5/figures/data` are sufficient document inputs; there are no includes
+into the external manuscript workspace.
 
-The old Dynamic Support section and its attribute-only, mark-delete, patch,
-reconstruction and old replacement timing table are absent. Current local
-deletion analysis, RNG cleanup semantics and synchronous cross-point repair
-discussion remain. They must not be confused with the obsolete query-triggered
-patch experiments. The current three-operation result is main-paper Figure 7,
-whose recorded evidence is in `../paper_handoff/`.
+The current report includes two-layer construction and local deletion analysis,
+source-specific false-positive bounds, the dynamic evaluation protocol, speedup
+accounting, the complete construction policy, and expanded ablation and parameter
+studies. The current main paper's three-operation dynamic result is Figure 9;
+its recorded evidence is in `../paper_handoff/`. Paths under `paper/CH5/figures`
+in the report refer to the manuscript authoring layout, not this repository's
+`paper/figures` layout.
 
 This is a separately maintained technical appendix, not a claim that a
 particular conference permits an appendix as part of its submission.

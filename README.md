@@ -45,7 +45,7 @@ compares C1 construction, C2 Markers, and C3 routing recovery on one
 YouTube1M selectivity grid with separately built timing/diagnostic extensions.
 An independent [strict in-filtering comparison](exp_benchmark/ablation/README.md#same-graph-strict-in-filtering-comparison)
 re-times strict filtering, Marker-only routing, and full EMA on the same saved graph.
-The [technical report](EMA_appendix.pdf) includes the expanded component
+The [technical report](technical_report.pdf) includes the expanded component
 ablation, strict-filter comparison, and theoretical analysis. Only the compiled
 report is distributed; document sources, separate figures, plotting scripts,
 and historical plotting data are not bundled.
@@ -361,7 +361,7 @@ replacement attribute records.
 | `hnswlib/`          | C++ implementation of EMA (HNSW + per-edge Edge Markers) and Python bindings |
 | `tests/`            | Python entry points: `hashann_build.py`, `hashann_query.py`, GT/predicate generators (legacy filenames; same code is EMA) |
 | `exp_benchmark/`    | EMA measurement/replay tools; see the paper-to-code coverage map  |
-| `EMA_appendix.pdf`  | Compiled technical report                                       |
+| `technical_report.pdf` | Compiled technical report                                    |
 
 Historical `exp*/` folders and baseline adapters are not part of this source
 distribution. Use the documented `exp_benchmark/` entrypoints.

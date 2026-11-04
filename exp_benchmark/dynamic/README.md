@@ -4,7 +4,7 @@ Only **insert**, **delete**, and **point_update** belong to this pipeline. The
 attribute-only and legacy delete/patch experiment entrypoints were removed;
 native attribute-update and maintenance APIs remain available separately.
 This measurement pipeline exports results but does not plot. Publication
-material is distributed only as a [technical report](../../EMA_appendix.pdf).
+material is distributed only as a [technical report](../../technical_report.pdf).
 
 The fresh-run policy remains **`fix_rebuild_rerun_all`**: correct numeric mapping,
 Marker ownership and vector-distance-only ordering, fresh indexes and all three

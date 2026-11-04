@@ -5,7 +5,7 @@ of the **current** implementation on YouTube-RGB 1M. It does not regenerate
 the historical appendix observations, replace published figures,
 or use the frozen V11 dynamic implementation.
 
-The [technical report](../../EMA_appendix.pdf) includes the completed study's figures.
+The [technical report](../../technical_report.pdf) includes the completed study's figures.
 Its gains, losses, and incomplete-batch cells are distinct from the pilot.
 
 ## Components and fixed workload

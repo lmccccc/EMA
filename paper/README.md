@@ -1,7 +1,9 @@
 # Publication sources
 
-This directory contains only active appendix dependencies and the current
-main-paper Figure 5--7 generators. It does not import the unused chapter copies
+This directory contains active appendix dependencies and the bundled
+main-figure generators, including the plot formerly numbered Figure 7 (the
+current manuscript calls the three-operation dynamic result Figure 9).
+It does not import the unused chapter copies
 or old attribute-only, tombstone/patch, or four-operation dynamic plots from the
 authoring workspace.
 
@@ -19,9 +21,9 @@ cp appendix.pdf ../../EMA_appendix.pdf
 ```
 
 `appendix/APP/app.tex` is the active content. The bundled class, bibliography
-style, bibliography, six active figure PDFs, and generated summary files in
-`appendix/CH5/figures/data` are sufficient document inputs; there are no includes
-into the external manuscript workspace.
+style, bibliography, six active figure PDFs, generated summary files, and
+the accompanying CSV/provenance snapshots in `appendix/CH5/figures/data`
+are included; no document inputs come from the external manuscript workspace.
 
 The current report includes two-layer construction and local deletion analysis,
 source-specific false-positive bounds, the dynamic evaluation protocol, speedup
@@ -59,7 +61,7 @@ Rscript ema_dynamic_v11_plot.R --timing=total
 |---|---|
 | 5 | `range_label_combined_qps_tikz.tex` |
 | 6 | `single_attribute_combined_qps_tikz.tex` |
-| 7 | `ema_dynamic_compact_tikz.tex` (also standalone QPS/maintenance TikZ views) |
+| Earlier Figure 7 (current manuscript Figure 9) | `ema_dynamic_compact_tikz.tex` (also standalone QPS/maintenance TikZ views) |
 
 The static R files contain the recorded plotting values. They do not run the
 baseline systems or prove that the historical inputs/binaries are available.
@@ -67,7 +69,7 @@ Appendix figure PDFs are supplied as compilation inputs; this directory does
 not provide a complete generator/raw-data chain for every appendix figure.
 See the [experiment coverage map](../exp_benchmark/README.md#paper-to-code-map).
 
-Figure 7 reads `figures/data/ema_dynamic_v11.csv`: exactly three operations,
+The bundled dynamic plot reads `figures/data/ema_dynamic_v11.csv`: exactly three operations,
 six stages each, QPS at 95% recall, and original mutation-call wall times.
 `point_update` means complete vector-and-attribute replacement via synchronous
 deletion followed by insertion at fresh labels. It is not attribute-only update.

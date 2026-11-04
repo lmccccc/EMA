@@ -41,10 +41,17 @@ essentially free at query time.
 Start with the [paper-to-code map](exp_benchmark/README.md#paper-to-code-map).
 The repository includes the current native implementation and Python bindings,
 static EMA runners, the three-operation dynamic pipeline, regression tests,
-and the [R/TikZ sources for Figures 5--7](paper/README.md).
+and [R/TikZ figure sources](paper/README.md).
+A [controlled component-ablation runner](exp_benchmark/ablation/README.md)
+compares C1 construction, C2 Markers, and C3 routing recovery on one
+YouTube1M selectivity grid with separately built timing/diagnostic extensions.
+An independent [strict in-filtering comparison](exp_benchmark/ablation/STRICT_RESULTS.md)
+re-times strict filtering, Marker-only routing, and full EMA on the same saved graph.
 The [appendix source](paper/appendix/appendix.tex) builds
-[`EMA_appendix.pdf`](EMA_appendix.pdf); its obsolete attribute-only,
-tombstone/patch and old replacement experiments have been removed.
+[`EMA_appendix.pdf`](EMA_appendix.pdf). The expanded component ablation,
+strict-filter comparison, generated summaries, and their CSV/provenance
+snapshots are under `paper/appendix/CH5/figures/`; retired dynamic-update
+experiments remain excluded.
 
 **This is not a self-contained reproduction of every baseline and every
 historical experiment.** Raw dataset subsets, original attribute/predicate
@@ -53,7 +60,8 @@ distributed here. Parameter sweeps using newly generated inputs are not replays
 of the published measurements. The coverage map states which commands exist
 and which inputs or implementations are still external.
 
-For Figure 7, the
+For the three-operation dynamic result (Figure 9 in the current manuscript;
+the bundled plot generator still uses the earlier Figure 7 naming), the
 [frozen V11 recall95 evidence](paper_handoff/README.md) includes the native source
 snapshot, query code, original maintenance times, and raw calibration/timing
 records. It does not include the original native binary or graph checkpoints.

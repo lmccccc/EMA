@@ -1,0 +1,117 @@
+--- a/hnswlib/hnswlib/hnswalg.h
++++ b/hnswlib/hnswlib/hnswalg.h
+@@ -135,6 +135,7 @@
+     mutable std::atomic<long> metric_total_neighbors{0};     // total neighbors scanned (before FT)
+ 
+     bool ablation_cht_enabled_{true};
++    bool ablation_strict_filter_{false};
+ #ifdef EMA_ABLATION_DIAGNOSTICS
+     mutable std::atomic<long> ablation_expanded{0};
+     mutable std::atomic<long> ablation_empty_rows{0};
+@@ -2897,7 +2898,8 @@
+ //     }
+ 
+     // bare_bone_search means there is no check for deletions and stop condition is ignored in return of extra performance
+-    template <bool bare_bone_search = true, bool collect_metrics = false, bool use_ft_routing = true, bool use_ft=true>
++    template <bool bare_bone_search = true, bool collect_metrics = false, bool use_ft_routing = true, bool use_ft=true,
++              bool strict_in_filtering = false>
+     std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
+     hybridSearchBaseLayerST(
+         // tableint ep_id,
+@@ -3329,6 +3331,13 @@
+                 if (!(visited_array[candidate_id] == visited_array_tag)) {
+                     visited_array[candidate_id] = visited_array_tag;
+                     visited++;
++                    if (strict_in_filtering) {
++                        ++predicate_checked;
++                        if (!(dnf_pred ? predicate_check_dnf(candidate_id, *dnf_pred) : predicate_check(candidate_id, predicate))) {
++                            ++passed;
++                            continue;
++                        }
++                    }
+ #ifdef EMA_ABLATION_DIAGNOSTICS
+                     ++diag_distances;
+                     diag_backfill_visits += routing_only;
+@@ -3375,13 +3384,15 @@
+                             continue;
+                         }
+ 
+-                        predicate_checked++;
+-                        if (!(dnf_pred ? predicate_check_dnf(candidate_id, *dnf_pred) : predicate_check(candidate_id, predicate))) {
+-                            passed++;
+-                            #ifdef DEBUG_SEARCH
+-                            std::cout << " predicate passed" << std::endl;
+-                            #endif
+-                            continue;
++                        if (!strict_in_filtering) {
++                            predicate_checked++;
++                            if (!(dnf_pred ? predicate_check_dnf(candidate_id, *dnf_pred) : predicate_check(candidate_id, predicate))) {
++                                passed++;
++                                #ifdef DEBUG_SEARCH
++                                std::cout << " predicate passed" << std::endl;
++                                #endif
++                                continue;
++                            }
+                         }
+ 
+                         if (bare_bone_search || 
+@@ -9838,7 +9849,14 @@
+         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+         vl_type *visited_array = vl->mass;
+         vl_type visited_array_tag = vl->curV;
+-        if (bare_bone_search) {
++        if (ablation_strict_filter_) {
++            if (bare_bone_search)
++                top_candidates = hybridSearchBaseLayerST<true, true, false, false, true>(
++                    top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
++            else
++                top_candidates = hybridSearchBaseLayerST<false, true, false, false, true>(
++                    top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
++        } else if (bare_bone_search) {
+             if (use_ft_routing_ && use_ft_)
+             top_candidates = hybridSearchBaseLayerST<true, true, true, true>(
+                         top_layer_candidates, query_data, predicate, ft_predicate, ef_, k, vl);
+@@ -10044,7 +10062,16 @@
+         bool bare_bone_search = (num_deleted_.load(std::memory_order_relaxed) == 0);
+         VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+ 
+-        if (bare_bone_search) {
++        if (ablation_strict_filter_) {
++            if (bare_bone_search)
++                top_candidates = hybridSearchBaseLayerST<true, true, false, false, true>(
++                    top_layer_candidates, query_data, predicate, ft_predicate,
++                    ef_, k, vl, nullptr, &dnf_pred);
++            else
++                top_candidates = hybridSearchBaseLayerST<false, true, false, false, true>(
++                    top_layer_candidates, query_data, predicate, ft_predicate,
++                    ef_, k, vl, nullptr, &dnf_pred);
++        } else if (bare_bone_search) {
+             if (use_ft_routing_ && use_ft_)
+                 top_candidates = hybridSearchBaseLayerST<true, true, true, true>(
+                     top_layer_candidates, query_data, predicate, ft_predicate,
+--- a/hnswlib/python_bindings/bindings.cpp
++++ b/hnswlib/python_bindings/bindings.cpp
+@@ -155,8 +155,15 @@
+         appr_alg->ablation_cht_enabled_ = enabled;
+     }
+ 
++    void set_ablation_strict_filter(bool enabled) {
++        if (!appr_alg)
++            throw std::runtime_error("Initialize or load the index before selecting strict filtering");
++        appr_alg->ablation_strict_filter_ = enabled;
++    }
++
+     py::dict get_ablation_stats() {
+         py::dict stats = get_ft_stats();
++        stats["strict_in_filtering"] = appr_alg && appr_alg->ablation_strict_filter_;
+ #ifdef EMA_ABLATION_DIAGNOSTICS
+         stats["diagnostic_build"] = true;
+         if (appr_alg) {
+@@ -2711,6 +2718,7 @@
+         .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
+         .def("set_ft_flag", &Index<float>::set_ft_flag, py::arg("ft_flag"))
+         .def("set_ablation_cht", &Index<float>::set_ablation_cht, py::arg("enabled"))
++        .def("set_ablation_strict_filter", &Index<float>::set_ablation_strict_filter, py::arg("enabled"))
+         .def("get_ablation_stats", &Index<float>::get_ablation_stats)
+         .def("set_edge_level_ft", &Index<float>::set_edge_level_ft, py::arg("flag"))
+         .def("set_thresholds", &Index<float>::set_thresholds, py::arg("threshold_1"), py::arg("threshold_2"), py::arg("threshold_3"))

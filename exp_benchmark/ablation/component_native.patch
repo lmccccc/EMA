@@ -1,0 +1,156 @@
+--- a/hnswlib/hnswlib/hnswalg.h
++++ b/hnswlib/hnswlib/hnswalg.h
+@@ -133,6 +133,15 @@
+     mutable std::atomic<long> metric_ft_false_positives{0};  // passed FT but failed predicate (FP)
+     mutable std::atomic<long> metric_predicate_checked{0};   // nodes that actually reached predicate_check
+     mutable std::atomic<long> metric_total_neighbors{0};     // total neighbors scanned (before FT)
++
++    bool ablation_cht_enabled_{true};
++#ifdef EMA_ABLATION_DIAGNOSTICS
++    mutable std::atomic<long> ablation_expanded{0};
++    mutable std::atomic<long> ablation_empty_rows{0};
++    mutable std::atomic<long> ablation_backfill_edges{0};
++    mutable std::atomic<long> ablation_backfill_visits{0};
++    mutable std::atomic<long> ablation_distances{0};
++#endif
+ 
+     bool allow_replace_deleted_ = false;  // flag to replace deleted elements (marked as deleted) during insertions
+ 
+@@ -2973,6 +2982,10 @@
+         std::vector<int> nbrs;
+         std::vector<int> not_nbrs;
+         std::vector<int> not_nbrs_idx;
++#ifdef EMA_ABLATION_DIAGNOSTICS
++        long diag_expanded = 0, diag_empty_rows = 0, diag_backfill_edges = 0;
++        long diag_backfill_visits = 0, diag_distances = 0;
++#endif
+         nbrs.reserve(maxM0_);
+         not_nbrs.reserve(maxM0_);
+         not_nbrs_idx.reserve(maxM0_);
+@@ -2998,6 +3011,9 @@
+             candidate_set.pop();
+ 
+             tableint current_node_id = current_node_pair.second;
++#ifdef EMA_ABLATION_DIAGNOSTICS
++            ++diag_expanded;
++#endif
+ 
+             int *data = (int *) get_linklist0(current_node_id);
+             size_t size = getListCount((linklistsizeint*)data);
+@@ -3131,11 +3147,17 @@
+             // ft_nbrs_end marks boundary: [0, ft_nbrs_end) = FT-passing (route+result),
+             // [ft_nbrs_end, nbrs.size()) = routing-only (added by min_deg backfill)
+             size_t ft_nbrs_end = nbrs.size();
++#ifdef EMA_ABLATION_DIAGNOSTICS
++            if (use_ft && size > 0 && ft_nbrs_end == 0) ++diag_empty_rows;
++#endif
+ 
+             if (use_ft_routing) {
+                 if (nbrs.size() < ft_routing_min_deg_) {
+                     size_t extra_nbrs_needed = ft_routing_min_deg_ - nbrs.size();
+                     size_t pick_count = std::min(extra_nbrs_needed, not_nbrs.size());
++#ifdef EMA_ABLATION_DIAGNOSTICS
++                    diag_backfill_edges += pick_count;
++#endif
+                     if (ft_routing_backfill_tail_) {
+                         // Pick from TAIL of not_nbrs (farther / more diverse non-FT-passing)
+                         for(size_t j = 0; j < pick_count; ++j){
+@@ -3307,6 +3329,10 @@
+                 if (!(visited_array[candidate_id] == visited_array_tag)) {
+                     visited_array[candidate_id] = visited_array_tag;
+                     visited++;
++#ifdef EMA_ABLATION_DIAGNOSTICS
++                    ++diag_distances;
++                    diag_backfill_visits += routing_only;
++#endif
+ 
+                     #ifdef DEBUG_SEARCH
+                     std::cout << "   visiting nbr " << candidate_id << " ";
+@@ -3419,6 +3445,13 @@
+         metric_ft_false_positives.fetch_add(passed, std::memory_order_relaxed);
+         metric_predicate_checked.fetch_add(predicate_checked, std::memory_order_relaxed);
+         metric_total_neighbors.fetch_add(deg, std::memory_order_relaxed);
++#ifdef EMA_ABLATION_DIAGNOSTICS
++        ablation_expanded.fetch_add(diag_expanded, std::memory_order_relaxed);
++        ablation_empty_rows.fetch_add(diag_empty_rows, std::memory_order_relaxed);
++        ablation_backfill_edges.fetch_add(diag_backfill_edges, std::memory_order_relaxed);
++        ablation_backfill_visits.fetch_add(diag_backfill_visits, std::memory_order_relaxed);
++        ablation_distances.fetch_add(diag_distances, std::memory_order_relaxed);
++#endif
+         return top_candidates;
+     }
+ 
+@@ -3693,6 +3726,7 @@
+     // #define DEBUG_BUILD
+ 
+     bool cht_low_degree(int* cht, tableint src_id, tableint nbr_id, int return_list_size) {
++        if (!ablation_cht_enabled_) return true;
+         if (return_list_size == 0 || return_list_size < maxM_ / 3) return true;
+ 
+         // check if id has unique attr not covered by cht
+--- a/hnswlib/python_bindings/bindings.cpp
++++ b/hnswlib/python_bindings/bindings.cpp
+@@ -147,6 +147,29 @@
+     void set_ft_flag(bool flag){
+         if(appr_alg)
+             appr_alg->set_ft_flag(flag);
++    }
++
++    void set_ablation_cht(bool enabled) {
++        if (!appr_alg || appr_alg->cur_element_count.load() != 0)
++            throw std::runtime_error("Set the ablation construction policy on an empty index only");
++        appr_alg->ablation_cht_enabled_ = enabled;
++    }
++
++    py::dict get_ablation_stats() {
++        py::dict stats = get_ft_stats();
++#ifdef EMA_ABLATION_DIAGNOSTICS
++        stats["diagnostic_build"] = true;
++        if (appr_alg) {
++            stats["base_expanded"] = appr_alg->ablation_expanded.load();
++            stats["empty_marker_rows"] = appr_alg->ablation_empty_rows.load();
++            stats["backfill_edges"] = appr_alg->ablation_backfill_edges.load();
++            stats["backfill_visits"] = appr_alg->ablation_backfill_visits.load();
++            stats["base_distance_evaluations"] = appr_alg->ablation_distances.load();
++        }
++#else
++        stats["diagnostic_build"] = false;
++#endif
++        return stats;
+     }
+ 
+     void set_edge_level_ft(bool flag){
+@@ -203,6 +226,13 @@
+             appr_alg->metric_ft_false_positives = 0;
+             appr_alg->metric_predicate_checked = 0;
+             appr_alg->metric_total_neighbors = 0;
++#ifdef EMA_ABLATION_DIAGNOSTICS
++            appr_alg->ablation_expanded = 0;
++            appr_alg->ablation_empty_rows = 0;
++            appr_alg->ablation_backfill_edges = 0;
++            appr_alg->ablation_backfill_visits = 0;
++            appr_alg->ablation_distances = 0;
++#endif
+         }
+     }
+ 
+@@ -2680,6 +2710,8 @@
+         .def("get_ids_list", &Index<float>::getIdsList)
+         .def("set_ef", &Index<float>::set_ef, py::arg("ef"))
+         .def("set_ft_flag", &Index<float>::set_ft_flag, py::arg("ft_flag"))
++        .def("set_ablation_cht", &Index<float>::set_ablation_cht, py::arg("enabled"))
++        .def("get_ablation_stats", &Index<float>::get_ablation_stats)
+         .def("set_edge_level_ft", &Index<float>::set_edge_level_ft, py::arg("flag"))
+         .def("set_thresholds", &Index<float>::set_thresholds, py::arg("threshold_1"), py::arg("threshold_2"), py::arg("threshold_3"))
+         .def("set_ft_routing_flag", &Index<float>::set_ft_routing_flag, py::arg("flag"))
+--- a/hnswlib/setup.py
++++ b/hnswlib/setup.py
+@@ -42,6 +42,8 @@
+         libraries=libraries,
+         language='c++',
+         extra_objects=extra_objects,
++        define_macros=[('EMA_ABLATION_DIAGNOSTICS', '1')]
++            if os.environ.get('EMA_ABLATION_DIAGNOSTICS') == '1' else [],
+     ),
+ ]
+ 

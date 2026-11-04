@@ -1,4 +1,4 @@
-# HashANN 源代码函数级参考文档
+# EMA 源代码函数级参考文档
 
 > 自动生成于 2026-04-27，供后续修改时参考。
 
@@ -15,7 +15,7 @@
 
 ## 零、核心创新（相比原版 hnswlib）
 
-HashANN 基于 hnswlib (HNSW) 做了属性感知的改造，核心创新有两点，二者相辅相成：
+EMA 基于 hnswlib (HNSW) 做了属性感知的改造，核心创新有两点，二者相辅相成：
 
 ### 1. 边级 Bloom Filter 结构（Neighbor Filtering Table）
 
@@ -106,12 +106,12 @@ labels, dists = index.hybrid_knn_query_dnf(queries, [dnf_pred] * nq, k=10)
 ## 一、项目结构概览
 
 ```
-hashann/
+./
 ├── hnswlib/                    # 核心 C++ 库 + Python 绑定
 │   ├── hnswlib/                # C++ 头文件 (header-only library)
 │   │   ├── hnswlib.h           # 主头文件：接口定义、CPU检测、距离空间
 │   │   ├── hnswalg.h           # HNSW 算法核心实现
-│   │   ├── core.hpp/cpp        # HashANN 核心：属性索引、FT过滤
+│   │   ├── core.hpp/cpp        # EMA 核心：属性索引、FT过滤
 │   │   ├── nswalg.h            # NSW (非层级) 算法实现
 │   │   ├── dijknsw.h           # Dijkstra-NSW 变体
 │   │   ├── ivfalg.h            # IVF (倒排文件) 实现
@@ -127,7 +127,7 @@ hashann/
 │   │   └── LazyIndex.py        # 延迟初始化包装器
 │   └── setup.py                # 构建配置 (hashannlib)
 ├── tests/                      # Python 工具脚本
-│   ├── hashann.py              # HashANN 索引封装类
+│   ├── hashann.py              # EMA 索引封装类
 │   ├── hashann_build.py        # 构建索引 CLI
 │   ├── hashann_query.py        # 查询索引 CLI
 │   ├── utils.py                # 通用工具函数
@@ -733,7 +733,7 @@ This comprehensive analysis covers all public/important interfaces, methods, and
 ---
 
 ## hashann.py
-Defines the HashANN index wrapper class for building and querying HNSW-based indexes with attribute filtering support.
+Defines the `HashANN` wrapper class for building and querying EMA indexes with attribute filtering support.
 
 ### Classes
 - `HashANN`: Main index class for HNSW-based filtering search
@@ -749,7 +749,7 @@ Defines the HashANN index wrapper class for building and querying HNSW-based ind
 ---
 
 ## hashann_build.py
-Command-line script to build HashANN indexes with attribute support.
+Command-line script to build EMA indexes with attribute support.
 
 ### Functions
 - `if __name__ == "__main__"`: Main entry point that initializes HashANN, loads data, and builds index
@@ -779,13 +779,13 @@ Command-line script to build HashANN indexes with attribute support.
 ---
 
 ## hashann_query.py
-Command-line script to query HashANN indexes with attribute filtering and performance measurement.
+Command-line script to query EMA indexes with attribute filtering and performance measurement.
 
 ### Functions
 - `load_query_data(query_file, qrange_file, gt_file, N, Nq, k)`: Load and validate query data, predicates, and ground truth from files
 
 ### Main Execution
-- Loads HashANN index, executes queries with varying ef_search parameters
+- Loads EMA index, executes queries with varying ef_search parameters
 - Measures QPS, distance comparisons (cmps), and recall
 - Supports optional statistics API if available
 - Prints final results as [ef_search, recall, QPS] or [ef_search, recall, QPS, cmps]
@@ -1090,7 +1090,7 @@ PostgreSQL VectorDB integration for filtered vector search (DiskANN-like).
 ---
 
 ## post_query.py
-Query HashANN without two-hop optimization (postprocessing variant).
+Query EMA without two-hop optimization (postprocessing variant).
 
 ### Functions
 - `load_query_data(query_file, qrange_file, gt_file, N, Nq, k)`: Load query data
@@ -1339,18 +1339,18 @@ Incomplete script for SIFT-1M dataset benchmark visualization (minimal data).
 ---
 
 ## wiki_neg_plot.py
-Compare HashANN vs Navix on Wikipedia negative correlation dataset.
+Compare EMA vs Navix on Wikipedia negative correlation dataset.
 
 ### Functions
 - `get_qps(recall_dict, sel_list)`: Extract matching selectivity/QPS pairs from recall dict
 
 ### Variables
-- `hashann_9_recall`, `hashann_95_recall`, `hashann_99_recall`: HashANN QPS by selectivity
+- `hashann_9_recall`, `hashann_95_recall`, `hashann_99_recall`: EMA QPS by selectivity
 - `navix_9_recall`: Navix QPS by selectivity
 - `sel_list`: Selectivity thresholds: [1.01, 5.1, 9.96, 15.02, 22.93]
 
 ### Main Features
-- Plots HashANN vs Navix QPS curves at 90% recall
+- Plots EMA vs Navix QPS curves at 90% recall
 - Saves plot as `wiki_navix_9_recall_comparison.png`
 - Uses matplotlib for visualization
 
@@ -1378,7 +1378,7 @@ Compare HashANN vs Navix on Wikipedia negative correlation dataset.
 ### 索引构建脚本 (已统一)
 | 脚本 | 用途 |
 |------|------|
-| `hashann.sh` | 构建 HashANN 索引 (调用 hashann_build.py) |
+| `hashann.sh` | 构建 EMA 索引 (调用 hashann_build.py) |
 | `acorn_index.sh` | 构建 ACORN 索引 (调用 acorn_build C++) |
 | `navix_index.sh` | 构建 NaVIX 索引 (调用 navix_build C++) |
 | `milvus_hnsw_index.sh` | 构建 Milvus HNSW 索引 (调用 milvus_hnsw_index.py) |
@@ -1389,7 +1389,7 @@ Compare HashANN vs Navix on Wikipedia negative correlation dataset.
 ### 查询脚本 (已统一，均传 $K 参数)
 | 脚本 | 用途 |
 |------|------|
-| `query.sh` | HashANN 查询 (调用 hashann_query.py + extract_results.py) |
+| `query.sh` | EMA 查询 (调用 hashann_query.py + extract_results.py) |
 | `acorn_query.sh` | ACORN 查询 |
 | `navix_query.sh` | NaVIX 查询 |
 | `milvus_hnsw_query.sh` | Milvus HNSW 查询 |
@@ -1411,4 +1411,3 @@ Compare HashANN vs Navix on Wikipedia negative correlation dataset.
 | `predicate_generator.sh` | 调用 predicate_generator.py 生成谓词 |
 | `ground_truth_generator.sh` | 调用 groundtruth_generator.py |
 | `selectivity.sh` | 调用 selectivity.py 计算选择性 |
-

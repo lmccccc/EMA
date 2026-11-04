@@ -79,7 +79,7 @@ class HashANN:
         if name == "HNSW":
             print("building 2 layer HNSW index")
         elif name == "NSW":
-            print("building HashANN index")
+            print("building EMA index")
             exit(-1)
         else:
             print("error: unknown index method:", name)
@@ -214,7 +214,7 @@ class HashANN:
     #         # self.index = hashannlib.Index(space=params["metric"], dim=params["dim"])
     #         # return
     #     else:
-    #         print("building HashANN index")
+    #         print("building EMA index")
     #         # self.index = hashannlib.NSWIndex(space=params["metric"], dim=params["dim"])
 
     #     centroid_size, layers, closest_ids, best_dist, buckets, offsets = self.clustering(base_scalars)

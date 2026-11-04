@@ -6,7 +6,7 @@ in `RESULTS.md` and `data/stage_metrics.csv`.
 
 ## 1. Research scope
 
-The experiment measures EMA / HashANN under insertion, synchronous structural
+The experiment measures EMA under insertion, synchronous structural
 deletion, and complete-point replacement. It follows one fixed SIFT10M source
 and one fixed set of mixed-DNF queries through controlled graph histories.
 The performance questions are mutation maintenance time and single-thread

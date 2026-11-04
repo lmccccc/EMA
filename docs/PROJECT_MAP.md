@@ -1,4 +1,4 @@
-# HashANN Codebase Map
+# EMA Codebase Map
 
 ## Scope
 This repository is an experiment orchestration workspace with shell-first pipelines.

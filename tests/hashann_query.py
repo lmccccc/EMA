@@ -1,4 +1,4 @@
-"""Query an existing HashANN index; never build an index or regenerate inputs."""
+"""Query an existing EMA index; never build an index or regenerate inputs."""
 
 import ast
 import hashlib

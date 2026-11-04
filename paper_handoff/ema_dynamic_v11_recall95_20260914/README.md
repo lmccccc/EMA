@@ -1,4 +1,4 @@
-# EMA / HashANN V11: recall95 paper handoff
+# EMA V11: recall95 paper handoff
 
 This package supersedes the recall metric in the dated recall90 handoff; it does
 not overwrite or invalidate that historical evidence. All18 archived graph states

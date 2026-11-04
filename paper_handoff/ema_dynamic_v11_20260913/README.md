@@ -1,4 +1,4 @@
-# EMA / HashANN dynamic V11: paper-writing handoff
+# EMA dynamic V11: paper-writing handoff
 
 This folder packages the current deletion strategy, prose and pseudocode,
 the experimental protocol, and the completed SIFT10M measurements. It is
@@ -17,7 +17,7 @@ results without guessing implementation details or rerunning the benchmark.
 
 ## Identity and status
 
-- System: EMA / HashANN; the native module retains the name `hashannlib`.
+- System: EMA; the native module retains the name `hashannlib`.
 - Implementation: retained V11 point-parallel deletion with the shared
   publication gate, not the rejected reserve/ranking-cache candidates.
 - Native SHA256:

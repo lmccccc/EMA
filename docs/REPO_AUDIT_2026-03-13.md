@@ -1,4 +1,4 @@
-# HashANN Repo Audit (2026-03-13)
+# EMA Repo Audit (2026-03-13)
 
 ## Inventory Snapshot
 - Shell scripts: 152

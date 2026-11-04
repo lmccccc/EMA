@@ -1,6 +1,6 @@
 """Measure EMA / FT false-positive rate at several selectivities.
 
-Loads a pre-built HashANN index and counts, per query, how many nodes were
+Loads a pre-built EMA index and counts, per query, how many nodes were
 admitted by the FT (Edge Marker) check but then failed the actual predicate.
 The C++ side maintains atomic counters (`metric_ft_passed_total`,
 `metric_ft_false_positives`); we expose them via `get_ft_stats()` /

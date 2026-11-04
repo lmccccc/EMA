@@ -1,4 +1,4 @@
-# EMA (HashANN)
+# EMA
 
 **EMA** (Edge Marker) — a hybrid vector-and-attribute approximate nearest
 neighbour index. EMA augments an HNSW graph with **per-edge Edge Markers**
@@ -11,9 +11,8 @@ essentially free at query time.
 > (EM). Throughout the source tree it is abbreviated **`ft`** (a legacy
 > name for the same data structure: "fingerprint"). Read `ft_bits`,
 > `edge_level_ft`, `update_node_ft`, etc. as
-> Edge-Marker–related code. Old "HashANN" identifiers (module name
-> `hashannlib`, scripts `hashann_build.py` / `hashann_query.py`) are
-> retained for binary compatibility.
+> Edge-Marker–related code. The module name `hashannlib` and script names
+> `hashann_build.py` / `hashann_query.py` are retained for compatibility.
 
 ## Features
 

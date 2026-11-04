@@ -5,7 +5,7 @@ of the **current** implementation on YouTube-RGB 1M. It does not regenerate
 the historical appendix observations, replace published figures,
 or use the frozen V11 dynamic implementation.
 
-The appendix includes the completed study's figures and CSV plot inputs.
+The [technical report](../../EMA_appendix.pdf) includes the completed study's figures.
 Its gains, losses, and incomplete-batch cells are distinct from the pilot.
 
 ## Components and fixed workload
@@ -181,23 +181,16 @@ selectivity. Reduced distance counts alone do not establish a runtime benefit;
 these counters also do not prove a cache or memory bottleneck. Small C1 effects
 from one parallel-built graph pair do not establish multi-seed robustness.
 
-Generate new study figures without overwriting published paper figures:
-
-```bash
-Rscript exp_benchmark/ablation/plot_components.R "$RUN/full" "$RUN/full/plots"
-```
-
-The script uses the repository's R plot style and emits PDF and TikZ for
-QPS95, threshold-based QPS, conditional speedups, and recall-QPS curves.
-Missing supported points remain missing.
+The runner exports CSV summaries, contrasts and recall-QPS curves for external
+analysis. Plotting scripts are not distributed. Missing supported points
+remain missing.
 
 ## Same-graph strict in-filtering comparison
 
 `python -m exp_benchmark.strict_filter_ablation` adds a **separate** three-policy
 comparison using the completed study's CHT-on graph. It does not rebuild a graph,
 change the original component study's source pins, or reuse its QPS values.
-The completed 1,000-query comparison is included in the appendix and its
-bundled CSV plot inputs.
+The completed 1,000-query comparison is described in the technical report.
 
 | Policy | Newly reached base-layer neighbors | Recovery |
 |---|---|---|
@@ -249,8 +242,6 @@ numactl --physcpubind=0-31 --membind=0 \
   "$PY" -B -m exp_benchmark.strict_filter_ablation run \
   --request "$STRICT/full/request.json"
 
-Rscript exp_benchmark/ablation/plot_components.R \
-  "$STRICT/full" "$STRICT/full/plots"
 ```
 
 Unlike the construction pilot above, this pilot keeps the **full 1M graph and

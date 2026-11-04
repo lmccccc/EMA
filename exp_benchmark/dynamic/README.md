@@ -3,8 +3,8 @@
 Only **insert**, **delete**, and **point_update** belong to this pipeline. The
 attribute-only and legacy delete/patch experiment entrypoints were removed;
 native attribute-update and maintenance APIs remain available separately.
-This measurement pipeline does not plot; the current
-[R/TikZ publication sources](../../paper/README.md) are packaged separately.
+This measurement pipeline exports results but does not plot. Publication
+material is distributed only as a [technical report](../../EMA_appendix.pdf).
 
 The fresh-run policy remains **`fix_rebuild_rerun_all`**: correct numeric mapping,
 Marker ownership and vector-distance-only ordering, fresh indexes and all three
@@ -32,8 +32,8 @@ cleanup. Historical recall90 values must never be relabeled as QPS95.
 
 The raw vectors, complete attributes, original queries, predicates and exact GT
 retain their canonical checksums. Existing base-index files are protected but
-are **not** reproduction inputs. The repository retains the plotting CSV;
-frozen V11 source snapshots and historical run records are not bundled.
+are **not** reproduction inputs. Frozen V11 source snapshots, historical
+plotting inputs and run records are not bundled.
 Artifact cleanup in a live run is a
 separate, explicitly approved action, never a consequence of changing the
 recall target.
@@ -332,10 +332,9 @@ its distinct provenance rather than bypass those guards. Incompatible old
 Marker/ranking graphs still require rebuilding; neither this authorization nor
 a lifecycle canary generically certifies arbitrary native builds.
 
-The [Figure 9 plotting CSV](../../paper/figures/data/ema_dynamic_v11.csv) remains
-available. Frozen V11 source snapshots and raw recall90 and recall95
-timing/calibration records are not bundled;
-the plotted values must not be described as a newly executed benchmark.
+Frozen V11 source snapshots, Figure 9 plotting inputs and raw recall90 and
+recall95 timing/calibration records are not bundled. Historical published
+values must not be described as a newly executed benchmark.
 
 ## Measurement, retention and publication
 

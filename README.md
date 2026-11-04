@@ -39,18 +39,16 @@ essentially free at query time.
 
 Start with the [paper-to-code map](exp_benchmark/README.md#paper-to-code-map).
 The repository includes the current native implementation and Python bindings,
-static EMA runners, the three-operation dynamic pipeline, regression tests,
-and [R/TikZ figure sources](paper/README.md).
+static EMA runners, the three-operation dynamic pipeline, and regression tests.
 A [controlled component-ablation runner](exp_benchmark/ablation/README.md)
 compares C1 construction, C2 Markers, and C3 routing recovery on one
 YouTube1M selectivity grid with separately built timing/diagnostic extensions.
 An independent [strict in-filtering comparison](exp_benchmark/ablation/README.md#same-graph-strict-in-filtering-comparison)
 re-times strict filtering, Marker-only routing, and full EMA on the same saved graph.
-The [appendix source](paper/appendix/appendix.tex) builds
-[`EMA_appendix.pdf`](EMA_appendix.pdf). The expanded component ablation,
-strict-filter comparison, generated summaries, and their CSV/provenance
-snapshots are under `paper/appendix/CH5/figures/`; retired dynamic-update
-experiments remain excluded.
+The [technical report](EMA_appendix.pdf) includes the expanded component
+ablation, strict-filter comparison, and theoretical analysis. Only the compiled
+report is distributed; document sources, separate figures, plotting scripts,
+and historical plotting data are not bundled.
 
 **This is not a self-contained reproduction of every baseline and every
 historical experiment.** Raw dataset subsets, original attribute/predicate
@@ -59,11 +57,9 @@ distributed here. Parameter sweeps using newly generated inputs are not replays
 of the published measurements. The coverage map states which commands exist
 and which inputs or implementations are still external.
 
-For the three-operation dynamic result (Figure 9 in the current manuscript;
-the bundled plot generator still uses the earlier Figure 7 naming), the
-[plot inputs](paper/figures/data/ema_dynamic_v11.csv) retain the reported QPS
-and maintenance values. Frozen V11 source snapshots, raw calibration/timing
-records, original native binaries, and graph checkpoints are not bundled.
+For the three-operation dynamic result (Figure 9 in the current manuscript),
+frozen V11 source snapshots, raw calibration/timing records, original native
+binaries, and graph checkpoints are not bundled.
 The current native has subsequent fixes/features and must not be substituted
 for that frozen binary when claiming an unchanged-checkpoint replay.
 
@@ -365,7 +361,7 @@ replacement attribute records.
 | `hnswlib/`          | C++ implementation of EMA (HNSW + per-edge Edge Markers) and Python bindings |
 | `tests/`            | Python entry points: `hashann_build.py`, `hashann_query.py`, GT/predicate generators (legacy filenames; same code is EMA) |
 | `exp_benchmark/`    | EMA measurement/replay tools; see the paper-to-code coverage map  |
-| `paper/`            | Active appendix sources and current main-figure R/TikZ sources   |
+| `EMA_appendix.pdf`  | Compiled technical report                                       |
 
 Historical `exp*/` folders and baseline adapters are not part of this source
 distribution. Use the documented `exp_benchmark/` entrypoints.

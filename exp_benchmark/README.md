@@ -32,13 +32,13 @@ driver. Do not report a generated-input run as the original paper experiment.
 | Main Figure 6: range, label and OCQ | Same existing-index collector; separate current-format `static_inputs` / `static_paper suite`; `paper/figures/single_attribute_combined_plot.R` | Wiki OCQ needs the original 50 `join_*` queries and birthdate attributes. A fresh current-format graph is not a legacy-index replay. |
 | Main Table III: baseline-relative speedups | Figure 5 plotted values and EMA result collectors | `main_experiment.sh` runs only EMA; it does not generate the all-system table. Matching baseline observations are required. |
 | Main Table V: construction time and size | `static_inputs` / `static_paper suite` build and record EMA indexes | Competing-system builds/services and their original logs are external. Do not combine fresh EMA costs with old results as a newly repeated all-system experiment. |
-| Main dynamic result (current manuscript Figure 9; bundled Figure 7 plot source): insert, delete, complete-record replacement | `dynamic.pipeline`, `dynamic.remeasure`, [frozen V11 source/evidence](../paper_handoff/README.md), `paper/figures/ema_dynamic_v11_plot.R` | Large vectors, original inputs/checkpoints and the exact original native binary are not bundled. The current native is not the frozen V11 binary. |
+| Main dynamic result (current manuscript Figure 9; bundled Figure 7 plot source): insert, delete, complete-record replacement | `dynamic.pipeline`, `dynamic.remeasure`, [frozen V11 source](../paper_handoff/README.md), `paper/figures/ema_dynamic_v11_plot.R` and its bundled CSV | Raw run records, large vectors, original checkpoints and the exact original native binary are not bundled. The current native is not the frozen V11 binary. |
 | Appendix: biased range+range selectivity | Predicate generators and the generic build/query entrypoints | No complete frozen per-cell request or dedicated biased-selectivity experiment driver is included. The figure PDF is included for document compilation. |
-| Appendix: comparison with HNSWLib and NaviX | `tests/vanilla_postfilter_query.py`, `tests/hnsw_build.py`, legacy NaviX adapters | Requires upstream `hnswlib`, the matching modified NaviX build, and original indexes/inputs; there is no complete all-baseline launcher here. |
+| Appendix: comparison with HNSWLib and NaviX | Compiled figure PDF only | Other-system baseline implementations and original indexes/inputs are not included. |
 | Appendix: parameter sensitivity | `ablation/M_sweep.sh`, `min_deg_sweep.sh`, `ft_bits_sweep.sh` | These generate the current default DNF cells. Their default grid/input files are not claimed to reproduce every historical appendix table or figure. |
 | Appendix: Marker FPR | `ft_fpr.py` / `ft_fpr.sh` | The CLI measures an existing index using its corresponding query/GT prefix. The historical Redcaps1M fixture is not bundled; the default Redcaps4M diagnostic is not that table. |
 | Appendix: recall@100 | Generic query entrypoint with `K=100` and a suitable `ef_search_list` | Requires matching top100 GT and the original predicates/index; no dedicated frozen recall@100 collection is included. |
-| Appendix: component ablation | [Expanded appendix section](../paper/appendix/APP/app.tex), bundled [CSV/provenance snapshots](../paper/appendix/CH5/figures/data/ablation_provenance.json), [`component_ablation.py` study](ablation/README.md), and [same-graph strict-filter comparison](ablation/README.md#same-graph-strict-in-filtering-comparison) | The two studies use five component variants and a separately timed strict/Marker/EMA comparison on the original YouTube1M grid. The fixed-graph comparison reuses the CHT-on graph; QPS values from different runs are not paired. Original large inputs and checkpoints remain external. `tests/alblation.py` only formats stored historical observations. |
+| Appendix: component ablation | [Expanded appendix section](../paper/appendix/APP/app.tex), bundled [CSV/plot inputs](../paper/appendix/CH5/figures/data/ablation_components_summary.csv), [`component_ablation.py` study](ablation/README.md), and [same-graph strict-filter comparison](ablation/README.md#same-graph-strict-in-filtering-comparison) | The two studies use five component variants and a separately timed strict/Marker/EMA comparison on the original YouTube1M grid. The fixed-graph comparison reuses the CHT-on graph; QPS values from different runs are not paired. Original large inputs and checkpoints remain external. |
 | Appendix: theoretical analysis | `paper/appendix/APP/app.tex` | Compiles with the bundled driver and figure dependencies; no experiment run is needed. |
 
 Main Tables I/II contain a method comparison and notation, not benchmark runs.
@@ -59,16 +59,9 @@ them. SIFT comes from the TexMex corpus, RedCaps from redcaps.xyz, YouTube
 features from YouTube-8M, and Wiki inputs from the NaviX dataset, but downloading
 an upstream dataset alone does not recover the exact prepared paper files.
 
-The repository ships EMA's native source, not the modified `faiss-navix`,
-ACORN, Filtered DiskANN or iRangeGraph source trees used by legacy adapters.
-For example, `navix_query.sh` expects
-`../code/faiss-navix/build/demos/navix_query_arbi`, and `irange_query.sh`
-expects `../code/iRangeGraph/build/tests/search`. These are not ordinary
-upstream install commands. Root-level adapters are historical references, not
-validated portable entrypoints; notably `acorn_query.sh` currently invokes a
-DiskANN search binary and must not be treated as an ACORN reproduction command.
-Milvus and VBase additionally require independently deployed services and their
-client dependencies. No commit-locked all-baseline installer is supplied.
+This repository ships EMA's native source and EMA experiment drivers, not
+other-system baseline implementations or launchers. Reproducing cross-system
+tables requires independently supplied baseline data and software.
 
 Do not run large fresh builds just to regenerate a figure. The
 [publication bundle](../paper/README.md) documents R/TikZ rendering from the

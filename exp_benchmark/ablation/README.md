@@ -2,12 +2,11 @@
 
 `python -m exp_benchmark.component_ablation` runs a new, source-pinned study
 of the **current** implementation on YouTube-RGB 1M. It does not regenerate
-the historical observations in `tests/alblation.py`, replace published figures,
+the historical appendix observations, replace published figures,
 or use the frozen V11 dynamic implementation.
 
-The first completed 1M study and its limitations are documented in
-[RESULTS.md](RESULTS.md). Its gains, losses, and incomplete-batch cells are
-reported separately; they are not replaced by the smaller pilot's results.
+The appendix includes the completed study's figures and CSV plot inputs.
+Its gains, losses, and incomplete-batch cells are distinct from the pilot.
 
 ## Components and fixed workload
 
@@ -197,8 +196,8 @@ Missing supported points remain missing.
 `python -m exp_benchmark.strict_filter_ablation` adds a **separate** three-policy
 comparison using the completed study's CHT-on graph. It does not rebuild a graph,
 change the original component study's source pins, or reuse its QPS values.
-The completed 1,000-query comparison is documented in
-[STRICT_RESULTS.md](STRICT_RESULTS.md).
+The completed 1,000-query comparison is included in the appendix and its
+bundled CSV plot inputs.
 
 | Policy | Newly reached base-layer neighbors | Recovery |
 |---|---|---|

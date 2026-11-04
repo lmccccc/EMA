@@ -8,6 +8,8 @@ env/
 
 # 日志
 *.log
+/logs/
+/logs.txt
 
 # 系统文件
 .DS_Store

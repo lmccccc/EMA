@@ -44,7 +44,7 @@ and [R/TikZ figure sources](paper/README.md).
 A [controlled component-ablation runner](exp_benchmark/ablation/README.md)
 compares C1 construction, C2 Markers, and C3 routing recovery on one
 YouTube1M selectivity grid with separately built timing/diagnostic extensions.
-An independent [strict in-filtering comparison](exp_benchmark/ablation/STRICT_RESULTS.md)
+An independent [strict in-filtering comparison](exp_benchmark/ablation/README.md#same-graph-strict-in-filtering-comparison)
 re-times strict filtering, Marker-only routing, and full EMA on the same saved graph.
 The [appendix source](paper/appendix/appendix.tex) builds
 [`EMA_appendix.pdf`](EMA_appendix.pdf). The expanded component ablation,
@@ -61,9 +61,10 @@ and which inputs or implementations are still external.
 
 For the three-operation dynamic result (Figure 9 in the current manuscript;
 the bundled plot generator still uses the earlier Figure 7 naming), the
-[frozen V11 recall95 evidence](paper_handoff/README.md) includes the native source
-snapshot, query code, original maintenance times, and raw calibration/timing
-records. It does not include the original native binary or graph checkpoints.
+[frozen V11 source](paper_handoff/README.md) preserves the native and query
+implementation; [plot inputs](paper/figures/data/ema_dynamic_v11.csv) retain
+the reported QPS and maintenance values. Raw calibration/timing records,
+original native binaries, and graph checkpoints are not bundled.
 The current native has subsequent fixes/features and must not be substituted
 for that frozen binary when claiming an unchanged-checkpoint replay.
 
@@ -366,13 +367,10 @@ replacement attribute records.
 | `tests/`            | Python entry points: `hashann_build.py`, `hashann_query.py`, GT/predicate generators (legacy filenames; same code is EMA) |
 | `exp_benchmark/`    | EMA measurement/replay tools; see the paper-to-code coverage map  |
 | `paper/`            | Active appendix sources and current main-figure R/TikZ sources   |
-| `paper_handoff/`    | Frozen V11 source snapshots and recall90/recall95 evidence        |
-| `docs/`             | Project map, design notes                                       |
-| `tools/`            | Repo-guard and other developer scripts                          |
+| `paper_handoff/`    | Frozen V11 native and query source for the dynamic result         |
 
-Historical `exp*/` folders were removed from this checkout. Remaining root-level
-baseline shell scripts are legacy, machine-specific adapters, not a complete
-baseline reproduction suite. Use the documented `exp_benchmark/` entrypoints.
+Historical `exp*/` folders and baseline adapters are not part of this source
+distribution. Use the documented `exp_benchmark/` entrypoints.
 
 ## Quick start
 
@@ -440,14 +438,3 @@ baseline reproduction suite. Use the documented `exp_benchmark/` entrypoints.
 Each dataset can be configured via the `DATA_ROOT` env var pointing at the
 directory that holds the per-dataset sub-folders (defaults to
 `/mnt/data/mocheng/dataset/`).
-
-## Developer notes (legacy)
-
-`tools/repo_guard.sh` and `docs/PROJECT_MAP.md` describe legacy workflows.
-`repo_guard.sh` performs
-basic syntax / sourcing / mutation checks over `*.sh` files; run it
-when working with those legacy scripts. It is not a paper reproduction test:
-
-```bash
-./tools/repo_guard.sh           # full repo
-```

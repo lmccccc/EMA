@@ -32,9 +32,9 @@ cleanup. Historical recall90 values must never be relabeled as QPS95.
 
 The raw vectors, complete attributes, original queries, predicates and exact GT
 retain their canonical checksums. Existing base-index files are protected but
-are **not** reproduction inputs. Historical recall90 results, source snapshots,
-manifests and journals remain preserved as original provenance. Artifact cleanup
-is a separate, explicitly approved action, never a consequence of changing the
+are **not** reproduction inputs. The repository retains the frozen V11 source reference and plotting CSV;
+historical run records are not bundled. Artifact cleanup in a live run is a
+separate, explicitly approved action, never a consequence of changing the
 recall target.
 
 Run from the repository root:
@@ -331,12 +331,10 @@ its distinct provenance rather than bypass those guards. Incompatible old
 Marker/ranking graphs still require rebuilding; neither this authorization nor
 a lifecycle canary generically certifies arbitrary native builds.
 
-The completed V11 recall95 revision is packaged in
-[`paper_handoff/ema_dynamic_v11_recall95_20260914`](../../paper_handoff/ema_dynamic_v11_recall95_20260914/README.md).
-It contains all18 supported QPS95 values, the unchanged original maintenance
-times, and504 accepted paired-round samples out of696 recorded samples.
-The earlier dated recall90 handoff remains historical evidence and is not
-overwritten or relabeled.
+The [frozen V11 source](../../paper_handoff/README.md) and
+[Figure 9 plotting CSV](../../paper/figures/data/ema_dynamic_v11.csv) remain
+available. Raw recall90 and recall95 timing/calibration records are not bundled;
+the plotted values must not be described as a newly executed benchmark.
 
 ## Measurement, retention and publication
 
@@ -405,9 +403,9 @@ Revalidate/export a completed fresh pipeline:
 Only the authoritative published manifest—not exit0 from a pilot, a scoped run,
 or a clean stage pause—identifies the current paper data. Physical artifact
 cleanup requires explicit user approval and successful replacement publication.
-The recall95 revision does not authorize removing historical recall90 results or
-their frozen handoff. Reused checkpoints, GT and original mutation provenance
-remain referenced evidence, not obsolete data. Raw vectors/attributes/queries/GT,
+The recall95 revision does not authorize deleting records in a live run.
+Reused checkpoints, GT and original mutation provenance remain referenced
+evidence, not obsolete data. Raw vectors/attributes/queries/GT,
 base-index files, and every artifact referenced by the new current manifest
 remain protected. The pipeline itself never deletes data.
 

@@ -61,10 +61,9 @@ and which inputs or implementations are still external.
 
 For the three-operation dynamic result (Figure 9 in the current manuscript;
 the bundled plot generator still uses the earlier Figure 7 naming), the
-[frozen V11 source](paper_handoff/README.md) preserves the native and query
-implementation; [plot inputs](paper/figures/data/ema_dynamic_v11.csv) retain
-the reported QPS and maintenance values. Raw calibration/timing records,
-original native binaries, and graph checkpoints are not bundled.
+[plot inputs](paper/figures/data/ema_dynamic_v11.csv) retain the reported QPS
+and maintenance values. Frozen V11 source snapshots, raw calibration/timing
+records, original native binaries, and graph checkpoints are not bundled.
 The current native has subsequent fixes/features and must not be substituted
 for that frozen binary when claiming an unchanged-checkpoint replay.
 
@@ -367,7 +366,6 @@ replacement attribute records.
 | `tests/`            | Python entry points: `hashann_build.py`, `hashann_query.py`, GT/predicate generators (legacy filenames; same code is EMA) |
 | `exp_benchmark/`    | EMA measurement/replay tools; see the paper-to-code coverage map  |
 | `paper/`            | Active appendix sources and current main-figure R/TikZ sources   |
-| `paper_handoff/`    | Frozen V11 native and query source for the dynamic result         |
 
 Historical `exp*/` folders and baseline adapters are not part of this source
 distribution. Use the documented `exp_benchmark/` entrypoints.

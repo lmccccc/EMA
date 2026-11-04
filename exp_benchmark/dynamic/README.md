@@ -32,8 +32,9 @@ cleanup. Historical recall90 values must never be relabeled as QPS95.
 
 The raw vectors, complete attributes, original queries, predicates and exact GT
 retain their canonical checksums. Existing base-index files are protected but
-are **not** reproduction inputs. The repository retains the frozen V11 source reference and plotting CSV;
-historical run records are not bundled. Artifact cleanup in a live run is a
+are **not** reproduction inputs. The repository retains the plotting CSV;
+frozen V11 source snapshots and historical run records are not bundled.
+Artifact cleanup in a live run is a
 separate, explicitly approved action, never a consequence of changing the
 recall target.
 
@@ -331,9 +332,9 @@ its distinct provenance rather than bypass those guards. Incompatible old
 Marker/ranking graphs still require rebuilding; neither this authorization nor
 a lifecycle canary generically certifies arbitrary native builds.
 
-The [frozen V11 source](../../paper_handoff/README.md) and
-[Figure 9 plotting CSV](../../paper/figures/data/ema_dynamic_v11.csv) remain
-available. Raw recall90 and recall95 timing/calibration records are not bundled;
+The [Figure 9 plotting CSV](../../paper/figures/data/ema_dynamic_v11.csv) remains
+available. Frozen V11 source snapshots and raw recall90 and recall95
+timing/calibration records are not bundled;
 the plotted values must not be described as a newly executed benchmark.
 
 ## Measurement, retention and publication

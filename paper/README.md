@@ -29,8 +29,10 @@ The current report includes two-layer construction and local deletion analysis,
 source-specific false-positive bounds, the dynamic evaluation protocol, speedup
 accounting, the complete construction policy, and expanded ablation and parameter
 studies. The current main paper's three-operation dynamic result is Figure 9;
-its plotting input is in `figures/data/ema_dynamic_v11.csv`, and its frozen
-implementation is in `../paper_handoff/`. Paths under `paper/CH5/figures`
+its plotting input is in `figures/data/ema_dynamic_v11.csv`. The frozen V11
+implementation is not bundled. Historical paths in the plotting provenance
+identify the original inputs, not files available in this checkout.
+Paths under `paper/CH5/figures`
 in the report refer to the manuscript authoring layout, not this repository's
 `paper/figures` layout.
 

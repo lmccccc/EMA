@@ -10,8 +10,9 @@ The one-thread path preserves ordered deletion. Native `ef_construction` is the
 sole deletion width; replacements use the first 50 result positions and at most
 three nearest candidates per endpoint. Per-point immutable masks and a bounded,
 lazy ordered-distance cache are reused without reducing those budgets.
-See [the EMA deletion documentation](../README.md#synchronous-in-place-deletion)
-for concurrency, Marker ownership, diagnostics, and persistence guarantees.
+See the [EMA usage notes](../README.md#usage-notes) for maintenance restrictions
+and the [dynamic experiment guide](../exp_benchmark/dynamic/README.md) for the
+evaluation protocol.
 
 **NEWS:**
 
